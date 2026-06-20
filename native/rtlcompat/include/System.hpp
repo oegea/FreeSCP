@@ -7,5 +7,6 @@
 
 #include "winscp/rtldefs.h"
 #include "winscp/UnicodeString.h"
+#include "winscp/DelphiSet.h"
 
 #endif

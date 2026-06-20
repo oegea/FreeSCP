@@ -33,6 +33,16 @@ struct TFormatSettings
   UnicodeString LongTimeFormat;
 };
 
+// Delphi varargs (ARRAYOFCONST) record + resource-string pointer. Minimal: enough for the
+// engine's Format/exception ctor signatures to resolve.
+struct TVarRec
+{
+  union { void * VPointer; __int64 VInt64; double VExtended; const wchar_t * VPWideChar; };
+  unsigned char VType;
+};
+struct TResStringRec { unsigned int * Module; int Identifier; };
+typedef TResStringRec * PResStringRec;
+
 // Sysutils::Exception — base of ExtException. Only the surface the engine touches.
 namespace Sysutils {
   class Exception
@@ -40,11 +50,26 @@ namespace Sysutils {
   public:
     __fastcall Exception(const UnicodeString & Msg) : Message(Msg) {}
     __fastcall Exception(const UnicodeString & Msg, int /*HelpContext*/) : Message(Msg) {}
+    __fastcall Exception(const UnicodeString & Msg, const TVarRec *, const int) : Message(Msg) {}
+    __fastcall Exception(const UnicodeString & Msg, const TVarRec *, const int, int) : Message(Msg) {}
+    __fastcall Exception(NativeUInt /*Ident*/) {}
+    __fastcall Exception(NativeUInt /*Ident*/, int /*HelpContext*/) {}
+    __fastcall Exception(NativeUInt /*Ident*/, const TVarRec *, const int) {}
+    __fastcall Exception(PResStringRec, const TVarRec *, const int, int) {}
     virtual __fastcall ~Exception() {}
     UnicodeString Message;
   };
+  // Standard Delphi exception hierarchy (subset the engine derives from).
+  class EAbort : public Exception { public: using Exception::Exception; };
+  class EOSError : public Exception { public: using Exception::Exception; DWORD ErrorCode = 0; };
+  class EConvertError : public Exception { public: using Exception::Exception; };
+  class EAccessViolation : public Exception { public: using Exception::Exception; };
+  class EInOutError : public Exception { public: using Exception::Exception; int ErrorCode = 0; };
 }
 using Sysutils::Exception;
+using Sysutils::EAbort;
+using Sysutils::EOSError;
+using Sysutils::EConvertError;
 
 // TSearchRec — directory enumeration record (base of WinSCP's TSearchRecSmart).
 struct TSearchRec

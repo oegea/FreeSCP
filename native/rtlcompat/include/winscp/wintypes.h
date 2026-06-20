@@ -25,4 +25,14 @@ typedef DWORD           REGSAM;
 struct FILETIME   { DWORD dwLowDateTime; DWORD dwHighDateTime; };
 struct SYSTEMTIME { Word wYear, wMonth, wDayOfWeek, wDay, wHour, wMinute, wSecond, wMilliseconds; };
 
+// Version-info fixed block (FileInfo.h). Layout matches Win32 VS_FIXEDFILEINFO.
+struct VS_FIXEDFILEINFO
+{
+  DWORD dwSignature, dwStrucVersion;
+  DWORD dwFileVersionMS, dwFileVersionLS, dwProductVersionMS, dwProductVersionLS;
+  DWORD dwFileFlagsMask, dwFileFlags, dwFileOS, dwFileType, dwFileSubtype;
+  DWORD dwFileDateMS, dwFileDateLS;
+};
+typedef VS_FIXEDFILEINFO * PVSFixedFileInfo;
+
 #endif

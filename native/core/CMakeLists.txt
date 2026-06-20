@@ -45,6 +45,7 @@ target_link_libraries(winscpcore PUBLIC winscpcore_flags)
 # (proves the RTL surface + __property codegen keep covering them as rtlcompat grows)
 set(CORE_PARSE_HEADERS
   Global.h Common.h NamedObjs.h Http.h Option.h Security.h KeyGen.h
+  Exceptions.h FileInfo.h RemoteFiles.h
 )
 set(PARSE_STUBS "")
 foreach(h ${CORE_PARSE_HEADERS})

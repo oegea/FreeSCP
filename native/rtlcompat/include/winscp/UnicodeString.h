@@ -25,6 +25,13 @@ public:
   UnicodeString(const std::u16string & s) : FData(s) {}
   UnicodeString(char16_t c, int count) : FData(static_cast<size_t>(count), c) {}
 
+  // C++Builder UnicodeString has implicit numeric constructors that render the value as
+  // its decimal text (engine relies on int/int64 -> string conversions). Non-explicit to
+  // match Embarcadero overload resolution.
+  UnicodeString(int value) { AppendAscii(std::to_string(value)); }
+  UnicodeString(long long value) { AppendAscii(std::to_string(value)); }
+  UnicodeString(unsigned int value) { AppendAscii(std::to_string(value)); }
+
   // From the engine's wchar_t literals/buffers (2-byte under -fshort-wchar; converted
   // element-wise so it is correct even if wchar_t is 4 bytes).
   UnicodeString(const wchar_t * s) { if (s) while (*s) FData.push_back(static_cast<char16_t>(*s++)); }
@@ -67,6 +74,7 @@ public:
   bool operator<(const UnicodeString & rhs) const { return FData < rhs.FData; }
 
 private:
+  void AppendAscii(const std::string & s) { for (char c : s) FData.push_back(static_cast<char16_t>(c)); }
   std::u16string FData;
 };
 

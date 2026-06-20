@@ -7,6 +7,7 @@
 #define WINSCP_RTLCOMPAT_CLASSES_HPP
 
 #include "winscp/rtldefs.h"
+#include "winscp/wintypes.h"
 #include "winscp/UnicodeString.h"
 #include "System.Types.hpp"
 
@@ -73,6 +74,52 @@ class TStream : public TObject
 public:
   virtual __int64 __fastcall Read(void * Buffer, __int64 Count) = 0;
   virtual __int64 __fastcall Write(const void * Buffer, __int64 Count) = 0;
+  virtual __int64 __fastcall Seek(__int64 Offset, int Origin);
+  __int64 Position = 0;
+  __int64 Size = 0;
 };
+
+class THandleStream : public TStream
+{
+public:
+  virtual __int64 __fastcall Read(void * Buffer, __int64 Count);
+  virtual __int64 __fastcall Write(const void * Buffer, __int64 Count);
+  int Handle = -1;
+};
+
+class TFileStream : public THandleStream
+{
+public:
+  __fastcall TFileStream(const UnicodeString & FileName, Word Mode);
+};
+
+class TMemoryStream : public TStream
+{
+public:
+  virtual __int64 __fastcall Read(void * Buffer, __int64 Count);
+  virtual __int64 __fastcall Write(const void * Buffer, __int64 Count);
+  void * __fastcall Memory();
+  void __fastcall Clear();
+  void __fastcall SetSize(__int64 NewSize);
+};
+
+class TStringStream : public TMemoryStream
+{
+public:
+  __fastcall TStringStream(const UnicodeString & AString);
+  UnicodeString __fastcall DataString();
+};
+
+// The engine often qualifies these as Classes::TStrings etc. (their Embarcadero unit).
+namespace Classes {
+  using ::TObject;
+  using ::TPersistent;
+  using ::TList;
+  using ::TStrings;
+  using ::TStringList;
+  using ::TStream;
+  using ::TMethod;
+  using ::TListNotification;
+}
 
 #endif
