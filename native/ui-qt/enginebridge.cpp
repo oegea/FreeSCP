@@ -6,14 +6,47 @@
 
 #include <vcl.h>              // ported RTL + platform layer (rtlcompat): UnicodeString,
                               // FindFirst/TSearchRec, path helpers, GetEnvironmentVariable.
+#include "CoreMain.h"         // engine globals (Configuration, ApplicationLog, ...)
+#include "Configuration.h"
+#include "SessionData.h"
+#include "Terminal.h"
+#include "Interface.h"
+#include "RemoteFiles.h"
+#include "Exceptions.h"
 #include <algorithm>
 #include <cstdio>
 #include <filesystem>
+#include <memory>
+
+void __fastcall PuttyInitialize();   // one-time PuTTY init (sk_init + appname)
 
 namespace {
 
 std::string ToU8(const UnicodeString & s) { return std::string(UTF8String(s).c_str()); }
 UnicodeString FromU8(const std::string & s) { return UTF8ToString(RawByteString(s.c_str())); }
+
+//--- remote SFTP session state (single session) ---
+class BridgeConfiguration : public TConfiguration
+{
+public:
+  __fastcall BridgeConfiguration() : TConfiguration() {}
+  virtual UnicodeString TemporaryDir(bool = false) { return UnicodeString(L"/tmp/"); }
+};
+
+std::unique_ptr<TTerminal> g_terminal;
+std::unique_ptr<TSessionData> g_sessionData;
+UnicodeString g_password;
+bool g_engineInited = false;
+
+void EnsureEngineInited()
+{
+  if (g_engineInited) return;
+  ApplicationLog = new TApplicationLog();          // AppLog macro derefs this unguarded
+  Configuration = new BridgeConfiguration();
+  Configuration->Default();
+  PuttyInitialize();
+  g_engineInited = true;
+}
 
 } // namespace
 
@@ -96,6 +129,103 @@ std::vector<DirEntry> listLocalDir(const std::string & utf8Path)
               return a.name < b.name;
             });
   return result;
+}
+
+//--- remote SFTP session ---------------------------------------------------
+ConnectResult connectSftp(const std::string & host, int port,
+                          const std::string & user, const std::string & password)
+{
+  ConnectResult r;
+  try
+  {
+    EnsureEngineInited();
+    disconnectSftp();
+    g_password = FromU8(password);
+
+    g_sessionData.reset(new TSessionData(L""));
+    g_sessionData->Default();
+    g_sessionData->HostName = FromU8(host);
+    g_sessionData->PortNumber = port;
+    g_sessionData->UserName = FromU8(user);
+    g_sessionData->Password = g_password;
+    g_sessionData->FSProtocol = fsSFTPonly;
+    g_sessionData->FingerprintScan = false;
+
+    g_terminal.reset(new TTerminal(g_sessionData.get(), Configuration));
+    g_terminal->OnPromptUser =
+      [](TTerminal *, TPromptKind, UnicodeString, UnicodeString, TStrings *, TStrings * Results, bool & Result, void *)
+      { if (Results != nullptr) for (int i = 0; i < Results->Count; i++) Results->Strings[i] = g_password; Result = true; };
+    g_terminal->OnQueryUser =
+      [](TObject *, const UnicodeString &, TStrings *, unsigned int Answers, const TQueryParams *, unsigned int & Answer, TQueryType, void *)
+      { Answer = (Answers & qaYes) ? qaYes : ((Answers & qaOK) ? qaOK : Answers); };   // auto-accept host key
+
+    g_terminal->Open();
+    r.ok = true;
+    r.currentDir = ToU8(g_terminal->CurrentDirectory);
+  }
+  catch (Exception & E)
+  {
+    UnicodeString msg = E.Message;
+    ExtException * Ext = dynamic_cast<ExtException *>(&E);
+    if ((Ext != nullptr) && (Ext->MoreMessages != nullptr))
+      for (int i = 0; i < Ext->MoreMessages->Count; i++) msg += UnicodeString(L"\n") + Ext->MoreMessages->Strings[i];
+    r.error = ToU8(msg);
+    g_terminal.reset();
+  }
+  catch (...) { r.error = "unknown error"; g_terminal.reset(); }
+  return r;
+}
+
+bool remoteConnected() { return g_terminal && g_terminal->Active; }
+std::string remoteCurrentDir() { return remoteConnected() ? ToU8(g_terminal->CurrentDirectory) : std::string(); }
+
+std::vector<DirEntry> listRemoteDir(const std::string & utf8Path)
+{
+  std::vector<DirEntry> result;
+  if (!remoteConnected()) return result;
+  try
+  {
+    if (!utf8Path.empty() && (FromU8(utf8Path) != g_terminal->CurrentDirectory))
+    {
+      g_terminal->ChangeDirectory(FromU8(utf8Path));
+      g_terminal->ReadCurrentDirectory();
+    }
+    g_terminal->ReadDirectory(false);
+    TRemoteFileList * Files = g_terminal->Files;
+    if (Files != nullptr)
+      for (int i = 0; i < Files->Count; i++)
+      {
+        TRemoteFile * F = Files->Files[i];
+        UnicodeString n = F->FileName;
+        if (n == UnicodeString(L".")) continue;
+        DirEntry e;
+        e.name = ToU8(n);
+        e.isDir = F->IsDirectory;
+        e.isParent = (n == UnicodeString(L".."));
+        e.size = F->Size;
+        e.modified = e.isParent ? std::string() : ToU8(F->ModificationStr);
+        result.push_back(e);
+      }
+  }
+  catch (...) { /* leave partial/empty */ }
+
+  std::sort(result.begin(), result.end(),
+            [](const DirEntry & a, const DirEntry & b) {
+              if (a.isParent != b.isParent) return a.isParent > b.isParent;  // ".." first
+              if (a.isDir != b.isDir) return a.isDir > b.isDir;              // dirs next
+              return a.name < b.name;
+            });
+  return result;
+}
+
+void disconnectSftp()
+{
+  if (g_terminal)
+  {
+    try { if (g_terminal->Active) g_terminal->Close(); } catch (...) {}
+    g_terminal.reset();
+  }
+  g_sessionData.reset();
 }
 
 } // namespace engine

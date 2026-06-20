@@ -44,6 +44,23 @@ std::string formatSize(std::int64_t bytes);
 // Copy a local file (real file operation via the platform layer). Returns true on success.
 bool copyFile(const std::string & srcUtf8, const std::string & dstUtf8);
 
+//--- remote SFTP session (a single active session; mirrors the local panel) ---
+struct ConnectResult
+{
+  bool ok = false;
+  std::string error;        // human-readable on failure
+  std::string currentDir;   // resolved home directory on success
+};
+
+// Open an SFTP session (blocking). One session at a time; a new connect replaces the old.
+ConnectResult connectSftp(const std::string & host, int port,
+                          const std::string & user, const std::string & password);
+bool remoteConnected();
+std::string remoteCurrentDir();
+// List the remote directory (empty path = current/home). Sorted dirs-first; includes "..".
+std::vector<DirEntry> listRemoteDir(const std::string & utf8Path);
+void disconnectSftp();
+
 } // namespace engine
 
 #endif

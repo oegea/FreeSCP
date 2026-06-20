@@ -20,6 +20,11 @@
 #include <QKeyEvent>
 #include <QMessageBox>
 #include <QString>
+#include <QDialog>
+#include <QFormLayout>
+#include <QSpinBox>
+#include <QDialogButtonBox>
+#include <QProgressDialog>
 #include <functional>
 
 #include "enginebridge.h"
@@ -65,6 +70,8 @@ public:
 
   QString path() const { return FPath; }
   QTableView * view() const { return FView; }
+  void setRemote(bool r) { FRemote = r; FHeader->setText(r ? "Remote (SFTP)" : "Local"); }
+  bool isRemote() const { return FRemote; }
 
   void setActive(bool a)
   {
@@ -78,7 +85,7 @@ public:
     FPathEdit->setText(path);
     FModel->clear();
     FModel->setHorizontalHeaderLabels({ "Name", "Size", "Modified" });
-    FEntries = engine::listLocalDir(s8(path));
+    FEntries = FRemote ? engine::listRemoteDir(s8(path)) : engine::listLocalDir(s8(path));
     int dirs = 0, files = 0;
     for (const auto & e : FEntries)
     {
@@ -147,6 +154,7 @@ private:
   QStandardItemModel * FModel;
   QString FPath;
   QString FCounts;
+  bool FRemote = false;
   std::vector<engine::DirEntry> FEntries;
 };
 
@@ -185,7 +193,43 @@ int main(int argc, char ** argv)
   auto * actHome = tb->addAction("🏠 Home");
   auto * actRefresh = tb->addAction("⟳ Refresh");
   tb->addSeparator();
+  auto * actConnect = tb->addAction("🔌 Connect…");
   auto * actCopy = tb->addAction("F5 Copy →");
+
+  // SFTP connect dialog -> right panel becomes the remote session.
+  QObject::connect(actConnect, &QAction::triggered, [&] {
+    QDialog dlg(&window);
+    dlg.setWindowTitle("Connect to SFTP server");
+    auto * form = new QFormLayout(&dlg);
+    auto * host = new QLineEdit("127.0.0.1");
+    auto * port = new QSpinBox; port->setRange(1, 65535); port->setValue(2222);
+    auto * user = new QLineEdit("winscp");
+    auto * pass = new QLineEdit("winscp123"); pass->setEchoMode(QLineEdit::Password);
+    form->addRow("Host:", host);
+    form->addRow("Port:", port);
+    form->addRow("User:", user);
+    form->addRow("Password:", pass);
+    auto * bb = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
+    form->addRow(bb);
+    QObject::connect(bb, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+    QObject::connect(bb, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+    if (dlg.exec() != QDialog::Accepted) return;
+
+    window.statusBar()->showMessage("Connecting…");
+    QApplication::processEvents();
+    engine::ConnectResult r = engine::connectSftp(
+      s8(host->text()), port->value(), s8(user->text()), s8(pass->text()));
+    if (!r.ok)
+    {
+      QMessageBox::critical(&window, "Connection failed", u8(r.error));
+      window.statusBar()->showMessage("Connection failed");
+      return;
+    }
+    right->setRemote(true);
+    right->navigate(u8(r.currentDir));
+    right->onActivated();   // make remote active
+    window.statusBar()->showMessage(u8("Connected — " + r.currentDir));
+  });
   QObject::connect(actUp, &QAction::triggered, [&] { active->goUp(); updateStatus(); });
   QObject::connect(actHome, &QAction::triggered, [&] { active->navigate(u8(engine::homeDir())); updateStatus(); });
   QObject::connect(actRefresh, &QAction::triggered, [&] { active->refresh(); updateStatus(); });
