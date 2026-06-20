@@ -49,6 +49,11 @@ class TSafeHandleStream : public THandleStream
 {
 public:
   __fastcall TSafeHandleStream(int AHandle);
+#ifndef _WIN32
+  // WINSCP-NATIVE-PORT: callers cast OS file handles to THandle (void* here); accept that form
+  // and unpack the fd. On Windows THandle is integer-convertible so the int ctor already serves.
+  __fastcall TSafeHandleStream(void * AHandle);
+#endif
   __fastcall TSafeHandleStream(THandleStream * Source, bool Own);
   static TSafeHandleStream * CreateFromFile(const UnicodeString & FileName, unsigned short Mode);
   virtual __fastcall ~TSafeHandleStream();

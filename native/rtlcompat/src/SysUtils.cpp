@@ -14,6 +14,10 @@ __int64 __fastcall FileSeek(int Handle, __int64 Offset, int Origin)
   int whence = (Origin == soCurrent) ? SEEK_CUR : (Origin == soEnd) ? SEEK_END : SEEK_SET;
   return static_cast<__int64>(::lseek(Handle, static_cast<off_t>(Offset), whence));
 }
+__int64 __fastcall FileSeek(void * Handle, __int64 Offset, int Origin)
+{
+  return FileSeek(static_cast<int>(reinterpret_cast<intptr_t>(Handle)), Offset, Origin);
+}
 
 void __fastcall RaiseLastOSError() { RaiseLastOSError(errno); }
 

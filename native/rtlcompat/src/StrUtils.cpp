@@ -2,11 +2,35 @@
 // StrUtils.cpp — System.StrUtils bodies (subset).
 //---------------------------------------------------------------------------
 #include "StrUtils.hpp"
+#include "WideStrUtils.hpp"
 #include "winscp/SysStrFuncs.h"
 
 bool __fastcall IsDelimiter(const UnicodeString & Delimiters, const UnicodeString & S, int Index)
 {
   return S.IsDelimiter(Delimiters, Index);
+}
+
+TEncodeType __fastcall DetectUTF8Encoding(const RawByteString & S)
+{
+  const std::string & b = S.raw();
+  bool anyMultibyte = false;
+  size_t i = 0, n = b.size();
+  while (i < n)
+  {
+    unsigned char c = (unsigned char)b[i];
+    if (c < 0x80) { ++i; continue; }
+    int extra;
+    if      ((c & 0xE0) == 0xC0) extra = 1;
+    else if ((c & 0xF0) == 0xE0) extra = 2;
+    else if ((c & 0xF8) == 0xF0) extra = 3;
+    else return etANSI;                       // invalid lead byte
+    if (i + extra >= n) return etANSI;         // truncated sequence
+    for (int k = 1; k <= extra; ++k)
+      if (((unsigned char)b[i + k] & 0xC0) != 0x80) return etANSI;  // bad continuation
+    anyMultibyte = true;
+    i += extra + 1;
+  }
+  return anyMultibyte ? etUTF8 : etUSASCII;
 }
 bool __fastcall StartsStr(const UnicodeString & SubText, const UnicodeString & Text)
 {

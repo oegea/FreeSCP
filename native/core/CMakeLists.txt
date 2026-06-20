@@ -89,6 +89,7 @@ set(CORE_SSH_NAMES
   Configuration.cpp
   HierarchicalStorage.cpp
   SecureShell.cpp
+  SftpFileSystem.cpp
 )
 set(CORE_SSH_GEN_SOURCES "")
 foreach(name ${CORE_SSH_NAMES})

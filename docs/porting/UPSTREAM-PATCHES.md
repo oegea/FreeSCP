@@ -12,6 +12,11 @@ Windows/C++Builder build is byte-identical.
   putty backend's fd type. Avoids the engine↔putty SOCKET type clash.
 - **source/core/PuttyIntf.cpp** — `HasGSSAPI()` body guarded with `#ifdef NO_GSSAPI` (returns
   false); GSSAPI/Kerberos is not yet wired on the native build.
+- **source/core/FileBuffer.h / FileBuffer.cpp** — extra `TSafeHandleStream(void *)` ctor under
+  `#ifndef _WIN32`. Native callers cast OS file handles to `THandle` (which is `void*` in the
+  rtlcompat layer, since it doubles as the Win threading HANDLE), so the existing `(int)` ctor
+  doesn't match; the new ctor unpacks the fd via `reinterpret_cast<intptr_t>`. On Windows
+  `THandle` is integer-convertible so the `(int)` ctor already serves and this is compiled out.
 
 All other reconciliation is done outside source/ (native/putty/include shims, genprops, the
 rtlcompat/platform layers).

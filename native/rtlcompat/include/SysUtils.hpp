@@ -16,6 +16,7 @@
 #include "winscp/SysStrFuncs.h"
 #include <vector>
 #include <utility>
+#include <memory>
 
 // Delphi date/time = floating day count since 1899-12-30.
 class TDateTime
@@ -202,14 +203,49 @@ struct TLibModule
 };
 
 // System::Variant (OLE variant). Minimal stub; real conversions added when a .cpp needs them.
+// Variant subset: a scalar integer or a 1-D dynamic integer array (the only forms the engine
+// uses natively — SFTP packet-number bookkeeping). Array storage is shared on copy (Variant
+// arrays are reference-like), which matches the engine's assign-once-then-mutate usage.
 class Variant
 {
 public:
   Variant() = default;
-  Variant(int) {}
+  Variant(int v) : FValue(v) {}
+  Variant(unsigned int v) : FValue(v) {}
+  Variant(long long v) : FValue(v) {}
+  Variant(unsigned long v) : FValue((long long)v) {}
   Variant(const UnicodeString &) {}
-  UnicodeString __fastcall ToString() const { return UnicodeString(); }
+  operator int() const { return static_cast<int>(FValue); }
+  operator unsigned int() const { return static_cast<unsigned int>(FValue); }
+  operator long long() const { return FValue; }
+  UnicodeString __fastcall ToString() const { return UnicodeString(static_cast<long long>(FValue)); }
+
+  // --- 1-D array ops (VarArray*) ---
+  void __fastcall MakeArray(int Low, int High)
+  { FArray = std::make_shared<std::vector<long long>>(); FLow = Low; ArrayRedim(High); }
+  int __fastcall ArrayLowBound() const { return FLow; }
+  int __fastcall ArrayHighBound() const { return FArray ? (FLow + (int)FArray->size() - 1) : (FLow - 1); }
+  void __fastcall ArrayRedim(int NewHigh)
+  { if (!FArray) FArray = std::make_shared<std::vector<long long>>();
+    FArray->resize(static_cast<size_t>(NewHigh - FLow + 1)); }
+  Variant __fastcall GetElement(int Index) const
+  { return (FArray && Index >= FLow && Index <= ArrayHighBound()) ? Variant((*FArray)[Index - FLow]) : Variant(); }
+  void __fastcall PutElement(const Variant & Value, int Index)
+  { if (!FArray) FArray = std::make_shared<std::vector<long long>>();
+    if (Index - FLow >= (int)FArray->size()) FArray->resize(static_cast<size_t>(Index - FLow + 1));
+    if (Index >= FLow) (*FArray)[Index - FLow] = Value.FValue; }
+private:
+  long long FValue = 0;
+  int FLow = 0;
+  std::shared_ptr<std::vector<long long>> FArray;
 };
+
+// Variant array type tags (only the ones the engine names) + VarArrayCreate(bounds{low,high}).
+enum { varInteger = 3, varLongWord = 19, varInt64 = 20 };
+template <class T, class... A> std::vector<T> __fastcall MakeOpenArray(A... a) { return std::vector<T>{ static_cast<T>(a)... }; }
+#define OPENARRAY(t, vals) (::MakeOpenArray<t> vals)
+inline Variant __fastcall VarArrayCreate(const std::vector<int> & Bounds, int /*VarType*/)
+{ Variant v; int low = Bounds.size() > 0 ? Bounds[0] : 0; int high = Bounds.size() > 1 ? Bounds[1] : -1; v.MakeArray(low, high); return v; }
 
 extern const UnicodeString EmptyStr;
 extern int RandSeed;
@@ -248,5 +284,7 @@ int __fastcall FileRead(int Handle, System::DynamicArray<System::Byte> Buffer, i
 int __fastcall FileWrite(int Handle, const System::DynamicArray<System::Byte> Buffer, int Offset, int Count);
 // lseek over an OS fd; Origin is a TSeekOrigin (soBeginning/soCurrent/soEnd). -1 on error.
 __int64 __fastcall FileSeek(int Handle, __int64 Offset, int Origin);
+// THandle overload: on the native port OS file handles are fds packed into a HANDLE (void*).
+__int64 __fastcall FileSeek(void * Handle, __int64 Offset, int Origin);
 
 #endif

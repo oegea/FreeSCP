@@ -253,6 +253,14 @@ __fastcall TSafeHandleStream::TSafeHandleStream(int AHandle) :
 {
 }
 //---------------------------------------------------------------------------
+#ifndef _WIN32
+// WINSCP-NATIVE-PORT: OS file handle arrives as a THandle (void*) with the fd packed inside.
+__fastcall TSafeHandleStream::TSafeHandleStream(void * AHandle) :
+  TSafeHandleStream(static_cast<int>(reinterpret_cast<intptr_t>(AHandle)))
+{
+}
+//---------------------------------------------------------------------------
+#endif
 __fastcall TSafeHandleStream::TSafeHandleStream(THandleStream * Source, bool Own) :
   THandleStream(Source->Handle)
 {

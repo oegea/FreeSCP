@@ -300,7 +300,7 @@ def _closure_bind_addr(m):
 # 3) closure passed as a call argument to a known closure-taking method: f(Method) -> bind.
 #    (WinSCP funcs that take a Delphi event/closure by a member-method name, optionally with an
 #    explicit receiver: f(Method) -> this-bound, f(obj.Method) -> obj-bound.)
-CLOSURE_ARG_FUNCS = ['RunAction', 'TimeoutPrompt']
+CLOSURE_ARG_FUNCS = ['RunAction', 'TimeoutPrompt', 'RegisterReceiveHandler', 'UnregisterReceiveHandler']
 CLOSURE_ARG_RE = re.compile(
     r'\b(?P<fn>' + '|'.join(CLOSURE_ARG_FUNCS) + r')\(\s*'
     r'(?:(?P<recv>[A-Za-z_]\w*)\s*\.\s*)?'
@@ -319,11 +319,50 @@ def _closure_arg(m):
             '&::std::remove_reference<decltype(*this)>::type::%s))' % (m.group('fn'), rhs))
 
 
+# 4) closures passed as call args in known closure-taking call shapes that the simple
+#    single-arg rule (3) can't reach: an explicit-receiver method in a fixed argument slot, or
+#    the address-of-bound-member form. Each is specific to a function whose signature takes a
+#    Delphi event there, so wrapping is unambiguous (these recur in Terminal/Scp/Sftp).
+def _mc_recv(recv, meth):
+    return ('::winscp::MakeClosure(%s, &::std::remove_reference<decltype(*%s)>::type::%s)'
+            % (recv, recv, meth))
+def _mc_obj(obj, meth):
+    return ('::winscp::MakeClosure(&%s, &::std::remove_reference<decltype(%s)>::type::%s)'
+            % (obj, obj, meth))
+def _mc_this(meth):
+    return ('::winscp::MakeClosure(this, &::std::remove_reference<decltype(*this)>::type::%s)' % meth)
+
+# 4a) TFileOperationProgressType Local(&recv->M1, &recv->M2);
+PROGRESS_CTOR_RE = re.compile(
+    r'TFileOperationProgressType\s+(?P<var>\w+)\s*\(\s*'
+    r'&\s*(?P<r1>\w+)\s*->\s*(?P<m1>\w+)\s*,\s*'
+    r'&\s*(?P<r2>\w+)\s*->\s*(?P<m2>\w+)\s*\)')
+def _progress_ctor(m):
+    return 'TFileOperationProgressType %s(%s, %s)' % (
+        m.group('var'), _mc_recv(m.group('r1'), m.group('m1')), _mc_recv(m.group('r2'), m.group('m2')))
+
+# 4b) ProcessDirectory(<arg1>, recv->Method, ...) — the 2nd arg is a TProcessFileEvent.
+PROCESSDIR_RE = re.compile(
+    r'ProcessDirectory\(\s*(?P<a1>[^,]+?)\s*,\s*(?P<recv>\w+)\s*->\s*(?P<meth>\w+)\s*,')
+def _processdir(m):
+    return 'ProcessDirectory(%s, %s,' % (m.group('a1'), _mc_recv(m.group('recv'), m.group('meth')))
+
+# 4c) FileOperationLoop(Method, ...) — the 1st arg is the operation's callback event (this-bound).
+FILEOPLOOP_RE = re.compile(r'FileOperationLoop\(\s*(?P<meth>[A-Za-z_]\w*)\s*,')
+def _fileoploop(m):
+    if re.match(r'F[A-Z]', m.group('meth')) or m.group('meth') in _BIND_SKIP:
+        return m.group(0)
+    return 'FileOperationLoop(%s,' % _mc_this(m.group('meth'))
+
+
 def process(text):
     text = transform_try_finally(text)
     text = CLOSURE_TYPEDEF_RE.sub(_closure_typedef, text)
     text = CLOSURE_BIND_ADDR_RE.sub(_closure_bind_addr, text)
     text = CLOSURE_BIND_RE.sub(_closure_bind, text)
+    text = PROGRESS_CTOR_RE.sub(_progress_ctor, text)
+    text = PROCESSDIR_RE.sub(_processdir, text)
+    text = FILEOPLOOP_RE.sub(_fileoploop, text)
     text = CLOSURE_ARG_RE.sub(_closure_arg, text)
     return PROP_RE.sub(convert, text)
 
