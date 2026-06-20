@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(winscp_native LANGUAGES CXX)
+project(winscp_native LANGUAGES C CXX)
 
 # WinSCP native port (macOS first, Linux next). See ../CLAUDE.md and ../docs/porting/PLAN.md.
 # This tree NEVER builds the upstream Windows projects; it builds the ported engine + Qt UI.
@@ -20,6 +20,7 @@ enable_testing()
 # Phase 1 keystone: Embarcadero RTL compatibility layer.
 add_subdirectory(rtlcompat)
 
+add_subdirectory(putty)        # Phase 3: PuTTY core (SSH/SFTP), platform-independent C
 add_subdirectory(core)         # Phase 1+ ported engine (libwinscpcore), grows leaf-first
 add_subdirectory(ui-qt)        # Phase 0 skeleton -> Phase 6 real GUI
 

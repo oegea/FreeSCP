@@ -141,3 +141,21 @@ clean std-only boundary that isolates the engine's -fshort-wchar/UnicodeString A
 QString. enginebridge.cpp is the only UI TU built with engine flags; main.cpp is plain Qt.
 This is the exact pattern the remote (SSH/SFTP) panel will use once the backend lands.
 Verified: app launches; bridge enumerates real files (dirs-first, "..", sizes).
+
+## Phase 3 START: PuTTY core compiles natively (149/150 C files)
+- Unix native/putty/include/platform.h supplies the PuTTY platform contract (types, timing,
+  THREADLOCAL, CRITICAL_SECTION->pthread, WPARAM/LPARAM, tree234 fwd, HELPCTX, clipboard
+  consts) INSTEAD of source/putty/windows/platform.h — no source edit.
+- libputtycore.a: 149 object files (all of crypto/ssh/utils/proxy/stubs) build on clang/arm64
+  with -DWINSCP -DMPEXT -DNO_GSSAPI -include platform.h. Excluded: windows/* (Win backend),
+  x86 hardware crypto (*-ni on arm), conf_data.c (one MSVC (int)"" const-init — revisit).
+- Backslash include `ssh\gss.h` handled with a literal-backslash stub (macOS allows it);
+  GSSAPI/Kerberos disabled for now.
+
+### Phase 3 remaining (the runtime backend — makes it LINK + connect)
+native/putty/src (not yet written): BSD-socket network.c (sk_new/connect/send/recv/close +
+WinSCP MPEXT sk_new extras), do_select/select_result + socket iteration over select()/poll,
+noise.c (/dev/urandom + rusage entropy), getticktime (mach_absolute_time), storage (random
+seed file; host keys via WinSCP), callback_set pthread sync. Then compile PuttyIntf.cpp/
+SecureShell.cpp (C++ engine side) and wire SecureShell's event loop to select() — at which
+point the remote panel can do a real SSH/SFTP connect.
