@@ -121,3 +121,13 @@ FontSpec *fontspec_copy(const FontSpec *f) { return fontspec_new(f ? f->name : "
 void fontspec_free(FontSpec *f) { if (f) { sfree(f->name); sfree(f); } }
 void fontspec_serialise(BinarySink *bs, FontSpec *f) { put_asciz(bs, f->name ? f->name : ""); }
 FontSpec *fontspec_deserialise(BinarySource *src) { return fontspec_new(get_asciz(src)); }
+
+/* ltime — current local time as struct tm (windows/utils/ltime.c equivalent). */
+#include <time.h>
+struct tm ltime(void)
+{
+    time_t t = time(NULL);
+    struct tm tmv;
+    localtime_r(&t, &tmv);
+    return tmv;
+}

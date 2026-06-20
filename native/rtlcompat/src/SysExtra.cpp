@@ -486,9 +486,55 @@ void __fastcall TDateTime::DecodeTime(Word * H, Word * M, Word * S, Word * MS) c
   if (MS) *MS = (Word)(ms % 1000); ms /= 1000; if (S) *S = (Word)(ms % 60); ms /= 60;
   if (M) *M = (Word)(ms % 60); if (H) *H = (Word)(ms / 60); }
 
-DWORD __fastcall GetFileVersionInfoSize(const wchar_t *, DWORD * h) { if (h) *h = 0; return 0; }
-BOOL  __fastcall GetFileVersionInfo(const wchar_t *, DWORD, DWORD, void *) { return FALSE; }
-BOOL  __fastcall VerQueryValue(const void *, const wchar_t *, void ** v, UINT * l) { if (v) *v = nullptr; if (l) *l = 0; return FALSE; }
+// No real PE version resource on the native port — synthesize a VS_FIXEDFILEINFO so the engine's
+// version queries succeed. The info block buffer simply IS a VS_FIXEDFILEINFO; VerQueryValue("\\")
+// returns it. Other sub-queries (translations/strings) report absent.
+#define WINSCP_NATIVE_FILEVER_MS ((6u << 16) | 3u)   /* 6.3.x.x */
+#define WINSCP_NATIVE_FILEVER_LS (0u)
+DWORD __fastcall GetFileVersionInfoSize(const wchar_t *, DWORD * h)
+{ if (h) *h = 0; return (DWORD)sizeof(VS_FIXEDFILEINFO); }
+BOOL  __fastcall GetFileVersionInfo(const wchar_t *, DWORD, DWORD, void * data)
+{
+  if (data == nullptr) return FALSE;
+  VS_FIXEDFILEINFO * fi = static_cast<VS_FIXEDFILEINFO *>(data);
+  *fi = VS_FIXEDFILEINFO{};
+  fi->dwSignature = 0xFEEF04BDu;
+  fi->dwStrucVersion = 0x00010000u;
+  fi->dwFileVersionMS = WINSCP_NATIVE_FILEVER_MS; fi->dwFileVersionLS = WINSCP_NATIVE_FILEVER_LS;
+  fi->dwProductVersionMS = WINSCP_NATIVE_FILEVER_MS; fi->dwProductVersionLS = WINSCP_NATIVE_FILEVER_LS;
+  return TRUE;
+}
+BOOL  __fastcall VerQueryValue(const void * block, const wchar_t * sub, void ** v, UINT * l)
+{
+  if (block == nullptr || sub == nullptr) { if (v) *v = nullptr; if (l) *l = 0; return FALSE; }
+  UnicodeString Sub(sub);
+  // "\\" -> the fixed file info block itself.
+  if (Sub == UnicodeString(L"\\"))
+  { if (v) *v = const_cast<void *>(block); if (l) *l = (UINT)sizeof(VS_FIXEDFILEINFO); return TRUE; }
+  // "\\VarFileInfo\\Translation" -> one {langid=0x0409 (en-US), charset=0x04E4 (1252)} entry.
+  if (Sub == UnicodeString(L"\\VarFileInfo\\Translation"))
+  { static unsigned short Trans[2] = { 0x0409, 0x04E4 };
+    if (v) *v = Trans; if (l) *l = (UINT)sizeof(Trans); return TRUE; }
+  // "\\StringFileInfo\\<lang><cs>\\<Key>" -> a synthesized default for the key.
+  if (StartsStr(UnicodeString(L"\\StringFileInfo\\"), Sub))
+  {
+    int p = Sub.LastDelimiter(UnicodeString(L"\\"));
+    UnicodeString Key = (p > 0) ? Sub.SubString(p + 1, Sub.Length() - p) : UnicodeString();
+    static wchar_t Buf[64];
+    UnicodeString Val;
+    if (SameText(Key, L"ReleaseType")) Val = L"stable";
+    else if (Key.Pos(L"Version") > 0) Val = L"6.3.0.0";
+    else if (SameText(Key, L"CompanyName")) Val = L"Martin Prikryl";
+    else if (SameText(Key, L"ProductName")) Val = L"WinSCP";
+    else Val = L"WinSCP";
+    int n = (Val.Length() < 63) ? Val.Length() : 63;
+    for (int i = 0; i < n; ++i) Buf[i] = (wchar_t)Val[i + 1];
+    Buf[n] = 0;
+    if (v) *v = Buf; if (l) *l = (UINT)n;
+    return TRUE;
+  }
+  if (v) *v = nullptr; if (l) *l = 0; return FALSE;
+}
 void  __fastcall Randomize() {}
 int   __fastcall Random(int Range) { return Range > 0 ? 0 : 0; }
 UnicodeString __fastcall StripHotkey(const UnicodeString & S)

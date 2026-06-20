@@ -10,6 +10,11 @@
 #include <map>
 #include <chrono>
 
+// Socket-readiness pump (WinSock.cpp): signals WSA event handles whose sockets are ready, so the
+// engine's WaitForMultipleObjects loop wakes on network activity. Weakly used; harmless if no
+// sockets are registered.
+extern "C" int winscp_pump_socket_events(void);
+
 namespace {
 
 struct WaitObject
@@ -97,9 +102,10 @@ DWORD __fastcall WaitForMultipleObjects(DWORD Count, const HANDLE * Handles, BOO
   auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(Milliseconds == INFINITE ? 1 : Milliseconds);
   for (;;)
   {
+    winscp_pump_socket_events();   // wake FSocketEvent when its socket becomes ready (WinSock.cpp)
     for (DWORD i = 0; i < Count; ++i) { WaitObject * o = Lookup(Handles[i]); if (o && o->Wait(0)) return WAIT_OBJECT_0 + i; }
     if (Milliseconds != INFINITE && std::chrono::steady_clock::now() >= deadline) return WAIT_TIMEOUT;
-    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    std::this_thread::sleep_for(std::chrono::milliseconds(2));
   }
 }
 

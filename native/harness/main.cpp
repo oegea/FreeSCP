@@ -1,0 +1,107 @@
+//---------------------------------------------------------------------------
+// main.cpp — headless SFTP connect harness. Builds a TConfiguration + TSessionData + TTerminal,
+// wires minimal non-interactive callbacks (password from the session, auto-accept host key),
+// opens the session and lists the remote directory. Target server: the staged Docker sshd
+// (localhost:2222 winscp/winscp123). First end-to-end runtime test of the ported engine.
+//---------------------------------------------------------------------------
+#include <vcl.h>
+#include "CoreMain.h"
+#include "Configuration.h"
+#include "SessionData.h"
+#include "Terminal.h"
+#include "Interface.h"
+#include "RemoteFiles.h"
+#include <cstdio>
+
+// PuTTY one-time init (sk_init + sets appname); normally called by CoreInitialize.
+void __fastcall PuttyInitialize();
+void __fastcall PuttyFinalize();
+
+static void out(const UnicodeString & s)
+{ std::string u(UTF8String(s).c_str()); std::fprintf(stderr, "%s\n", u.c_str()); }
+
+// Concrete TConfiguration (the base is abstract on TemporaryDir()).
+class THarnessConfiguration : public TConfiguration
+{
+public:
+  __fastcall THarnessConfiguration() : TConfiguration() {}
+  virtual UnicodeString TemporaryDir(bool = false) { return UnicodeString(L"/tmp/"); }
+};
+
+int main(int argc, char ** argv)
+{
+  UnicodeString Host = (argc > 1) ? UnicodeString(argv[1]) : UnicodeString(L"127.0.0.1");
+  int Port = (argc > 2) ? atoi(argv[2]) : 2222;
+  UnicodeString User = (argc > 3) ? UnicodeString(argv[3]) : UnicodeString(L"winscp");
+  UnicodeString Pass = (argc > 4) ? UnicodeString(argv[4]) : UnicodeString(L"winscp123");
+
+  try
+  {
+    // The engine's AppLog macro dereferences ApplicationLog with no null guard (CoreInitialize
+    // normally creates it). Provide one (Logging defaults off).
+    ApplicationLog = new TApplicationLog();
+    Configuration = new THarnessConfiguration();
+    Configuration->Default();
+    PuttyInitialize();   // sk_init + appname; the engine's CoreInitialize would normally do this
+    Configuration->LogProtocol = 1;
+    Configuration->LogFileName = L"/tmp/winscp-harness.log";
+    Configuration->Logging = true;
+    out(L"[harness] Configuration created; PuTTY initialized.");
+
+    std::unique_ptr<TSessionData> Data(new TSessionData(L""));
+    Data->Default();
+    Data->HostName = Host;
+    Data->PortNumber = Port;
+    Data->UserName = User;
+    Data->Password = Pass;
+    Data->FSProtocol = fsSFTPonly;
+    out(FORMAT(L"[harness] Session: %s@%s:%d (SFTP)", (User, Host, Port)));
+
+    std::unique_ptr<TTerminal> Terminal(new TTerminal(Data.get(), Configuration));
+
+    Terminal->OnInformation =
+      [](TTerminal *, const UnicodeString & Str, int, const UnicodeString &) { out(UnicodeString(L"[info] ") + Str); };
+    Terminal->OnPromptUser =
+      [&](TTerminal *, TPromptKind Kind, UnicodeString Name, UnicodeString, TStrings * Prompts, TStrings * Results, bool & Result, void *)
+      {
+        out(FORMAT(L"[prompt] kind=%d name='%s' prompts=%d results=%d",
+          ((int)Kind, Name, (Prompts ? Prompts->Count : 0), (Results ? Results->Count : 0))));
+        // Fill every requested field with the password (covers password + keyboard-interactive).
+        if (Results != nullptr)
+          for (int i = 0; i < Results->Count; i++) Results->Strings[i] = Pass;
+        Result = true;
+      };
+    Terminal->OnQueryUser =
+      [](TObject *, const UnicodeString & Query, TStrings *, unsigned int Answers, const TQueryParams *, unsigned int & Answer, TQueryType, void *)
+      { out(UnicodeString(L"[query] ") + Query); Answer = (Answers & qaYes) ? qaYes : ((Answers & qaOK) ? qaOK : Answers); };
+    Terminal->OnShowExtendedException =
+      [](TTerminal *, Exception * E, void *) { out(UnicodeString(L"[exception] ") + (E ? UnicodeString(E->Message) : UnicodeString())); };
+
+    out(L"[harness] Opening session...");
+    Terminal->Open();
+    out(L"[harness] CONNECTED.");
+
+    Terminal->ChangeDirectory(L"/config");
+    Terminal->ReadCurrentDirectory();
+    Terminal->ReadDirectory(false);
+    TRemoteFileList * Files = Terminal->Files;
+    out(FORMAT(L"[harness] %s : %d entries", (Terminal->CurrentDirectory, (Files ? Files->Count : 0))));
+    if (Files != nullptr)
+      for (int i = 0; i < Files->Count; i++)
+      { TRemoteFile * F = Files->Files[i]; out(FORMAT(L"  %s\t%s", (F->FileName, UnicodeString((__int64)F->Size)))); }
+
+    Terminal->Close();
+    out(L"[harness] Done.");
+    return 0;
+  }
+  catch (Exception & E)
+  {
+    out(UnicodeString(L"[FATAL] ") + E.Message);
+    return 1;
+  }
+  catch (...)
+  {
+    out(L"[FATAL] unknown exception");
+    return 2;
+  }
+}

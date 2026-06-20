@@ -11,3 +11,24 @@ target_compile_definitions(winscp_harness PRIVATE WINSCP NO_GSSAPI)
 target_include_directories(winscp_harness PRIVATE
   ${CMAKE_SOURCE_DIR}/putty/include
   ${CMAKE_SOURCE_DIR}/../source/putty)
+
+# Headless connect harness executable. The engine archives must be whole-archive linked
+# (-force_load): they carry global constructors and cross-references that on-demand archive
+# extraction would drop. OpenSSL is a normal dynamic dep.
+find_package(OpenSSL REQUIRED)
+add_executable(winscp-harness main.cpp)
+add_dependencies(winscp-harness winscpcore_genheaders)
+target_link_libraries(winscp-harness PRIVATE winscpcore_flags)
+target_compile_definitions(winscp-harness PRIVATE WINSCP NO_GSSAPI)
+target_include_directories(winscp-harness PRIVATE
+  ${CMAKE_SOURCE_DIR}/putty/include
+  ${CMAKE_SOURCE_DIR}/../source/putty)
+target_link_options(winscp-harness PRIVATE
+  -Wl,-force_load,$<TARGET_FILE:winscpcore>
+  -Wl,-force_load,$<TARGET_FILE:winscp_harness>
+  -Wl,-force_load,$<TARGET_FILE:puttycore>
+  -Wl,-force_load,$<TARGET_FILE:puttyplatform>
+  -Wl,-force_load,$<TARGET_FILE:puttycrypto_vs>)
+target_link_libraries(winscp-harness PRIVATE
+  winscpcore winscp_harness puttycore puttyplatform puttycrypto_vs rtlcompat
+  OpenSSL::SSL OpenSSL::Crypto)

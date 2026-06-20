@@ -10,11 +10,13 @@
 //---------------------------------------------------------------------------
 #include <map>
 #include <mutex>
+#include <vector>
 #include <sys/select.h>
 #include <sys/socket.h>
 #include <unistd.h>
 #include <errno.h>
 #include "winapi/winsock2.h"
+#include "winscp/WinThreads.h"   // SetEvent — bridge socket readiness to the WSA event handle
 
 namespace {
 
@@ -49,8 +51,7 @@ void probe(SOCKET s, bool & rd, bool & wr, bool & ex)
 extern "C" {
 
 int WSAEventSelect(SOCKET s, WSAEVENT hEventObject, long lNetworkEvents)
-{
-  std::lock_guard<std::mutex> lock(g_mutex);
+{  std::lock_guard<std::mutex> lock(g_mutex);
   if (lNetworkEvents == 0)
   {
     g_socks.erase(s);
@@ -67,8 +68,9 @@ int WSAEventSelect(SOCKET s, WSAEVENT hEventObject, long lNetworkEvents)
   return 0;
 }
 
-int WSAEnumNetworkEvents(SOCKET s, WSAEVENT /*hEventObject*/, LPWSANETWORKEVENTS lpNetworkEvents)
+int WSAEnumNetworkEvents(SOCKET s, WSAEVENT hEventObject, LPWSANETWORKEVENTS lpNetworkEvents)
 {
+  if (hEventObject != nullptr) ResetEvent(hEventObject);   // consume the readiness signal
   if (lpNetworkEvents == nullptr) { g_lastError = EINVAL; return SOCKET_ERROR; }
   lpNetworkEvents->lNetworkEvents = 0;
   for (int i = 0; i < FD_MAX_EVENTS; ++i) lpNetworkEvents->iErrorCode[i] = 0;
@@ -118,9 +120,38 @@ int WSAEnumNetworkEvents(SOCKET s, WSAEVENT /*hEventObject*/, LPWSANETWORKEVENTS
   }
   if (wr && (mask & FD_WRITE) && !(ev & FD_CONNECT)) ev |= FD_WRITE;
   if (ex && (mask & FD_OOB)) ev |= FD_OOB;
-
   lpNetworkEvents->lNetworkEvents = ev;
   return 0;
+}
+
+// Bridge socket readiness to the WSA event handles: zero-timeout select() over every registered
+// socket; if any has a ready bit within its mask, SetEvent on its associated handle. The engine's
+// WaitForMultipleObjects calls this each poll cycle so its FSocketEvent wakes on socket activity
+// (the WSAEventSelect emulation can't auto-signal at the kernel level). Returns #events signaled.
+int winscp_pump_socket_events(void)
+{
+  std::vector<std::pair<SOCKET, WSAEVENT>> snapshot;
+  long maxfd = -1;
+  fd_set rd, wr, ex;
+  FD_ZERO(&rd); FD_ZERO(&wr); FD_ZERO(&ex);
+  {
+    std::lock_guard<std::mutex> lock(g_mutex);
+    for (auto & kv : g_socks)
+    {
+      SOCKET s = kv.first;
+      FD_SET(s, &rd); FD_SET(s, &wr); FD_SET(s, &ex);
+      if (s > maxfd) maxfd = s;
+      snapshot.push_back({s, kv.second.event});
+    }
+  }
+  if (snapshot.empty()) return 0;
+  struct timeval tv{0, 0};
+  if (::select((int)maxfd + 1, &rd, &wr, &ex, &tv) <= 0) return 0;
+  int signaled = 0;
+  for (auto & p : snapshot)
+    if (FD_ISSET(p.first, &rd) || FD_ISSET(p.first, &wr) || FD_ISSET(p.first, &ex))
+    { if (p.second) { SetEvent(p.second); ++signaled; } }
+  return signaled;
 }
 
 int WSAGetLastError(void) { return g_lastError ? g_lastError : errno; }

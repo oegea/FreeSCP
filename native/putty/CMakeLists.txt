@@ -42,7 +42,7 @@ add_custom_command(
 list(APPEND PUTTY_SRC ${PUTTY_GEN}/conf_data.c)
 
 add_library(puttycore STATIC ${PUTTY_SRC})
-target_compile_definitions(puttycore PRIVATE WINSCP MPEXT NO_GSSAPI)
+target_compile_definitions(puttycore PRIVATE WINSCP MPEXT NO_GSSAPI NDEBUG)
 target_include_directories(puttycore PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}/include    # unix platform.h (must precede source/putty/windows)
   ${PUTTY_DIR}
@@ -60,7 +60,7 @@ file(GLOB PUTTY_PLATFORM_SRC ${CMAKE_CURRENT_SOURCE_DIR}/src/*.c)
 # escaping; WinSCP's HierarchicalStorage calls them for stored-key-name consistency).
 list(APPEND PUTTY_PLATFORM_SRC ${PUTTY_DIR}/windows/utils/escape_registry_key.c)
 add_library(puttyplatform STATIC ${PUTTY_PLATFORM_SRC})
-target_compile_definitions(puttyplatform PRIVATE WINSCP MPEXT NO_GSSAPI)
+target_compile_definitions(puttyplatform PRIVATE WINSCP MPEXT NO_GSSAPI NDEBUG)
 target_include_directories(puttyplatform PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}/include ${PUTTY_DIR} ${LIBS_DIR}/openssl/include)
 target_compile_options(puttyplatform PRIVATE -include platform.h -std=gnu11 -w -Wno-everything)
@@ -75,7 +75,7 @@ set(PUTTY_CRYPTO_VS_SRC
   ${PUTTY_DIR}/crypto/sha256-sw.c
   ${PUTTY_DIR}/crypto/argon2.c)
 add_library(puttycrypto_vs STATIC ${PUTTY_CRYPTO_VS_SRC})
-target_compile_definitions(puttycrypto_vs PRIVATE WINSCP MPEXT NO_GSSAPI WINSCP_VS)
+target_compile_definitions(puttycrypto_vs PRIVATE WINSCP MPEXT NO_GSSAPI WINSCP_VS NDEBUG)
 target_include_directories(puttycrypto_vs PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}/include ${PUTTY_DIR} ${LIBS_DIR}/openssl/include)
 target_compile_options(puttycrypto_vs PRIVATE -include platform.h -std=gnu11 -w -Wno-everything)

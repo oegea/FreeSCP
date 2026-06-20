@@ -189,7 +189,14 @@ Socket *sk_new(SockAddr *addr, int port, bool privport, bool oobinline,
     bufchain_init(&s->output);
     if (addr && addr->error) { s->error = dupstr(addr->error); }
     else if (!ns_start_connect(s)) { /* error set */ }
-    if (s->fd >= 0) ns_link(s);
+    if (s->fd >= 0) {
+        ns_link(s);
+        /* Register the fd with the engine's event machinery (WinSCP's do_select -> SecureShell ->
+         * WSAEventSelect). Without this the socket is never serviced and the connect never
+         * completes. Mirrors windows/network.c, which calls do_select on every new socket. */
+        const char *err = do_select(s->plug, s->fd, true);
+        if (err && !s->error) s->error = dupstr(err);
+    }
     return &s->sock;
 }
 
