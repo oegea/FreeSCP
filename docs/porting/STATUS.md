@@ -30,11 +30,24 @@ cmake --build build && ctest --test-dir build
 # run GUI skeleton: open build/ui-qt/winscp-qt.app
 ```
 
-## Next up (Phase 1)
-1. `__fastcall`/`__closure` macros + umbrella headers (`vcl.h`, `System.hpp`, `SysUtils.hpp`).
-2. Compile first leaf core file against rtlcompat — target `source/core/FileMasks.cpp` or
-   `CopyParam.cpp`; grow rtlcompat (Format, Trim, IntToStr, TStringList...) on demand.
-3. `TObject`, `Exception`/`ExtException`, `TStrings`/`TStringList`.
+## Phase 1 progress (RTL compat layer)
+- ✅ RTL umbrella headers: vcl.h, System.hpp, SysUtils.hpp, Classes.hpp, Contnrs.hpp,
+  System.SyncObjs.hpp, System.Types.hpp, winscp/{rtldefs,wintypes,AnsiStrings,UnicodeString}.
+- ✅ `__property` solved: `native/tools/genprops.py` rewrites it to clang
+  `__declspec(property)` (`-fms-extensions`); CMake generates shadow headers for all 36 core
+  headers into `build/geninclude/core` (searched before source/core). Field targets (`Fxxx`)
+  get generated accessors; methods used directly; indexed + RO/WO handled.
+- ✅ `Common.h` (gateway header) parses; `Global.cpp` compiles into libwinscpcore.a.
+- ✅ Header-parse regression guard (`winscpcore_parsecheck`): 7/36 core headers parse clean
+  standalone — Global, Common, NamedObjs, Http, Option, Security, KeyGen.
+
+## Next up (Phase 1, the grind)
+1. Grow rtlcompat to make the remaining 29 headers parse (Exceptions.h next — foundational:
+   needs TVarRec/ARRAYOFCONST, PResStringRec, more Exception ctors). Add each to
+   CORE_PARSE_HEADERS as it passes.
+2. Then compile leaf .cpp bodies (FileMasks/CopyParam/RemoteFiles) — implement RTL method
+   bodies (UnicodeString Format/Trim/IntToStr, TStringList, TObject) on demand.
+3. Phase 2 platform adapters once config/threading/socket headers are reached.
 
 ## Legend
 ✅ done · 🟡 in progress · ⬜ todo · 🔴 blocked
