@@ -50,3 +50,18 @@ target_compile_definitions(puttyplatform PRIVATE WINSCP MPEXT NO_GSSAPI)
 target_include_directories(puttyplatform PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}/include ${PUTTY_DIR} ${LIBS_DIR}/openssl/include)
 target_compile_options(puttyplatform PRIVATE -include platform.h -std=gnu11 -w -Wno-everything)
+
+# Software crypto bodies. WinSCP gates the C reference AES/SHA implementations behind WINSCP_VS
+# (a crypto-only "VS" sub-build); without it the main putty build only DECLARES aes_sliced_key_
+# setup / sha256_sw_block etc, leaving them undefined at link. We compile just those files a
+# second time WITH -DWINSCP_VS to supply the bodies — they define a disjoint symbol set from the
+# non-VS copies in puttycore (verified: no overlap), so both coexist.
+set(PUTTY_CRYPTO_VS_SRC
+  ${PUTTY_DIR}/crypto/aes-sw.c
+  ${PUTTY_DIR}/crypto/sha256-sw.c)
+add_library(puttycrypto_vs STATIC ${PUTTY_CRYPTO_VS_SRC})
+target_compile_definitions(puttycrypto_vs PRIVATE WINSCP MPEXT NO_GSSAPI WINSCP_VS)
+target_include_directories(puttycrypto_vs PUBLIC
+  ${CMAKE_CURRENT_SOURCE_DIR}/include ${PUTTY_DIR} ${LIBS_DIR}/openssl/include)
+target_compile_options(puttycrypto_vs PRIVATE -include platform.h -std=gnu11 -w -Wno-everything)
+set_target_properties(puttycrypto_vs PROPERTIES C_STANDARD 11)
