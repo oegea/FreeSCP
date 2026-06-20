@@ -117,6 +117,10 @@ public:
   void __fastcall SetCommaText(const UnicodeString & Value);
   __declspec(property(get=GetCommaText, put=SetCommaText)) UnicodeString CommaText;
 
+  UnicodeString __fastcall GetDelimitedText();
+  void __fastcall SetDelimitedText(const UnicodeString & Value);
+  __declspec(property(get=GetDelimitedText, put=SetDelimitedText)) UnicodeString DelimitedText;
+
   UnicodeString __fastcall GetName(int Index);
   UnicodeString __fastcall GetValue(const UnicodeString & Name);
   void __fastcall SetValue(const UnicodeString & Name, const UnicodeString & Value);

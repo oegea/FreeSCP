@@ -112,6 +112,22 @@ UnicodeString __fastcall TStrings::GetCommaText()
   { if (i > 0) Result += UnicodeString(Delimiter, 1); Result += Get(i); }
   return Result;
 }
+UnicodeString __fastcall TStrings::GetDelimitedText()
+{
+  UnicodeString Result;
+  for (int i = 0; i < GetCount(); ++i)
+  { if (i > 0) Result += UnicodeString(Delimiter, 1); Result += Get(i); }
+  return Result;
+}
+void __fastcall TStrings::SetDelimitedText(const UnicodeString & Value)
+{
+  Clear();
+  UnicodeString item;
+  wchar_t d = Delimiter;
+  for (int i = 1; i <= Value.Length(); ++i)
+  { wchar_t c = (wchar_t)Value[i]; if (c == d) { Add(item); item = UnicodeString(); } else item += UnicodeString(c, 1); }
+  if (!item.IsEmpty()) Add(item);
+}
 void __fastcall TStrings::SetCommaText(const UnicodeString & Value)
 {
   Clear();

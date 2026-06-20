@@ -83,3 +83,17 @@ int __fastcall FindDelimiter(const UnicodeString & Delimiters, const UnicodeStri
 { for (int i = (Offset < 1 ? 1 : Offset); i <= S.Length(); ++i) if (S.IsDelimiter(Delimiters, i)) return i; return 0; }
 int __fastcall LastDelimiter(const UnicodeString & Delimiters, const UnicodeString & S)
 { return S.LastDelimiter(Delimiters); }
+int __fastcall Pos(const UnicodeString & SubStr, const UnicodeString & S)
+{ return S.Pos(SubStr); }
+int __fastcall StrLIComp(const wchar_t * S1, const wchar_t * S2, int MaxLen)
+{
+  for (int k = 0; k < MaxLen; ++k)
+  {
+    wchar_t a = S1[k], b = S2[k];
+    wchar_t la = (a >= L'A' && a <= L'Z') ? a + 32 : a;
+    wchar_t lb = (b >= L'A' && b <= L'Z') ? b + 32 : b;
+    if (la != lb) return (la < lb) ? -1 : 1;
+    if (a == 0) break;
+  }
+  return 0;
+}

@@ -210,15 +210,19 @@ class Variant
 {
 public:
   Variant() = default;
-  Variant(int v) : FValue(v) {}
-  Variant(unsigned int v) : FValue(v) {}
-  Variant(long long v) : FValue(v) {}
-  Variant(unsigned long v) : FValue((long long)v) {}
-  Variant(const UnicodeString &) {}
+  Variant(int v) : FValue(v), FNull(false) {}
+  Variant(unsigned int v) : FValue(v), FNull(false) {}
+  Variant(long long v) : FValue(v), FNull(false) {}
+  Variant(unsigned long v) : FValue((long long)v), FNull(false) {}
+  Variant(const UnicodeString & s) : FStr(s), FIsStr(true), FNull(false) {}
   operator int() const { return static_cast<int>(FValue); }
   operator unsigned int() const { return static_cast<unsigned int>(FValue); }
   operator long long() const { return FValue; }
-  UnicodeString __fastcall ToString() const { return UnicodeString(static_cast<long long>(FValue)); }
+  operator UnicodeString() const { return FIsStr ? FStr : UnicodeString(static_cast<long long>(FValue)); }
+  bool __fastcall IsNull() const { return FNull; }
+  bool operator==(const UnicodeString & o) const { return (UnicodeString)(*this) == o; }
+  bool operator!=(const UnicodeString & o) const { return !(*this == o); }
+  UnicodeString __fastcall ToString() const { return (UnicodeString)(*this); }
 
   // --- 1-D array ops (VarArray*) ---
   void __fastcall MakeArray(int Low, int High)
@@ -236,9 +240,13 @@ public:
     if (Index >= FLow) (*FArray)[Index - FLow] = Value.FValue; }
 private:
   long long FValue = 0;
+  UnicodeString FStr;
+  bool FIsStr = false;
+  bool FNull = true;        // a default-constructed Variant is Null (Unassigned)
   int FLow = 0;
   std::shared_ptr<std::vector<long long>> FArray;
 };
+typedef Variant OleVariant;
 
 // Variant array type tags (only the ones the engine names) + VarArrayCreate(bounds{low,high}).
 enum { varInteger = 3, varLongWord = 19, varInt64 = 20 };

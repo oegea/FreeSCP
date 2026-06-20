@@ -93,6 +93,7 @@ set(CORE_SSH_NAMES
   ScpFileSystem.cpp
   Terminal.cpp
   SessionInfo.cpp
+  SessionData.cpp
 )
 set(CORE_SSH_GEN_SOURCES "")
 foreach(name ${CORE_SSH_NAMES})
