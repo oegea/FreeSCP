@@ -47,12 +47,19 @@ set(CORE_PARSE_HEADERS
   Global.h Common.h NamedObjs.h Http.h Option.h Security.h KeyGen.h
   Exceptions.h FileInfo.h RemoteFiles.h
   Cryptography.h FileBuffer.h FileMasks.h HierarchicalStorage.h Usage.h
-  Configuration.h
+  Configuration.h CopyParam.h Bookmarks.h FileOperationProgress.h SessionData.h
+  PuttyTools.h
 )
+# Headers are written assuming Common.h is already included (as in every engine .cpp), so the
+# guard mirrors that — include Common.h first (except for Common.h itself).
 set(PARSE_STUBS "")
 foreach(h ${CORE_PARSE_HEADERS})
   set(stub ${CMAKE_CURRENT_BINARY_DIR}/parse_${h}.cpp)
-  file(GENERATE OUTPUT ${stub} CONTENT "#include <vcl.h>\n#include \"${h}\"\n")
+  if(h STREQUAL "Common.h")
+    file(GENERATE OUTPUT ${stub} CONTENT "#include <vcl.h>\n#include \"${h}\"\n")
+  else()
+    file(GENERATE OUTPUT ${stub} CONTENT "#include <vcl.h>\n#include \"Common.h\"\n#include \"${h}\"\n")
+  endif()
   list(APPEND PARSE_STUBS ${stub})
 endforeach()
 add_library(winscpcore_parsecheck OBJECT ${PARSE_STUBS})

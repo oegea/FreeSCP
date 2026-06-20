@@ -38,7 +38,7 @@ cmake --build build && ctest --test-dir build
   headers into `build/geninclude/core` (searched before source/core). Field targets (`Fxxx`)
   get generated accessors; methods used directly; indexed + RO/WO handled.
 - ✅ `Common.h` (gateway header) parses; `Global.cpp` compiles into libwinscpcore.a.
-- ✅ Header-parse regression guard (`winscpcore_parsecheck`): **16/36** core headers parse
+- ✅ Header-parse regression guard (`winscpcore_parsecheck`): **21/36** core headers parse
   clean standalone — Global, Common, NamedObjs, Http, Option, Security, KeyGen, Exceptions,
   FileInfo, RemoteFiles, Cryptography, FileBuffer, FileMasks, HierarchicalStorage, Usage, Configuration.
 - RTL added since: TVarRec/PResStringRec + std exception classes; numeric UnicodeString
