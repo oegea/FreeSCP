@@ -177,3 +177,21 @@ Remaining undefined when force-linking puttycore+puttyplatform: 31.
 
 ### Next: uxnet.c (the network backend) -> then compile PuttyIntf.cpp/SecureShell.cpp ->
 wire SecureShell event loop to select() -> real SSH/SFTP connect from the remote panel.
+
+## Phase 3 platform backend COMPLETE — uxnet.c (network) done
+native/putty/src/uxnet.c: BSD-socket backend replacing windows/network.c — SockAddr via
+getaddrinfo, NetSocket Socket/Plug vtable, non-blocking async connect (multi-candidate),
+bufchain output buffering, set_frozen, select_result(fd,events) dispatch, do_select/
+first_socket/next_socket/socket_writable, and winscp_net_select(ms) (one select() pass the
+engine loop will call). Force-linking puttycore+puttyplatform now leaves only 16 undefined,
+ALL engine-side (provided by WinSCP when PuttyIntf.cpp/SecureShell.cpp compile): get_callback_
+set/get_seat_callback_set/get_log_callback_set/get_log_seat, modalfatalbox, ldisc_echoedit_
+update, old_keyfile_warning, pinger_*/schedule_timer/expire_timer_context (WinSCP timing),
+sshver/putty_section/in_memory_key_data/argon2_internal_vs.
+
+### Phase 3 step 2 (next): compile the engine SSH side
+PuttyIntf.cpp + SecureShell.cpp (+ Cryptography/HierarchicalStorage/Configuration/SessionData
+which include PuttyIntf.h). They include putty headers via the engine flags + need genprops
+(__property/__closure already handled) + putty include path. They supply the last 16 symbols
+and call backend_init/backend_send/select_result. Then wire SecureShell's event loop to
+winscp_net_select() -> real SSH/SFTP connect from the remote panel.
