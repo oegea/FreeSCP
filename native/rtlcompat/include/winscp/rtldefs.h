@@ -19,11 +19,17 @@
 #define __closure
 #endif
 
+// MSVC/bcc 64-bit integer keyword. As a macro so `unsigned __int64` also works.
+#ifndef __int64
+#define __int64 long long
+#endif
+
 // Delphi-style integer aliases used across the engine.
 typedef int            Integer;
 typedef unsigned int   Cardinal;
 typedef bool           Boolean;
 typedef wchar_t        Char;
-typedef std::int64_t   __int64_compat;
+typedef std::intptr_t  NativeInt;
+typedef std::uintptr_t NativeUInt;
 
 #endif

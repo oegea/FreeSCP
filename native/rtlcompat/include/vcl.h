@@ -6,7 +6,13 @@
 #ifndef WINSCP_RTLCOMPAT_VCL_H
 #define WINSCP_RTLCOMPAT_VCL_H
 
+#include "winscp/rtldefs.h"
+#include "winscp/wintypes.h"
 #include "System.hpp"
+#include "System.Types.hpp"
 #include "System.SyncObjs.hpp"
+#include "SysUtils.hpp"
+#include "Classes.hpp"
+#include "Contnrs.hpp"
 
 #endif
