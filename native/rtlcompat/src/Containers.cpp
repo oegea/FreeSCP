@@ -162,3 +162,10 @@ UnicodeString __fastcall TStrings::GetValueFromIndex(int Index)
   int p = S.Pos(UnicodeString(L"="));
   return (p > 0) ? S.SubString(p + 1, S.Length()) : UnicodeString();
 }
+
+void __fastcall TStrings::Move(int CurIndex, int NewIndex)
+{ UnicodeString s = Get(CurIndex); TObject * o = GetObject(CurIndex); Delete(CurIndex);
+  Insert(NewIndex, s); PutObject(NewIndex, o); }
+void __fastcall TStrings::Exchange(int I1, int I2)
+{ UnicodeString s = Get(I1); TObject * o = GetObject(I1);
+  Put(I1, Get(I2)); PutObject(I1, GetObject(I2)); Put(I2, s); PutObject(I2, o); }

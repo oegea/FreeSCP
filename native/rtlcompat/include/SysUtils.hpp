@@ -37,6 +37,8 @@ public:
   UnicodeString __fastcall TimeString() const;
   UnicodeString __fastcall DateTimeString() const;
   UnicodeString __fastcall FormatString(const UnicodeString & Fmt) const;
+  void __fastcall DecodeDate(Word * Y, Word * M, Word * D) const;
+  void __fastcall DecodeTime(Word * H, Word * M, Word * S, Word * MS) const;
 private:
   double FValue = 0.0;
 };

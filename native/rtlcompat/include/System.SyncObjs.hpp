@@ -6,9 +6,10 @@
 #define WINSCP_RTLCOMPAT_SYSTEM_SYNCOBJS_HPP
 
 #include "winscp/rtldefs.h"
+#include "winscp/Object.h"
 #include <mutex>
 
-class TCriticalSection
+class TCriticalSection : public TObject
 {
 public:
   __fastcall TCriticalSection() = default;

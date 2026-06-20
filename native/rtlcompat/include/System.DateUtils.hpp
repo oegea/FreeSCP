@@ -1,0 +1,4 @@
+#ifndef WINSCP_RTLCOMPAT_SYS_DATEUTILS_HPP
+#define WINSCP_RTLCOMPAT_SYS_DATEUTILS_HPP
+#include "DateUtils.hpp"
+#endif

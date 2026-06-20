@@ -37,6 +37,10 @@
 
 // __int64 is a builtin type under -fms-extensions (== long long); no typedef needed.
 
+// Delphi Math Min/Max (generic).
+template <class T> T Min(T a, T b) { return a < b ? a : b; }
+template <class T> T Max(T a, T b) { return a > b ? a : b; }
+
 // Delphi-style integer aliases used across the engine.
 typedef int            Integer;
 typedef unsigned int   Cardinal;

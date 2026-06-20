@@ -255,9 +255,9 @@ const TDateTime MinDateTime = TDateTime(-657434.0);
 const TDateTime MaxDateTime = TDateTime(2958465.99999);
 TFormatSettings FormatSettings;
 UnicodeString __fastcall TDateTime::DateString() const
-{ Word y,m,d; DecodeDate(*this,y,m,d); return Format(L"%.4d-%.2d-%.2d", ARRAYOFCONST(((int)y,(int)m,(int)d))); }
+{ Word y,m,d; ::DecodeDate(*this,y,m,d); return Format(L"%.4d-%.2d-%.2d", ARRAYOFCONST(((int)y,(int)m,(int)d))); }
 UnicodeString __fastcall TDateTime::TimeString() const
-{ Word h,mi,s,ms; DecodeTime(*this,h,mi,s,ms); return Format(L"%.2d:%.2d:%.2d", ARRAYOFCONST(((int)h,(int)mi,(int)s))); }
+{ Word h,mi,s,ms; ::DecodeTime(*this,h,mi,s,ms); return Format(L"%.2d:%.2d:%.2d", ARRAYOFCONST(((int)h,(int)mi,(int)s))); }
 UnicodeString __fastcall TDateTime::DateTimeString() const { return DateString() + UnicodeString(L" ") + TimeString(); }
 UnicodeString __fastcall TDateTime::FormatString(const UnicodeString &) const { return DateTimeString(); }
 
@@ -367,3 +367,20 @@ const TTimeSpan TTimeSpan::Zero;
 UnicodeString __fastcall DateTimeToStr(const TDateTime & DT) { return DT.DateTimeString(); }
 UnicodeString __fastcall DateToStr(const TDateTime & DT) { return DT.DateString(); }
 UnicodeString __fastcall TimeToStr(const TDateTime & DT) { return DT.TimeString(); }
+
+void __fastcall TDateTime::DecodeDate(Word * Y, Word * M, Word * D) const
+{ long days; double f; Split(*this, days, f); int y, m, d; SerialToDate(days, y, m, d);
+  if (Y) *Y = (Word)y; if (M) *M = (Word)m; if (D) *D = (Word)d; }
+void __fastcall TDateTime::DecodeTime(Word * H, Word * M, Word * S, Word * MS) const
+{ long days; double f; Split(*this, days, f);
+  __int64 ms = (__int64)std::llround(f * MSecsPerDay);
+  if (MS) *MS = (Word)(ms % 1000); ms /= 1000; if (S) *S = (Word)(ms % 60); ms /= 60;
+  if (M) *M = (Word)(ms % 60); if (H) *H = (Word)(ms / 60); }
+
+DWORD __fastcall GetFileVersionInfoSize(const wchar_t *, DWORD * h) { if (h) *h = 0; return 0; }
+BOOL  __fastcall GetFileVersionInfo(const wchar_t *, DWORD, DWORD, void *) { return FALSE; }
+BOOL  __fastcall VerQueryValue(const void *, const wchar_t *, void ** v, UINT * l) { if (v) *v = nullptr; if (l) *l = 0; return FALSE; }
+void  __fastcall Randomize() {}
+int   __fastcall Random(int Range) { return Range > 0 ? 0 : 0; }
+UnicodeString __fastcall StripHotkey(const UnicodeString & S)
+{ UnicodeString r; for (int i = 1; i <= S.Length(); ++i) if (S[i] != L'&') r += UnicodeString(S[i], 1); return r; }

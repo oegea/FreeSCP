@@ -1,0 +1,4 @@
+#ifndef WINSCP_RTLCOMPAT_FILECTRL_HPP
+#define WINSCP_RTLCOMPAT_FILECTRL_HPP
+#include "SysUtils.hpp"
+#endif

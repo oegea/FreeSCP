@@ -96,6 +96,8 @@ public:
   virtual void __fastcall Clear() = 0;
   virtual int __fastcall IndexOf(const UnicodeString & S);
   int __fastcall IndexOfName(const UnicodeString & Name);
+  void __fastcall Move(int CurIndex, int NewIndex);
+  void __fastcall Exchange(int Index1, int Index2);
 
   UnicodeString __fastcall GetText();
   void __fastcall SetText(const UnicodeString & Text);
@@ -235,6 +237,9 @@ public:
 
 // Stream exceptions (System.Classes).
 class EStreamError : public Exception { public: using Exception::Exception; };
+class EListError : public Exception { public: using Exception::Exception; };
+class EStringListError : public Exception { public: using Exception::Exception; };
+class EArgumentException : public Exception { public: using Exception::Exception; };
 class EReadError  : public EStreamError { public: using EStreamError::EStreamError; };
 class EWriteError : public EStreamError { public: using EStreamError::EStreamError; };
 class EFCreateError : public EStreamError { public: using EStreamError::EStreamError; };

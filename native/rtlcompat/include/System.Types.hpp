@@ -7,5 +7,7 @@
 namespace System { namespace Types {
   enum TDuplicates { dupIgnore, dupAccept, dupError };
 } }
+// Engine sometimes qualifies as plain Types::
+namespace Types { using namespace System::Types; }
 
 #endif

@@ -71,36 +71,54 @@ def convert(match):
     accessors = []
     get_fn = put_fn = None
 
+    UNCONST = ('const_cast< ::std::remove_const< ::std::remove_reference<'
+               'decltype(*this)>::type>::type *>(this)')
+
+    # An indexed property:  TYPE Name[IDXDECL] = {read=G, write=S}  ->  obj->Name[i].
+    # Forward through accessors so private getters/setters work; pass the index along.
+    if indexed:
+        idecl = m.group('index')[1:-1].strip()      # inside [...]
+        toks = idecl.split()
+        if len(toks) >= 2:
+            iparam, iname = idecl, toks[-1]
+        else:
+            iparam, iname = (idecl + ' __i'), '__i'
+        if read is not None:
+            get_fn = '__pg_%s' % name
+            accessors.append('%s __fastcall %s(%s) const { return (%s)(%s->%s(%s)); }'
+                             % (typ, get_fn, iparam, typ, UNCONST, read, iname))
+        if write is not None:
+            put_fn = '__ps_%s' % name
+            accessors.append('void __fastcall %s(%s, %s v) { %s->%s(%s, v); }'
+                             % (put_fn, iparam, typ, UNCONST, write, iname))
+        spec = []
+        if get_fn: spec.append('get=%s' % get_fn)
+        if put_fn: spec.append('put=%s' % put_fn)
+        decl_line = '__declspec(property(%s)) %s %s[];' % (', '.join(spec), typ, name)
+        prefix = (' '.join(accessors) + ' ') if accessors else ''
+        return prefix + decl_line
+
     # Always emit a forwarding accessor (placed where __property was, i.e. its visibility —
     # usually public). It can legally read a private field or call a private getter/setter,
     # which __declspec(property) targeting the private member directly cannot from outside.
     if read is not None:
-        if indexed:
-            get_fn = read
+        get_fn = '__pg_%s' % name
+        # Accessor is const so the property is readable on const objects. Field reads are
+        # const-ok; method getters (often non-const) are reached by casting away constness of
+        # *this without naming the class. `index=N` passes the fixed value.
+        if is_field(read):
+            expr = read
         else:
-            get_fn = '__pg_%s' % name
-            # Accessor is const so the property is readable on const objects. Field reads are
-            # const-ok; method getters (often non-const in the engine) are reached by casting
-            # away constness of *this without naming the class (decltype trick). `index=N`
-            # passes the fixed index. C-style cast to the property type (getter may return a
-            # const/related type the property exposes mutably).
-            if is_field(read):
-                expr = read
-            else:
-                call = '%s(%s)' % (read, index) if index else (read + '()')
-                expr = ('const_cast< ::std::remove_const< ::std::remove_reference<'
-                        'decltype(*this)>::type>::type *>(this)->%s' % call)
-            accessors.append('%s __fastcall %s() const { return (%s)(%s); }'
-                             % (typ, get_fn, typ, expr))
+            call = '%s(%s)' % (read, index) if index else (read + '()')
+            expr = '%s->%s' % (UNCONST, call)
+        accessors.append('%s __fastcall %s() const { return (%s)(%s); }'
+                         % (typ, get_fn, typ, expr))
     if write is not None:
-        if indexed:
-            put_fn = write
+        put_fn = '__ps_%s' % name
+        if is_field(write):
+            accessors.append('void __fastcall %s(%s v) { %s = v; }' % (put_fn, typ, write))
         else:
-            put_fn = '__ps_%s' % name
-            if is_field(write):
-                accessors.append('void __fastcall %s(%s v) { %s = v; }' % (put_fn, typ, write))
-            else:
-                accessors.append('void __fastcall %s(%s v) { %s(%sv); }' % (put_fn, typ, write, iarg))
+            accessors.append('void __fastcall %s(%s v) { %s(%sv); }' % (put_fn, typ, write, iarg))
 
     spec = []
     if get_fn:
