@@ -118,4 +118,9 @@ void DeleteCriticalSection(CRITICAL_SECTION *);
 void EnterCriticalSection(CRITICAL_SECTION *);
 void LeaveCriticalSection(CRITICAL_SECTION *);
 
+/* session-name <-> registry-key escaping (portable util compiled from windows/utils/) */
+struct strbuf;
+void escape_registry_key(const char *in, struct strbuf *out);
+void unescape_registry_key(const char *in, struct strbuf *out);
+
 #endif /* PUTTY_UNIX_PLATFORM_H */

@@ -191,3 +191,27 @@ void __fastcall TStrings::SaveToFile(const UnicodeString & FileName)
   UnicodeString t = GetText(); for (int i = 1; i <= t.Length(); ++i) { char c = (char)t[i]; std::fwrite(&c, 1, 1, f); }
   std::fclose(f);
 }
+void __fastcall TStrings::SaveToStream(TStream * Stream)
+{
+  if (Stream == nullptr) return;
+  // byte-per-char (matches SaveToFile); UTF-8-aware INI snapshotting is done in IniFiles.cpp.
+  UnicodeString t = GetText();
+  std::string bytes; bytes.reserve(t.Length());
+  for (int i = 1; i <= t.Length(); ++i) bytes.push_back((char)t[i]);
+  if (!bytes.empty()) Stream->WriteBuffer(bytes.data(), (int)bytes.size());
+}
+void __fastcall TStrings::LoadFromStream(TStream * Stream)
+{
+  if (Stream == nullptr) return;
+  __int64 sz = Stream->GetSize(); std::string bytes((size_t)(sz > 0 ? sz : 0), '\0');
+  if (sz > 0) Stream->ReadBuffer(&bytes[0], (int)sz);
+  UnicodeString u; for (char c : bytes) u += UnicodeString((char16_t)(unsigned char)c, 1);
+  SetText(u);
+}
+bool __fastcall TStrings::Equals(TStrings * Strings)
+{
+  if (Strings == nullptr) return false;
+  if (GetCount() != Strings->GetCount()) return false;
+  for (int i = 0; i < GetCount(); ++i) if (Get(i) != Strings->Get(i)) return false;
+  return true;
+}

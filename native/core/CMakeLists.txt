@@ -87,6 +87,7 @@ set(CORE_SSH_NAMES
   PuttyIntf.cpp
   Cryptography.cpp
   Configuration.cpp
+  HierarchicalStorage.cpp
 )
 set(CORE_SSH_GEN_SOURCES "")
 foreach(name ${CORE_SSH_NAMES})

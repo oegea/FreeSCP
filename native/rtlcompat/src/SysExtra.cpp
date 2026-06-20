@@ -327,6 +327,33 @@ bool __fastcall TPath::IsDriveRooted(const UnicodeString & P)
   if (P.Length() >= 1 && (P[1] == L'/' || P[1] == L'\\')) return true;
   return (P.Length() >= 2 && P[2] == L':'); }
 
+double __fastcall StrToFloat(const UnicodeString & S)
+{ std::string s = ToU8(S); for (auto & c : s) if (c == ',') c = '.'; return std::strtod(s.c_str(), nullptr); }
+double __fastcall StrToFloatDef(const UnicodeString & S, double Default)
+{ if (S.IsEmpty()) return Default; try { return StrToFloat(S); } catch (...) { return Default; } }
+TDateTime __fastcall StrToDateTime(const UnicodeString &)
+{ return TDateTime(); }  // TODO: parse Delphi date/time text; config datetime reads stub to 0 for now
+
+int __fastcall FileGetAttr(const UnicodeString & FileName)
+{ std::error_code ec; auto st = fs::status(ToU8(FileName), ec); if (ec) return -1;
+  int a = 0; if (fs::is_directory(st)) a |= faDirectory;
+  if ((st.permissions() & fs::perms::owner_write) == fs::perms::none) a |= faReadOnly; return a; }
+int __fastcall FileSetAttr(const UnicodeString & FileName, int Attr)
+{ std::error_code ec; auto p = fs::path(ToU8(FileName)); auto perms = fs::status(p, ec).permissions();
+  if (ec) return -1;
+  if (Attr & faReadOnly) perms &= ~(fs::perms::owner_write | fs::perms::group_write | fs::perms::others_write);
+  else perms |= fs::perms::owner_write;
+  fs::permissions(p, perms, ec); return ec ? -1 : 0; }
+bool __fastcall ForceDirectories(const UnicodeString & Dir)
+{ if (Dir.IsEmpty()) return false; std::error_code ec; fs::create_directories(ToU8(Dir), ec);
+  return !ec || fs::is_directory(ToU8(Dir), ec); }
+UnicodeString __fastcall ExpandUNCFileName(const UnicodeString & FileName) { return ExpandFileName(FileName); }
+BOOL __fastcall SetFileAttributes(const wchar_t * FileName, DWORD Attributes)
+{ return FileSetAttr(UnicodeString(FileName), (Attributes & FILE_ATTRIBUTE_READONLY) ? faReadOnly : 0) == 0 ? TRUE : FALSE; }
+
+long __fastcall RegSetValueEx(HKEY, const wchar_t *, DWORD, DWORD, const void *, DWORD) { return ERROR_ACCESS_DENIED; }
+long __fastcall RegQueryValueEx(HKEY, const wchar_t *, DWORD *, DWORD *, void *, DWORD *) { return ERROR_FILE_NOT_FOUND; }
+
 UnicodeString __fastcall ParamStr(int Index)
 { // Index 0 = executable path; other indices = argv (not tracked yet -> empty).
   if (Index == 0)

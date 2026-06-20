@@ -228,4 +228,25 @@ BOOL  __fastcall SystemTimeToTzSpecificLocalTime(TIME_ZONE_INFORMATION *, SYSTEM
 BOOL  __fastcall GetCPInfoEx(UINT, DWORD, CPINFOEX *);
 std::FILE * __fastcall _wfopen(const wchar_t * Path, const wchar_t * Mode);
 
+//--- path delimiter (Delphi System::PathDelim) — '\' to match WinSCP's internal storage-key
+//    convention (registry-style); implicit UnicodeString ctor lets it be used as Char or string.
+const wchar_t PathDelim = L'\\';
+const wchar_t DriveDelim = L':';
+
+//--- numeric/date parsing (System::SysUtils) ---
+double   __fastcall StrToFloat(const UnicodeString & S);
+double   __fastcall StrToFloatDef(const UnicodeString & S, double Default);
+TDateTime __fastcall StrToDateTime(const UnicodeString & S);
+
+//--- file attr / dir helpers ---
+int  __fastcall FileSetAttr(const UnicodeString & FileName, int Attr);
+int  __fastcall FileGetAttr(const UnicodeString & FileName);
+bool __fastcall ForceDirectories(const UnicodeString & Dir);
+UnicodeString __fastcall ExpandUNCFileName(const UnicodeString & FileName);
+BOOL __fastcall SetFileAttributes(const wchar_t * FileName, DWORD Attributes);
+
+//--- registry value API (registry absent natively — stubs report not-found) ---
+long __fastcall RegSetValueEx(HKEY, const wchar_t * Name, DWORD Reserved, DWORD Type, const void * Data, DWORD Size);
+long __fastcall RegQueryValueEx(HKEY, const wchar_t * Name, DWORD * Reserved, DWORD * Type, void * Data, DWORD * Size);
+
 #endif

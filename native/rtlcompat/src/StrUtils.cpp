@@ -57,3 +57,5 @@ UnicodeString __fastcall LeftStr(const UnicodeString & S, int Count)
 { if (Count <= 0) return UnicodeString(); if (Count >= S.Length()) return S; return S.SubString(1, Count); }
 int __fastcall FindDelimiter(const UnicodeString & Delimiters, const UnicodeString & S, int Offset)
 { for (int i = (Offset < 1 ? 1 : Offset); i <= S.Length(); ++i) if (S.IsDelimiter(Delimiters, i)) return i; return 0; }
+int __fastcall LastDelimiter(const UnicodeString & Delimiters, const UnicodeString & S)
+{ return S.LastDelimiter(Delimiters); }

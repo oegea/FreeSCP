@@ -109,7 +109,30 @@ const Word fmShareDenyWrite = 0x0020;
 
 //--- registry access ---
 #define KEY_READ 0x20019
+#define KEY_WRITE 0x20006
 #define KEY_WOW64_64KEY 0x0100
+#ifndef REG_NONE
+#define REG_NONE 0
+#endif
+#ifndef REG_SZ
+#define REG_SZ 1
+#endif
+#ifndef REG_DWORD
+#define REG_DWORD 4
+#endif
+#ifndef REG_QWORD
+#define REG_QWORD 11
+#endif
+
+//--- more Win error codes (registry/file sharing) ---
+#define ERROR_MORE_DATA 234L
+#define ERROR_ACCESS_DENIED 5L
+#define ERROR_SHARING_VIOLATION 32L
+
+//--- CreateFile disposition ---
+#define CREATE_ALWAYS 2
+#define OPEN_EXISTING 3
+#define OPEN_ALWAYS 4
 
 //--- process snapshot / access ---
 #define TH32CS_SNAPPROCESS 0x00000002

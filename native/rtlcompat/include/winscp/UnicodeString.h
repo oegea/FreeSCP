@@ -26,7 +26,8 @@ public:
   UnicodeString(const char16_t * s) : FData(s ? s : u"") {}
   UnicodeString(const char16_t * s, int len) : FData(s, s + len) {}
   UnicodeString(const std::u16string & s) : FData(s) {}
-  UnicodeString(char16_t c, int count) : FData(static_cast<size_t>(count), c) {}
+  // count defaults to 1 so a lone char (e.g. Delphi's PathDelim) implicitly becomes a string.
+  UnicodeString(char16_t c, int count = 1) : FData(static_cast<size_t>(count), c) {}
 
   // C++Builder UnicodeString has implicit numeric constructors that render the value as
   // its decimal text (engine relies on int/int64 -> string conversions). Non-explicit to
@@ -45,6 +46,9 @@ public:
   { for (char c : s.raw()) FData.push_back(static_cast<char16_t>(static_cast<unsigned char>(c))); }
   UnicodeString(const wchar_t * s, int len)
   { for (int i = 0; i < len; ++i) FData.push_back(static_cast<char16_t>(s[i])); }
+  // narrow (ANSI/ASCII) buffer + length — e.g. from a putty strbuf of escaped key chars.
+  UnicodeString(const char * s, int len)
+  { for (int i = 0; i < len; ++i) FData.push_back(static_cast<char16_t>(static_cast<unsigned char>(s[i]))); }
 
   // Delphi semantics: Length() is the char count; indexing is 1-based.
   int Length() const { return static_cast<int>(FData.size()); }

@@ -103,6 +103,11 @@ public:
   int __fastcall Append(const UnicodeString & S) { return Add(S); }
   void __fastcall LoadFromFile(const UnicodeString & FileName);
   void __fastcall SaveToFile(const UnicodeString & FileName);
+  void __fastcall LoadFromStream(TStream * Stream);
+  void __fastcall SaveToStream(TStream * Stream);
+  bool __fastcall Equals(TStrings * Strings);
+  void __fastcall BeginUpdate() {}
+  void __fastcall EndUpdate() {}
 
   UnicodeString __fastcall GetText();
   void __fastcall SetText(const UnicodeString & Text);

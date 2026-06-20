@@ -42,6 +42,9 @@ set_target_properties(puttycore PROPERTIES C_STANDARD 11)
 # Unix/macOS platform BACKEND for putty (network/select/noise/time/storage). Grows until
 # puttycore links + connects. Built with the same flags as puttycore.
 file(GLOB PUTTY_PLATFORM_SRC ${CMAKE_CURRENT_SOURCE_DIR}/src/*.c)
+# Portable PuTTY utils that upstream files under windows/ but are pure C (session-name <-> key
+# escaping; WinSCP's HierarchicalStorage calls them for stored-key-name consistency).
+list(APPEND PUTTY_PLATFORM_SRC ${PUTTY_DIR}/windows/utils/escape_registry_key.c)
 add_library(puttyplatform STATIC ${PUTTY_PLATFORM_SRC})
 target_compile_definitions(puttyplatform PRIVATE WINSCP MPEXT NO_GSSAPI)
 target_include_directories(puttyplatform PUBLIC

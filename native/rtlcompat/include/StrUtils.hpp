@@ -19,6 +19,8 @@ UnicodeString __fastcall DupeString(const UnicodeString & S, int Count);
 int __fastcall PosEx(const UnicodeString & SubStr, const UnicodeString & S, int Offset);
 UnicodeString __fastcall LeftStr(const UnicodeString & S, int Count);
 int __fastcall FindDelimiter(const UnicodeString & Delimiters, const UnicodeString & S, int Offset = 1);
+// SysUtils.LastDelimiter: 1-based index of the last char of S that is in Delimiters, else 0.
+int __fastcall LastDelimiter(const UnicodeString & Delimiters, const UnicodeString & S);
 int __fastcall IndexStr(const UnicodeString & AText, const UnicodeString * AValues, int Count);
 int __fastcall IndexText(const UnicodeString & AText, const UnicodeString * AValues, int Count);
 
