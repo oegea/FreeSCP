@@ -1513,26 +1513,38 @@ void __fastcall TTerminal::Open()
             if (SessionData->FSProtocol == fsFTP)
             {
               FFSProtocol = cfsFTP;
+#ifdef _WIN32  // WINSCP-NATIVE-PORT: FTP/WebDAV/S3 backends are Phase 4; SFTP/SCP-only for now.
               FFileSystem = new TFTPFileSystem(this);
               FFileSystem->Open();
               Log->AddSeparator();
               LogEvent(L"Using FTP protocol.");
+#else
+              throw Exception(L"FTP protocol is not supported on this build yet.");
+#endif
             }
             else if (SessionData->FSProtocol == fsWebDAV)
             {
               FFSProtocol = cfsWebDAV;
+#ifdef _WIN32  // WINSCP-NATIVE-PORT: see above.
               FFileSystem = new TWebDAVFileSystem(this);
               FFileSystem->Open();
               Log->AddSeparator();
               LogEvent(L"Using WebDAV protocol.");
+#else
+              throw Exception(L"WebDAV protocol is not supported on this build yet.");
+#endif
             }
             else if (SessionData->FSProtocol == fsS3)
             {
               FFSProtocol = cfsS3;
+#ifdef _WIN32  // WINSCP-NATIVE-PORT: see above.
               FFileSystem = new TS3FileSystem(this);
               FFileSystem->Open();
               Log->AddSeparator();
               LogEvent(L"Using S3 protocol.");
+#else
+              throw Exception(L"S3 protocol is not supported on this build yet.");
+#endif
             }
             else
             {

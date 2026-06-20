@@ -196,9 +196,9 @@ Socket *sk_new(SockAddr *addr, int port, bool privport, bool oobinline,
 Socket *sk_newlistener(const char *srcaddr, int port, Plug *plug, bool local_host_only, int address_family)
 { (void)srcaddr; (void)port; (void)plug; (void)local_host_only; (void)address_family; return NULL; }
 
-/* ---------- select integration ---------- */
-const char *do_select(Plug *plug, SOCKET skt, bool enable) { (void)plug; (void)skt; (void)enable; return NULL; }
-
+/* ---------- select integration ----------
+ * do_select is provided by WinSCP's PuttyIntf.cpp (routes socket events into the engine), so it
+ * is not defined here (would duplicate). */
 void select_result(WPARAM wParam, LPARAM lParam)
 {
     int fd = (int)wParam;

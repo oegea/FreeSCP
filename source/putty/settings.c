@@ -112,6 +112,7 @@ const struct BackendVtable *backend_vt_from_proto(int proto)
     return NULL;
 }
 
+#ifndef MPEXT  /* WINSCP-NATIVE-PORT: WinSCP's PuttyIntf.cpp supplies get_remote_username */
 char *get_remote_username(Conf *conf)
 {
     /* We don't worry about whether the username is stored as UTF-8,
@@ -126,6 +127,7 @@ char *get_remote_username(Conf *conf)
         return NULL;
     }
 }
+#endif
 
 static char *gpps_raw(settings_r *sesskey, const char *name, const char *def)
 {

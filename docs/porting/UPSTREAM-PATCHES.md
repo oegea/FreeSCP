@@ -23,5 +23,19 @@ Windows/C++Builder build is byte-identical.
   doesn't match; the new ctor unpacks the fd via `reinterpret_cast<intptr_t>`. On Windows
   `THandle` is integer-convertible so the `(int)` ctor already serves and this is compiled out.
 
+- **source/core/Common.h** — `IsWideChar` made `inline` (was a non-inline function body in a
+  header → ODR multiple-definition once more than one TU odr-uses it under clang). `inline` is
+  valid on every compiler; no behavior change.
+- **source/core/Terminal.cpp** — the FTP/WebDAV/S3 branches of `TTerminal::Open()` are guarded
+  `#ifdef _WIN32`; on the native build they `throw` "not supported yet" instead of instantiating
+  `T{FTP,WebDAV,S3}FileSystem` (those backends are Phase 4). Keeps the engine SFTP/SCP-only so it
+  links without pulling the unported filesystem classes.
+- **source/core/SessionInfo.cpp** — `TSessionLog::GetCmdLineLog` guards the `TManagementScript`
+  (scripting, unported) password-masking under `#ifdef _WIN32`; the headless engine logs no
+  command line so there is nothing to mask.
+- **source/putty/be_list.c** / **source/putty/settings.c** — `appname` and `get_remote_username`
+  wrapped in `#ifndef MPEXT`; WinSCP's PuttyIntf.cpp supplies both under MPEXT (the engine build
+  defines MPEXT), so the PuTTY originals would duplicate them at link.
+
 All other reconciliation is done outside source/ (native/putty/include shims, genprops, the
 rtlcompat/platform layers).

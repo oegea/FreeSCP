@@ -1097,8 +1097,11 @@ UnicodeString __fastcall TSessionLog::GetCmdLineLog(TConfiguration * AConfigurat
 
   if (!AConfiguration->LogSensitive)
   {
+#ifdef _WIN32  // WINSCP-NATIVE-PORT: TManagementScript (scripting) is not ported; the headless
+               // engine logs no command line, so there is nothing to mask here.
     TManagementScript Script(StoredSessions, false);
     Script.MaskPasswordInCommandLine(Result, true);
+#endif
   }
 
   return Result;

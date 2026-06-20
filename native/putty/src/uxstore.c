@@ -32,19 +32,11 @@ void close_settings_r(settings_r *h) { (void)h; }
 void del_settings(const char *sessionname) { (void)sessionname; }
 
 /* ---- host keys ----
- * CAVEAT: stubbed. have_ssh_host_key()==false means PuTTY treats every host key as unknown
- * and asks the Seat (WinSCP) to confirm — which is the correct hook point. store_host_key is
- * a no-op for now (WinSCP persists known hosts itself). Wire to WinSCP before real use. */
-bool have_ssh_host_key(Seat *seat, const char *host, int port, const char *keytype)
-{ (void)seat; (void)host; (void)port; (void)keytype; return false; }
+ * have_ssh_host_key / enum_host_ca_* / host_ca_load are provided by WinSCP's PuttyIntf.cpp (the
+ * real Seat-backed integration), so they are NOT defined here (would duplicate). store_host_key
+ * is a no-op placeholder that PuttyIntf does not provide; WinSCP persists known hosts itself. */
 void store_host_key(Seat *seat, const char *hostname, int port, const char *keytype, const char *key)
 { (void)seat; (void)hostname; (void)port; (void)keytype; (void)key; }
-
-/* host certificate authorities — none configured */
-host_ca_enum *enum_host_ca_start(void) { return NULL; }
-bool enum_host_ca_next(host_ca_enum *h, strbuf *out) { (void)h; (void)out; return false; }
-void enum_host_ca_finish(host_ca_enum *h) { (void)h; }
-host_ca *host_ca_load(const char *name) { (void)name; return NULL; }
 
 /* ---- random seed file ---- */
 static const char *seed_path(void)

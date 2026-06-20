@@ -33,7 +33,9 @@
 #include <stdio.h>
 #include "putty.h"
 
+#ifndef MPEXT  /* WINSCP-NATIVE-PORT: WinSCP's PuttyIntf.cpp supplies a runtime-set appname */
 const char *const appname = STR(APPNAME);
+#endif
 
 /*
  * Define the default protocol for the application. This is always a
