@@ -11,6 +11,19 @@ cmake --build build && ctest --test-dir build
 open build/ui-qt/winscp-qt.app          # working dual-pane local file manager (engine-backed)
 ```
 
+## Test SSH/SFTP server (Docker) — for the runtime connect milestone
+```sh
+docker run -d --name winscp-test-sshd -e PASSWORD_ACCESS=true \
+  -e USER_NAME=winscp -e USER_PASSWORD=winscp123 -p 2222:2222 \
+  linuxserver/openssh-server:latest
+# host localhost  port 2222  user winscp  pass winscp123  (SFTP subsystem on)
+# home = /config ; seeded: /config/hello.txt, /config/testdir/nested.txt
+# verify:  ssh -p 2222 winscp@localhost  (host key ed25519; password auth enabled)
+docker start winscp-test-sshd            # if stopped;  docker rm -f winscp-test-sshd to drop
+```
+Verified live this session (handshake + auth negotiation OK). The engine can't connect yet
+(no link; FSocketEvent->winscp_net_select wiring pending) — server is staged for that step.
+
 ## Architecture / layers (all under native/, Windows tree untouched)
 - **rtlcompat** (`native/rtlcompat`, lib): Embarcadero RTL emulation. Flags `-fshort-wchar
   -fms-extensions`. UnicodeString(u16,1-based)/AnsiString family, TObject+RTTI(typeid/
