@@ -33,6 +33,11 @@ Windows/C++Builder build is byte-identical.
 - **source/core/SessionInfo.cpp** — `TSessionLog::GetCmdLineLog` guards the `TManagementScript`
   (scripting, unported) password-masking under `#ifdef _WIN32`; the headless engine logs no
   command line so there is nothing to mask.
+- **source/core/Configuration.cpp** — `GetStorage()` resolves `stDetect` to `stIniFile` under
+  `#ifndef _WIN32`. There is no Windows registry on the native port, so storage (incl. host-key
+  storage, which otherwise built a registry-backed `TRegistryStorage` whose `RootKey==NULL` made
+  `RootKeyToStr` call `Abort()` during host-key save) must be INI/file-backed. On Windows the
+  detection is overridden by TWinConfiguration as before.
 - **source/putty/be_list.c** / **source/putty/settings.c** — `appname` and `get_remote_username`
   wrapped in `#ifndef MPEXT`; WinSCP's PuttyIntf.cpp supplies both under MPEXT (the engine build
   defines MPEXT), so the PuTTY originals would duplicate them at link.

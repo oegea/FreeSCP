@@ -50,7 +50,7 @@ target_include_directories(puttycore PUBLIC
 # Force the unix platform.h first in every TU (some putty files include puttyexp.h before any
 # header that pulls platform.h).
 target_compile_options(puttycore PRIVATE
-  -include platform.h -std=gnu11 -w -Wno-everything)
+  -include platform.h -std=gnu11 -w -Wno-everything -fexceptions)
 set_target_properties(puttycore PROPERTIES C_STANDARD 11)
 
 # Unix/macOS platform BACKEND for putty (network/select/noise/time/storage). Grows until
@@ -63,7 +63,7 @@ add_library(puttyplatform STATIC ${PUTTY_PLATFORM_SRC})
 target_compile_definitions(puttyplatform PRIVATE WINSCP MPEXT NO_GSSAPI NDEBUG)
 target_include_directories(puttyplatform PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}/include ${PUTTY_DIR} ${LIBS_DIR}/openssl/include)
-target_compile_options(puttyplatform PRIVATE -include platform.h -std=gnu11 -w -Wno-everything)
+target_compile_options(puttyplatform PRIVATE -include platform.h -std=gnu11 -w -Wno-everything -fexceptions)
 
 # Software crypto bodies. WinSCP gates the C reference AES/SHA implementations behind WINSCP_VS
 # (a crypto-only "VS" sub-build); without it the main putty build only DECLARES aes_sliced_key_
@@ -78,5 +78,5 @@ add_library(puttycrypto_vs STATIC ${PUTTY_CRYPTO_VS_SRC})
 target_compile_definitions(puttycrypto_vs PRIVATE WINSCP MPEXT NO_GSSAPI WINSCP_VS NDEBUG)
 target_include_directories(puttycrypto_vs PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}/include ${PUTTY_DIR} ${LIBS_DIR}/openssl/include)
-target_compile_options(puttycrypto_vs PRIVATE -include platform.h -std=gnu11 -w -Wno-everything)
+target_compile_options(puttycrypto_vs PRIVATE -include platform.h -std=gnu11 -w -Wno-everything -fexceptions)
 set_target_properties(puttycrypto_vs PROPERTIES C_STANDARD 11)

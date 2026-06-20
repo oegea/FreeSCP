@@ -11,6 +11,7 @@
 #include "Terminal.h"
 #include "Interface.h"
 #include "RemoteFiles.h"
+#include "Exceptions.h"
 #include <cstdio>
 
 // PuTTY one-time init (sk_init + sets appname); normally called by CoreInitialize.
@@ -42,10 +43,7 @@ int main(int argc, char ** argv)
     ApplicationLog = new TApplicationLog();
     Configuration = new THarnessConfiguration();
     Configuration->Default();
-    PuttyInitialize();   // sk_init + appname; the engine's CoreInitialize would normally do this
-    Configuration->LogProtocol = 1;
-    Configuration->LogFileName = L"/tmp/winscp-harness.log";
-    Configuration->Logging = true;
+    PuttyInitialize();   // sk_init + appname; the engine's CoreInitialize would normally do this    // logging disabled for now
     out(L"[harness] Configuration created; PuTTY initialized.");
 
     std::unique_ptr<TSessionData> Data(new TSessionData(L""));
@@ -55,6 +53,7 @@ int main(int argc, char ** argv)
     Data->UserName = User;
     Data->Password = Pass;
     Data->FSProtocol = fsSFTPonly;
+    Data->FingerprintScan = false;   // ensure normal connect (not fingerprint-scan mode)
     out(FORMAT(L"[harness] Session: %s@%s:%d (SFTP)", (User, Host, Port)));
 
     std::unique_ptr<TTerminal> Terminal(new TTerminal(Data.get(), Configuration));
@@ -97,6 +96,10 @@ int main(int argc, char ** argv)
   catch (Exception & E)
   {
     out(UnicodeString(L"[FATAL] ") + E.Message);
+    ExtException * Ext = dynamic_cast<ExtException *>(&E);
+    if ((Ext != nullptr) && (Ext->MoreMessages != nullptr))
+      for (int i = 0; i < Ext->MoreMessages->Count; i++)
+        out(UnicodeString(L"   | ") + Ext->MoreMessages->Strings[i]);
     return 1;
   }
   catch (...)

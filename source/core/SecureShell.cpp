@@ -659,6 +659,8 @@ const UnicodeString FailedMsg(L" failed:");
 //---------------------------------------------------------------------------
 void __fastcall TSecureShell::PuttyLogEvent(const char * AStr)
 {
+#ifndef _WIN32
+#endif
   UnicodeString Str = ConvertFromPutty(AStr, strlen(AStr));
   // Gross hack
   if (StartsStr(ServerVersionMsg, Str))

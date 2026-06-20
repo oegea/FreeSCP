@@ -71,8 +71,5 @@ void win_misc_cleanup(void) {}
 void win_secur_cleanup(void) {}
 void wingss_cleanup(void) {}
 
-/* Host-key store: WinSCP supplies/verifies keys via the Seat, so the PuTTY-level registry
- * lookup reports "not found" (0) and there is no in-memory key blob. */
-int retrieve_host_key(const char *hostname, int port, const char *keytype, char *key, int maxlen)
-{ (void)hostname; (void)port; (void)keytype; (void)key; (void)maxlen; return 0; }
+/* retrieve_host_key lives in uxstore.c (shares the in-memory host-key cache with store_host_key). */
 const char *in_memory_key_data(const Filename *fn) { (void)fn; return 0; }

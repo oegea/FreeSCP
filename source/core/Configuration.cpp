@@ -1655,6 +1655,13 @@ void __fastcall TConfiguration::Saved()
 TStorage __fastcall TConfiguration::GetStorage()
 {
   TGuard Guard(FCriticalSection);
+#ifndef _WIN32
+  // WINSCP-NATIVE-PORT: there is no Windows registry; all storage is INI/file-backed.
+  if (FStorage == stDetect)
+  {
+    FStorage = stIniFile;
+  }
+#endif
   if (FStorage == stDetect)
   {
     DebugFail(); // This is never called, as the detection is completely overriden by TWinConfiguration

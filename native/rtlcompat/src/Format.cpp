@@ -127,8 +127,14 @@ UnicodeString __fastcall Format(const UnicodeString & Fmt, const TVarRec * Args,
   return FormatImpl(Fmt, Args, Args_Size);
 }
 
-// Resource strings: placeholder until source/resource tables are loaded.
-UnicodeString __fastcall LoadStr(int Ident) { return UnicodeString(L"str#") + UnicodeString(Ident); }
+// Resource strings — real text from the generated table (native/tools/genstrings.py over
+// source/resource/*.{h,rc}); falls back to "str#NNN" for any id not in the table.
+const wchar_t * winscp_lookup_resstr(int id);
+UnicodeString __fastcall LoadStr(int Ident)
+{
+  const wchar_t * s = winscp_lookup_resstr(Ident);
+  return s ? UnicodeString(s) : (UnicodeString(L"str#") + UnicodeString(Ident));
+}
 
 UnicodeString __fastcall FmtLoadStr(int Ident, const TVarRec * Args, int Args_Size)
 {
