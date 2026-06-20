@@ -60,6 +60,23 @@ Per-file body surface is moderate (e.g. FileBuffer.cpp needs TStream ReadBuffer/
 Seek + soFromBeginning/soCurrent, RaiseLastOSError, EReadError/EWriteError, THandleStream
 ctor) — implement in rtlcompat on demand, leaf-first.
 
+## Phase 1.5 progress — compiled rtlcompat + first .cpp bodies
+- ✅ rtlcompat is now a **compiled static lib** (was header-only): Streams.cpp (full TStream
+  family, POSIX-backed), SysUtils.cpp (RaiseLastOSError, FileRead/FileWrite),
+  SysStrFuncs.cpp (IntToStr/StrToInt/Trim/UpperCase/SameText/...).
+- ✅ UnicodeString fleshed out: Trim/Upper/LowerCase, Delete/Insert, LastDelimiter,
+  IsDelimiter, Compare/CompareIC, SetLength, numeric+ANSI ctors. AnsiString Pos/Delete.
+- ✅ .cpp body build pipeline (shadow .cpp in geninclude). `Global.cpp` + `FileBuffer.cpp`
+  compile and link into libwinscpcore.a. 3/34 .cpp currently compile standalone.
+- Added include for source/resource (TextsCore.h); StrUtils.hpp stubs.
+
+### Immediate next (containers)
+.cpp bodies need the full Delphi container API — flesh out in rtlcompat:
+`TList`/`TObjectList` (Count, Items[], Add→int, Insert, Delete, IndexOf, Sort, operator[]),
+`TStringList` (Strings[], Values, Add, Sort, IndexOf, CommaText, LoadFromFile),
+plus `True`/`False` constants. Then `Common.cpp` (utility hub) and leaf data models
+(RemoteFiles/FileMasks/CopyParam). This is the bulk of remaining Phase 1.
+
 ## Next up (Phase 1 → 2/3): compile .cpp bodies
 1. Compile engine **.cpp bodies** leaf-first (FileMasks/CopyParam/RemoteFiles), implementing
    RTL method bodies on demand: UnicodeString Format/Trim/IntToStr/case ops, TStringList,

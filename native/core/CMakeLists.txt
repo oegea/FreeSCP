@@ -33,6 +33,7 @@ add_library(winscpcore_flags INTERFACE)
 target_link_libraries(winscpcore_flags INTERFACE rtlcompat)
 target_include_directories(winscpcore_flags INTERFACE
   ${GEN_DIR} ${CORE_DIR}
+  ${CMAKE_SOURCE_DIR}/../source/resource   # TextsCore.h, resource string IDs
   ${LIBS_DIR}/neon/src      # WebDAV (NeonIntf, WebDAVFileSystem)
   ${LIBS_DIR}/expat/lib     # XML (pulled in via neon)
   ${LIBS_DIR}/libs3/inc)    # S3

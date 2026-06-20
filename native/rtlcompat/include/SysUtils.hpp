@@ -11,6 +11,7 @@
 #include "winscp/UnicodeString.h"
 #include "winscp/AnsiStrings.h"
 #include "winscp/DynamicArray.h"
+#include "winscp/SysStrFuncs.h"
 
 // Delphi date/time = floating day count since 1899-12-30.
 class TDateTime

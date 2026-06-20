@@ -68,6 +68,54 @@ public:
     return (p == std::u16string::npos) ? 0 : static_cast<int>(p) + 1;
   }
 
+  void SetLength(int len) { FData.resize(static_cast<size_t>(len)); }
+
+  // In-place edits (Delphi 1-based).
+  void Delete(int index, int count)
+  {
+    if (index >= 1 && index <= Length() && count > 0)
+      FData.erase(static_cast<size_t>(index - 1), static_cast<size_t>(count));
+  }
+  void Insert(const UnicodeString & s, int index)
+  {
+    if (index < 1) index = 1;
+    if (index > Length() + 1) index = Length() + 1;
+    FData.insert(static_cast<size_t>(index - 1), s.FData);
+  }
+
+  // Trim / case (ASCII for now; full Unicode folding deferred to the platform layer).
+  UnicodeString Trim() const
+  {
+    size_t b = 0, e = FData.size();
+    while (b < e && FData[b] <= u' ') ++b;
+    while (e > b && FData[e - 1] <= u' ') --e;
+    return UnicodeString(FData.substr(b, e - b));
+  }
+  UnicodeString TrimLeft() const
+  { size_t b = 0; while (b < FData.size() && FData[b] <= u' ') ++b; return UnicodeString(FData.substr(b)); }
+  UnicodeString TrimRight() const
+  { size_t e = FData.size(); while (e > 0 && FData[e - 1] <= u' ') --e; return UnicodeString(FData.substr(0, e)); }
+  UnicodeString UpperCase() const
+  { std::u16string r = FData; for (auto & c : r) if (c >= u'a' && c <= u'z') c = static_cast<char16_t>(c - 32); return UnicodeString(r); }
+  UnicodeString LowerCase() const
+  { std::u16string r = FData; for (auto & c : r) if (c >= u'A' && c <= u'Z') c = static_cast<char16_t>(c + 32); return UnicodeString(r); }
+
+  // 1-based index of last char that is one of Delimiters; 0 if none.
+  int LastDelimiter(const UnicodeString & Delimiters) const
+  {
+    for (int i = Length(); i >= 1; --i)
+      if (Delimiters.FData.find((*this)[i]) != std::u16string::npos) return i;
+    return 0;
+  }
+  bool IsDelimiter(const UnicodeString & Delimiters, int index) const
+  {
+    return index >= 1 && index <= Length() &&
+           Delimiters.FData.find((*this)[index]) != std::u16string::npos;
+  }
+  // Case (in)sensitive 3-way compare.
+  int Compare(const UnicodeString & rhs) const { return FData.compare(rhs.FData); }
+  int CompareIC(const UnicodeString & rhs) const { return LowerCase().FData.compare(rhs.LowerCase().FData); }
+
   UnicodeString & operator+=(const UnicodeString & rhs) { FData += rhs.FData; return *this; }
   friend UnicodeString operator+(UnicodeString lhs, const UnicodeString & rhs)
   { lhs.FData += rhs.FData; return lhs; }
