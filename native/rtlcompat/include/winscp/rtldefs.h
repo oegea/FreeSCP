@@ -10,6 +10,7 @@
 
 #include <cstddef>   // NULL, size_t
 #include <cstdint>
+#include <type_traits>
 
 // Borland/Embarcadero calling conventions — no-ops on clang for x86_64/arm64.
 #ifndef __fastcall

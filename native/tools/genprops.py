@@ -32,12 +32,25 @@ def is_field(target):
 
 
 def parse_body(body):
+    # Split on top-level commas only (a value like `index = MASK_INDEX(a, b)` has commas
+    # inside parentheses that must not split the property attribute list).
+    parts, depth, cur = [], 0, ''
+    for ch in body:
+        if ch in '([{':
+            depth += 1; cur += ch
+        elif ch in ')]}':
+            depth -= 1; cur += ch
+        elif ch == ',' and depth == 0:
+            parts.append(cur); cur = ''
+        else:
+            cur += ch
+    if cur.strip():
+        parts.append(cur)
     out = {}
-    for part in body.split(','):
-        if '=' not in part:
-            continue
-        k, v = part.split('=', 1)
-        out[k.strip()] = v.strip()
+    for part in parts:
+        if '=' in part:
+            k, v = part.split('=', 1)
+            out[k.strip()] = v.strip()
     return out
 
 
@@ -53,6 +66,8 @@ def convert(match):
 
     read = body.get('read')
     write = body.get('write')
+    index = body.get('index')   # Delphi `index=N`: getter/setter take this fixed value
+    iarg = (index + (', ' if index else '')) if index else ''
     accessors = []
     get_fn = put_fn = None
 
@@ -64,10 +79,18 @@ def convert(match):
             get_fn = read
         else:
             get_fn = '__pg_%s' % name
-            # C-style cast to the property type: Delphi getters may return a const/related
-            # type that the property exposes mutably.
-            expr = read if is_field(read) else (read + '()')
-            accessors.append('%s __fastcall %s() { return (%s)(%s); }'
+            # Accessor is const so the property is readable on const objects. Field reads are
+            # const-ok; method getters (often non-const in the engine) are reached by casting
+            # away constness of *this without naming the class (decltype trick). `index=N`
+            # passes the fixed index. C-style cast to the property type (getter may return a
+            # const/related type the property exposes mutably).
+            if is_field(read):
+                expr = read
+            else:
+                call = '%s(%s)' % (read, index) if index else (read + '()')
+                expr = ('const_cast< ::std::remove_const< ::std::remove_reference<'
+                        'decltype(*this)>::type>::type *>(this)->%s' % call)
+            accessors.append('%s __fastcall %s() const { return (%s)(%s); }'
                              % (typ, get_fn, typ, expr))
     if write is not None:
         if indexed:
@@ -77,7 +100,7 @@ def convert(match):
             if is_field(write):
                 accessors.append('void __fastcall %s(%s v) { %s = v; }' % (put_fn, typ, write))
             else:
-                accessors.append('void __fastcall %s(%s v) { %s(v); }' % (put_fn, typ, write))
+                accessors.append('void __fastcall %s(%s v) { %s(%sv); }' % (put_fn, typ, write, iarg))
 
     spec = []
     if get_fn:

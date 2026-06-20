@@ -35,3 +35,5 @@ int __fastcall FileWrite(int Handle, const System::DynamicArray<System::Byte> Bu
 {
   return FileWrite(Handle, &const_cast<System::DynamicArray<System::Byte> &>(Buffer)[Offset], Count);
 }
+
+int RandSeed = 0;

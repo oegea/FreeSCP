@@ -51,6 +51,9 @@ set(CORE_PORTED_NAMES
   NamedObjs.cpp
   Common.cpp
   FileSystems.cpp
+  Option.cpp
+  Usage.cpp
+  FileMasks.cpp
 )
 set(CORE_GEN_SOURCES "")
 foreach(name ${CORE_PORTED_NAMES})

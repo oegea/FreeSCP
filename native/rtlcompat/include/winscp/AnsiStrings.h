@@ -30,6 +30,7 @@ public:
   std::string & raw() { return FData; }
 
   // Delphi 1-based Pos/Delete on byte strings.
+  int Pos(char c) const { std::string::size_type p = FData.find(c); return (p == std::string::npos) ? 0 : (int)p + 1; }
   int Pos(const AnsiStringBase & sub) const
   { std::string::size_type p = FData.find(sub.FData); return (p == std::string::npos) ? 0 : static_cast<int>(p) + 1; }
   void Delete(int index, int count)

@@ -136,6 +136,7 @@ public:
 
   bool Sorted = false;
   bool CaseSensitive = false;
+  bool StrictDelimiter = false;
   System::Types::TDuplicates Duplicates = System::Types::dupIgnore;
 
 private:

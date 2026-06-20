@@ -22,6 +22,7 @@ public:
   TObject() = default;
   virtual ~TObject() {}
   virtual UnicodeString __fastcall ClassName() const;
+  UnicodeString __fastcall QualifiedClassName() const { return ClassName(); }
   bool __fastcall InheritsFrom(TClass cls) const { return cls && cls->isInstance(this); }
 };
 

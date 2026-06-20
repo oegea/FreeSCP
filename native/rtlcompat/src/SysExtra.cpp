@@ -363,3 +363,7 @@ int __fastcall ExceptionErrorMessage(TObject *, void *, wchar_t * Buffer, int Le
 { if (Buffer && Len > 0) Buffer[0] = 0; return 0; }
 
 const TTimeSpan TTimeSpan::Zero;
+
+UnicodeString __fastcall DateTimeToStr(const TDateTime & DT) { return DT.DateTimeString(); }
+UnicodeString __fastcall DateToStr(const TDateTime & DT) { return DT.DateString(); }
+UnicodeString __fastcall TimeToStr(const TDateTime & DT) { return DT.TimeString(); }

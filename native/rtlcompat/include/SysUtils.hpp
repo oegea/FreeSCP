@@ -134,6 +134,8 @@ using Sysutils::Exception;
 using Sysutils::EAbort;
 using Sysutils::EOSError;
 using Sysutils::EConvertError;
+using Sysutils::EAccessViolation;
+using Sysutils::EInOutError;
 
 // TSearchRec — directory enumeration record (base of WinSCP's TSearchRecSmart).
 struct TSearchRec
@@ -208,6 +210,7 @@ public:
 };
 
 extern const UnicodeString EmptyStr;
+extern int RandSeed;
 
 // Delphi open-array constructor: ARRAYOFCONST((a, b, c)) -> TVarRecArray(a, b, c).
 struct TVarRecArray

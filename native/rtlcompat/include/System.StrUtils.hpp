@@ -1,5 +1,4 @@
-// StrUtils.hpp — System.StrUtils subset stub. Grown on demand.
-#ifndef WINSCP_RTLCOMPAT_STRUTILS_HPP
-#define WINSCP_RTLCOMPAT_STRUTILS_HPP
-#include "winscp/UnicodeString.h"
+#ifndef WINSCP_RTLCOMPAT_SYS_STRUTILS_HPP
+#define WINSCP_RTLCOMPAT_SYS_STRUTILS_HPP
+#include "StrUtils.hpp"
 #endif
