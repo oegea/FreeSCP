@@ -16,6 +16,7 @@
 
 #include <string>
 #include <cstddef>
+#include "winscp/AnsiStrings.h"
 
 class UnicodeString
 {
@@ -38,6 +39,9 @@ public:
   UnicodeString(const wchar_t * s) { if (s) while (*s) FData.push_back(static_cast<char16_t>(*s++)); }
   // C++Builder UnicodeString accepts narrow (ANSI) literals/strings too.
   UnicodeString(const char * s) { if (s) while (*s) FData.push_back(static_cast<char16_t>(static_cast<unsigned char>(*s++))); }
+  // From the byte-string family (latin1 widening; UTF-8 decode for UTF8String is a TODO).
+  UnicodeString(const AnsiStringBase & s)
+  { for (char c : s.raw()) FData.push_back(static_cast<char16_t>(static_cast<unsigned char>(c))); }
   UnicodeString(const wchar_t * s, int len)
   { for (int i = 0; i < len; ++i) FData.push_back(static_cast<char16_t>(s[i])); }
 

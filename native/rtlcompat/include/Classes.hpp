@@ -21,12 +21,33 @@ struct TMethod
   void * Data = nullptr;
 };
 
+class TObject;
+
+// Delphi RTTI shim. C++Builder's __classid(C)/InheritsFrom/ClassName, emulated with C++
+// typeid + dynamic_cast so no engine class needs editing. __classid(C) yields a token whose
+// isInstance does a real dynamic_cast<C*> — exact is-a semantics up the hierarchy.
+namespace winscp {
+  struct TClassInfo { bool (*isInstance)(const TObject *); const wchar_t * name; };
+}
+typedef const winscp::TClassInfo * TClass;
+
 class TObject
 {
 public:
   TObject() = default;
   virtual ~TObject() {}
+  virtual UnicodeString __fastcall ClassName() const;
+  bool __fastcall InheritsFrom(TClass cls) const { return cls && cls->isInstance(this); }
 };
+
+namespace winscp {
+  template <class C> const TClassInfo * classid()
+  {
+    static TClassInfo ci{ [](const TObject * o) { return dynamic_cast<const C *>(o) != nullptr; }, L"" };
+    return &ci;
+  }
+}
+#define __classid(C) (::winscp::classid<C>())
 
 // Delphi event types (closures). __closure is a no-op macro, so these are plain function
 // pointers here; method-pointer (TObject + code) fidelity is added if/when needed.

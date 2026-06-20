@@ -33,6 +33,14 @@ typedef LONG_PTR        LRESULT;
 #define INFINITE 0xFFFFFFFF
 #endif
 
+// Registry root keys (predefined HKEY handle values).
+#define HKEY_CLASSES_ROOT     ((HKEY)(ULONG_PTR)0x80000000)
+#define HKEY_CURRENT_USER     ((HKEY)(ULONG_PTR)0x80000001)
+#define HKEY_LOCAL_MACHINE    ((HKEY)(ULONG_PTR)0x80000002)
+#define HKEY_USERS            ((HKEY)(ULONG_PTR)0x80000003)
+#define HKEY_CURRENT_CONFIG   ((HKEY)(ULONG_PTR)0x80000005)
+#define HKEY_DYN_DATA         ((HKEY)(ULONG_PTR)0x80000006)
+
 struct FILETIME   { DWORD dwLowDateTime; DWORD dwHighDateTime; };
 struct SYSTEMTIME { Word wYear, wMonth, wDayOfWeek, wDay, wHour, wMinute, wSecond, wMilliseconds; };
 

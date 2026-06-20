@@ -10,6 +10,8 @@ const UnicodeString EmptyStr;
 
 void __fastcall RaiseLastOSError() { RaiseLastOSError(errno); }
 
+NORETURN void __fastcall Abort() { throw EAbort(UnicodeString()); }
+
 void __fastcall RaiseLastOSError(int LastError)
 {
   EOSError E(UnicodeString(::strerror(LastError)));

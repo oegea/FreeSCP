@@ -103,6 +103,7 @@ extern const UnicodeString EmptyStr;
 // Raise EOSError for the current/last OS error (errno on POSIX).
 void __fastcall RaiseLastOSError();
 void __fastcall RaiseLastOSError(int LastError);
+NORETURN void __fastcall Abort();   // raises EAbort (silent exception)
 
 // Low-level file IO (System.SysUtils). Handle is an OS fd here. -1 on error.
 int __fastcall FileRead(int Handle, void * Buffer, int Count);

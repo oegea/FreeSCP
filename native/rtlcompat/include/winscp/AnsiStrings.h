@@ -9,6 +9,8 @@
 #include "winscp/rtldefs.h"
 #include <string>
 
+class UnicodeString;  // for cross-conversion ctors (defined in src/StringConv.cpp)
+
 class AnsiStringBase
 {
 public:
@@ -37,8 +39,23 @@ protected:
   std::string FData;
 };
 
-class AnsiString    : public AnsiStringBase { public: using AnsiStringBase::AnsiStringBase; };
-class RawByteString : public AnsiStringBase { public: using AnsiStringBase::AnsiStringBase; };
-class UTF8String    : public AnsiStringBase { public: using AnsiStringBase::AnsiStringBase; };
+class AnsiString : public AnsiStringBase
+{ public: using AnsiStringBase::AnsiStringBase;
+  AnsiString() = default;
+  AnsiString(const AnsiStringBase & o) : AnsiStringBase(o.raw()) {}  // from Raw/UTF8
+  AnsiString(const UnicodeString & s);                              // UTF-16 -> latin1
+};
+class RawByteString : public AnsiStringBase
+{ public: using AnsiStringBase::AnsiStringBase;
+  RawByteString() = default;
+  RawByteString(const AnsiStringBase & o) : AnsiStringBase(o.raw()) {}
+  RawByteString(const UnicodeString & s);
+};
+class UTF8String : public AnsiStringBase
+{ public: using AnsiStringBase::AnsiStringBase;
+  UTF8String() = default;
+  UTF8String(const AnsiStringBase & o) : AnsiStringBase(o.raw()) {}
+  UTF8String(const UnicodeString & s);                             // UTF-16 -> UTF-8
+};
 
 #endif

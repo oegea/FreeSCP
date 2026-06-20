@@ -73,11 +73,23 @@ ctor) — implement in rtlcompat on demand, leaf-first.
 - ✅ Delphi containers implemented (TList/TObjectList/TStrings/TStringList + True/False).
   NamedObjs.cpp compiles → 3 engine bodies in libwinscpcore.a (Global, FileBuffer, NamedObjs).
 
-### Immediate next
-`Common.cpp` (utility hub — needs Format/FmtLoadStr, date/time, path helpers) then leaf data
-models (RemoteFiles/FileMasks/CopyParam/Option). Each adds a few RTL bodies; the helper
-`for f in /tmp/gi/*.cpp; do clang++ -fsyntax-only ...` survey tracks how many of the 34 .cpp
-compile. Goal: all .cpp compile, then resolve link (Phase 2 platform adapters fill externs).
+- ✅ Delphi RTTI shim: `__classid`/`InheritsFrom`/`ClassName` via typeid + dynamic_cast
+  (winscp::classid<C>), no engine edits. String cross-conversions (UnicodeString<->Ansi/
+  Raw/UTF8, real UTF-8 codec). HKEY_* consts, Abort, StrUtils (IsDelimiter/StartsStr/EndsStr/
+  ReplaceStr/PosEx...). Windows-header stubs (shlobj/shlwapi/psapi/tlhelp32/windows/winsock).
+
+### Immediate next — Common.cpp (the hub, ~370 compile errors, mostly repeats)
+Needs, in order of leverage:
+1. **Format / FmtLoadStr** (Delphi `Format("%s %d", ARRAYOFCONST(...))`) — the single biggest
+   unblock (used everywhere). Implement varargs Format over TVarRec.
+2. **LoadStr / resource strings** — map int ident -> string. Source tables in source/resource;
+   start with a stub table, wire real strings later.
+3. **SEH** (`__try/__except`) — Windows structured exception handling, unsupported on clang.
+   Neutralize via macros (`#define __try if(true)` / `__except(x) ... `) or #ifdef.
+4. Win shell/process funcs (GetShellFolderPath, process enum) -> platform-adapter stubs.
+5. Date/time helpers (EncodeDate, Now, FormatDateTime) -> std::chrono.
+Then leaf data models (RemoteFiles/FileMasks/CopyParam/Option) fall quickly. Survey:
+`for f in /tmp/gi/*.cpp; do clang++ -fsyntax-only ...` (see build note above for the flags).
 
 ## Next up (Phase 1 → 2/3): compile .cpp bodies
 1. Compile engine **.cpp bodies** leaf-first (FileMasks/CopyParam/RemoteFiles), implementing
