@@ -28,4 +28,23 @@ public:
   void __fastcall GetValueNames(TStrings * Strings);
 };
 
+// System::Inifiles subset — base for TCustomIniFileStorage. File-backed config (Phase 2).
+class TCustomIniFile : public TObject
+{
+public:
+  __fastcall TCustomIniFile(const UnicodeString & FileName) : FFileName(FileName) {}
+  virtual __fastcall ~TCustomIniFile() {}
+  UnicodeString __fastcall GetFileName() { return FFileName; }
+  __declspec(property(get=GetFileName)) UnicodeString FileName;
+  virtual UnicodeString __fastcall ReadString(const UnicodeString & Section, const UnicodeString & Ident, const UnicodeString & Default);
+  virtual void __fastcall WriteString(const UnicodeString & Section, const UnicodeString & Ident, const UnicodeString & Value);
+  virtual void __fastcall ReadSection(const UnicodeString & Section, TStrings * Strings);
+  virtual void __fastcall ReadSections(TStrings * Strings);
+protected:
+  UnicodeString FFileName;
+};
+
+class TMemIniFile : public TCustomIniFile { public: using TCustomIniFile::TCustomIniFile; };
+class TIniFile : public TCustomIniFile { public: using TCustomIniFile::TCustomIniFile; };
+
 #endif

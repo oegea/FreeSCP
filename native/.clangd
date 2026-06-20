@@ -5,6 +5,7 @@ CompileFlags:
   Add:
     - -std=c++17
     - -fshort-wchar
+    - -fms-extensions
     - -Wno-unknown-pragmas
     - -I__FILE_DIR__/rtlcompat/include
     - -I__FILE_DIR__/../source/core

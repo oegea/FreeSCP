@@ -98,7 +98,8 @@ class TMemoryStream : public TStream
 public:
   virtual __int64 __fastcall Read(void * Buffer, __int64 Count);
   virtual __int64 __fastcall Write(const void * Buffer, __int64 Count);
-  void * __fastcall Memory();
+  void * __fastcall GetMemory();
+  __declspec(property(get=GetMemory)) void * Memory;  // Delphi property, used as ->Memory
   void __fastcall Clear();
   void __fastcall SetSize(__int64 NewSize);
 };

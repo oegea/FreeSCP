@@ -9,13 +9,17 @@
 #include "winscp/UnicodeString.h"
 #include "Classes.hpp"
 
-class TMask : public TObject
-{
-public:
-  __fastcall TMask(const UnicodeString & MaskValue) : FMask(MaskValue) {}
-  bool __fastcall Matches(const UnicodeString & Filename);
-private:
-  UnicodeString FMask;
-};
+// The engine references this as Masks::TMask (its Embarcadero unit).
+namespace Masks {
+  class TMask : public TObject
+  {
+  public:
+    __fastcall TMask(const UnicodeString & MaskValue) : FMask(MaskValue) {}
+    bool __fastcall Matches(const UnicodeString & Filename);
+  private:
+    UnicodeString FMask;
+  };
+}
+using Masks::TMask;
 
 #endif

@@ -46,6 +46,7 @@ target_link_libraries(winscpcore PUBLIC winscpcore_flags)
 set(CORE_PARSE_HEADERS
   Global.h Common.h NamedObjs.h Http.h Option.h Security.h KeyGen.h
   Exceptions.h FileInfo.h RemoteFiles.h
+  Cryptography.h FileBuffer.h FileMasks.h HierarchicalStorage.h Usage.h
 )
 set(PARSE_STUBS "")
 foreach(h ${CORE_PARSE_HEADERS})

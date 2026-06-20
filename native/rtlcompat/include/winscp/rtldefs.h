@@ -19,6 +19,21 @@
 #define __closure
 #endif
 
+// Mirror of the clang-branch macros in source/core/Global.h, so engine headers that do
+// NOT pull in Global.h (e.g. Cryptography.h) still parse standalone. Same definitions.
+#ifndef CLANG_INITIALIZE
+#define CLANG_INITIALIZE(V) = (V)
+#endif
+#ifndef NORETURN
+#define NORETURN [[noreturn]]
+#endif
+#ifndef UNREACHABLE_AFTER_NORETURN
+#define UNREACHABLE_AFTER_NORETURN(STATEMENT)
+#endif
+#ifndef EXCEPT
+#define EXCEPT noexcept(false)
+#endif
+
 // MSVC/bcc 64-bit integer keyword. As a macro so `unsigned __int64` also works.
 #ifndef __int64
 #define __int64 long long
