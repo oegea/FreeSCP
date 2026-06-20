@@ -27,6 +27,20 @@ foreach(f ${PUTTY_SRC})
   endif()
 endforeach()
 
+# conf_data.c instantiates CONF_OPTION(...) data from conf.winscp.h, which uses MSVC's `(int)""`
+# (a string literal cast to int — not a compile-time constant in clang). Generate a patched
+# shadow of both into build/putty-gen (`(int)""` -> `(int)0`, an equivalent empty default) and
+# compile that copy; its quoted `#include "conf.winscp.h"` resolves to the patched sibling.
+set(PUTTY_GEN ${CMAKE_BINARY_DIR}/putty-gen)
+add_custom_command(
+  OUTPUT ${PUTTY_GEN}/conf.winscp.h ${PUTTY_GEN}/conf_data.c
+  COMMAND ${CMAKE_COMMAND} -E make_directory ${PUTTY_GEN}
+  COMMAND ${CMAKE_COMMAND} -DSRC=${PUTTY_DIR}/conf.winscp.h -DDST=${PUTTY_GEN}/conf.winscp.h -P ${CMAKE_CURRENT_SOURCE_DIR}/patch_conf.cmake
+  COMMAND ${CMAKE_COMMAND} -E copy ${PUTTY_DIR}/utils/conf_data.c ${PUTTY_GEN}/conf_data.c
+  DEPENDS ${PUTTY_DIR}/conf.winscp.h ${PUTTY_DIR}/utils/conf_data.c ${CMAKE_CURRENT_SOURCE_DIR}/patch_conf.cmake
+  COMMENT "patch conf.winscp.h (int)\"\" -> (int)0")
+list(APPEND PUTTY_SRC ${PUTTY_GEN}/conf_data.c)
+
 add_library(puttycore STATIC ${PUTTY_SRC})
 target_compile_definitions(puttycore PRIVATE WINSCP MPEXT NO_GSSAPI)
 target_include_directories(puttycore PUBLIC
@@ -58,7 +72,8 @@ target_compile_options(puttyplatform PRIVATE -include platform.h -std=gnu11 -w -
 # non-VS copies in puttycore (verified: no overlap), so both coexist.
 set(PUTTY_CRYPTO_VS_SRC
   ${PUTTY_DIR}/crypto/aes-sw.c
-  ${PUTTY_DIR}/crypto/sha256-sw.c)
+  ${PUTTY_DIR}/crypto/sha256-sw.c
+  ${PUTTY_DIR}/crypto/argon2.c)
 add_library(puttycrypto_vs STATIC ${PUTTY_CRYPTO_VS_SRC})
 target_compile_definitions(puttycrypto_vs PRIVATE WINSCP MPEXT NO_GSSAPI WINSCP_VS)
 target_include_directories(puttycrypto_vs PUBLIC

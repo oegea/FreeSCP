@@ -65,3 +65,14 @@ void ssh_gss_cleanup(ssh_gss_liblist *list) { (void)list; }
 
 /* filename from UTF-8 (engine passes UTF-8 paths) */
 Filename *filename_from_utf8(const char *utf8) { return filename_from_str(utf8); }
+
+/* WinSCP/Windows cleanup hooks the engine calls at shutdown — no-ops on the unix port. */
+void win_misc_cleanup(void) {}
+void win_secur_cleanup(void) {}
+void wingss_cleanup(void) {}
+
+/* Host-key store: WinSCP supplies/verifies keys via the Seat, so the PuTTY-level registry
+ * lookup reports "not found" (0) and there is no in-memory key blob. */
+int retrieve_host_key(const char *hostname, int port, const char *keytype, char *key, int maxlen)
+{ (void)hostname; (void)port; (void)keytype; (void)key; (void)maxlen; return 0; }
+const char *in_memory_key_data(const Filename *fn) { (void)fn; return 0; }
