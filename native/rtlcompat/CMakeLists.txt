@@ -9,6 +9,7 @@ add_library(rtlcompat STATIC
   src/Containers.cpp
   src/StringConv.cpp
   src/StrUtils.cpp
+  src/Format.cpp
 )
 target_include_directories(rtlcompat PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_features(rtlcompat PUBLIC cxx_std_17)
@@ -18,3 +19,7 @@ target_compile_options(rtlcompat PUBLIC -fshort-wchar -fms-extensions)
 add_executable(test_rtlcompat test/test_rtlcompat.cpp)
 target_link_libraries(test_rtlcompat PRIVATE rtlcompat)
 add_test(NAME rtlcompat COMMAND test_rtlcompat)
+
+add_executable(test_format test/test_format.cpp)
+target_link_libraries(test_format PRIVATE rtlcompat)
+add_test(NAME format COMMAND test_format)

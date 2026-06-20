@@ -80,8 +80,8 @@ ctor) — implement in rtlcompat on demand, leaf-first.
 
 ### Immediate next — Common.cpp (the hub, ~370 compile errors, mostly repeats)
 Needs, in order of leverage:
-1. **Format / FmtLoadStr** (Delphi `Format("%s %d", ARRAYOFCONST(...))`) — the single biggest
-   unblock (used everywhere). Implement varargs Format over TVarRec.
+1. ✅ **Format / FmtLoadStr** implemented (TVarRec varargs, %s/d/u/x/f, width/prec/flags,
+   positional) + ctest. Common.cpp 370->326 errors.
 2. **LoadStr / resource strings** — map int ident -> string. Source tables in source/resource;
    start with a stub table, wire real strings later.
 3. **SEH** (`__try/__except`) — Windows structured exception handling, unsupported on clang.

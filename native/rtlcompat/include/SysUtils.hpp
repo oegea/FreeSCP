@@ -12,6 +12,8 @@
 #include "winscp/AnsiStrings.h"
 #include "winscp/DynamicArray.h"
 #include "winscp/SysStrFuncs.h"
+#include <vector>
+#include <utility>
 
 // Delphi date/time = floating day count since 1899-12-30.
 class TDateTime
@@ -35,13 +37,34 @@ struct TFormatSettings
   UnicodeString LongTimeFormat;
 };
 
-// Delphi varargs (ARRAYOFCONST) record + resource-string pointer. Minimal: enough for the
-// engine's Format/exception ctor signatures to resolve.
+// Delphi varargs element (ARRAYOFCONST). Richer than the Win layout — carries enough type
+// info for Format to render each value. Constructible from the scalar/string types the
+// engine passes to FORMAT(...)/FMTLOAD(...).
 struct TVarRec
 {
-  union { void * VPointer; __int64 VInt64; double VExtended; const wchar_t * VPWideChar; };
-  unsigned char VType;
+  enum TType { vtInteger, vtInt64, vtBoolean, vtFloat, vtString, vtPointer } VType = vtInteger;
+  __int64 VI = 0;
+  double VF = 0.0;
+  UnicodeString VS;
+  void * VP = nullptr;
+
+  TVarRec() = default;
+  TVarRec(int v)                  : VType(vtInteger), VI(v) {}
+  TVarRec(unsigned int v)         : VType(vtInteger), VI(v) {}
+  TVarRec(long v)                 : VType(vtInt64),   VI(v) {}
+  TVarRec(unsigned long v)        : VType(vtInt64),   VI(static_cast<__int64>(v)) {}
+  TVarRec(long long v)            : VType(vtInt64),   VI(v) {}
+  TVarRec(unsigned long long v)   : VType(vtInt64),   VI(static_cast<__int64>(v)) {}
+  TVarRec(bool v)                 : VType(vtBoolean), VI(v) {}
+  TVarRec(double v)               : VType(vtFloat),   VF(v) {}
+  TVarRec(wchar_t v)              : VType(vtString),  VS(UnicodeString(static_cast<char16_t>(v), 1)) {}
+  TVarRec(const wchar_t * v)      : VType(vtString),  VS(v) {}
+  TVarRec(const char * v)         : VType(vtString),  VS(v) {}
+  TVarRec(const UnicodeString & v): VType(vtString),  VS(v) {}
+  TVarRec(const AnsiStringBase & v): VType(vtString), VS(v) {}
+  TVarRec(void * v)               : VType(vtPointer), VP(v) {}
 };
+
 struct TResStringRec { unsigned int * Module; int Identifier; };
 typedef TResStringRec * PResStringRec;
 
@@ -99,6 +122,22 @@ public:
 };
 
 extern const UnicodeString EmptyStr;
+
+// Delphi open-array constructor: ARRAYOFCONST((a, b, c)) -> TVarRecArray(a, b, c).
+struct TVarRecArray
+{
+  std::vector<TVarRec> Items;
+  template <class... A> TVarRecArray(A &&... a) { (Items.push_back(TVarRec(std::forward<A>(a))), ...); }
+};
+#define ARRAYOFCONST(v) (::TVarRecArray v)
+
+// Delphi Format / FmtLoadStr (resource string + format). FORMAT/FMTLOAD macros in Global.h.
+UnicodeString __fastcall Format(const UnicodeString & Fmt, const TVarRecArray & Args);
+UnicodeString __fastcall Format(const UnicodeString & Fmt, const TVarRec * Args, int Args_Size);
+UnicodeString __fastcall FmtLoadStr(int Ident, const TVarRecArray & Args);
+
+// Resource strings (ident -> text). Placeholder table until source/resource is wired in.
+UnicodeString __fastcall LoadStr(int Ident);
 
 // Raise EOSError for the current/last OS error (errno on POSIX).
 void __fastcall RaiseLastOSError();
