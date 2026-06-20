@@ -44,6 +44,8 @@ public:
   AnsiStringBase & operator+=(const AnsiStringBase & o) { FData += o.FData; return *this; }
   AnsiStringBase & operator+=(const char * s) { if (s) FData += s; return *this; }
   AnsiStringBase operator+(const AnsiStringBase & o) const { AnsiStringBase r(*this); r.FData += o.FData; return r; }
+  bool operator==(const AnsiStringBase & o) const { return FData == o.FData; }
+  bool operator!=(const AnsiStringBase & o) const { return FData != o.FData; }
 
 protected:
   std::string FData;

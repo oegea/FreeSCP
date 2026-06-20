@@ -215,18 +215,22 @@ extern const UnicodeString EmptyStr;
 extern int RandSeed;
 extern const UnicodeString System_Sysconst_SOSError;
 
-// Delphi open-array constructor: ARRAYOFCONST((a, b, c)) -> TVarRecArray(a, b, c).
+// Delphi open-array constructor. Embarcadero ARRAYOFCONST expands to two tokens `data, count`,
+// matching every engine API declared as (..., const TVarRec * Args, int Size) (Format,
+// FmtLoadStr, Exception ctors, TSCPFileSystem::Command, ...). The temp array is built twice
+// (once per token) — args are cheap and both temporaries live to the end of the call.
 struct TVarRecArray
 {
   std::vector<TVarRec> Items;
   template <class... A> TVarRecArray(A &&... a) { (Items.push_back(TVarRec(std::forward<A>(a))), ...); }
+  const TVarRec * data() const { return Items.empty() ? nullptr : Items.data(); }
+  int size() const { return static_cast<int>(Items.size()); }
 };
-#define ARRAYOFCONST(v) (::TVarRecArray v)
+#define ARRAYOFCONST(v) (::TVarRecArray v).data(), (::TVarRecArray v).size()
 
 // Delphi Format / FmtLoadStr (resource string + format). FORMAT/FMTLOAD macros in Global.h.
-UnicodeString __fastcall Format(const UnicodeString & Fmt, const TVarRecArray & Args);
 UnicodeString __fastcall Format(const UnicodeString & Fmt, const TVarRec * Args, int Args_Size);
-UnicodeString __fastcall FmtLoadStr(int Ident, const TVarRecArray & Args);
+UnicodeString __fastcall FmtLoadStr(int Ident, const TVarRec * Args, int Args_Size);
 
 // Resource strings (ident -> text). Placeholder table until source/resource is wired in.
 UnicodeString __fastcall LoadStr(int Ident);

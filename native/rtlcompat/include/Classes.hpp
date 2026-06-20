@@ -138,6 +138,7 @@ public:
   virtual void __fastcall Clear();
   virtual int __fastcall IndexOf(const UnicodeString & S);
   void __fastcall Sort();
+  bool __fastcall Find(const UnicodeString & S, int & Index);
 
   bool Sorted = false;
   bool CaseSensitive = false;

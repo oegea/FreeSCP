@@ -169,3 +169,6 @@ void __fastcall TStrings::Move(int CurIndex, int NewIndex)
 void __fastcall TStrings::Exchange(int I1, int I2)
 { UnicodeString s = Get(I1); TObject * o = GetObject(I1);
   Put(I1, Get(I2)); PutObject(I1, GetObject(I2)); Put(I2, s); PutObject(I2, o); }
+
+bool __fastcall TStringList::Find(const UnicodeString & S, int & Index)
+{ Index = IndexOf(S); if (Index >= 0) return true; Index = GetCount(); return false; }

@@ -1,0 +1,4 @@
+#ifndef WINSCP_RTLCOMPAT_WIDESTRUTILS_HPP
+#define WINSCP_RTLCOMPAT_WIDESTRUTILS_HPP
+#include "StrUtils.hpp"
+#endif

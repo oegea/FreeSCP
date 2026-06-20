@@ -122,11 +122,6 @@ static UnicodeString FormatImpl(const UnicodeString & Fmt, const TVarRec * Args,
   return Result;
 }
 
-UnicodeString __fastcall Format(const UnicodeString & Fmt, const TVarRecArray & Args)
-{
-  return FormatImpl(Fmt, Args.Items.empty() ? nullptr : Args.Items.data(),
-                    static_cast<int>(Args.Items.size()));
-}
 UnicodeString __fastcall Format(const UnicodeString & Fmt, const TVarRec * Args, int Args_Size)
 {
   return FormatImpl(Fmt, Args, Args_Size);
@@ -135,7 +130,7 @@ UnicodeString __fastcall Format(const UnicodeString & Fmt, const TVarRec * Args,
 // Resource strings: placeholder until source/resource tables are loaded.
 UnicodeString __fastcall LoadStr(int Ident) { return UnicodeString(L"str#") + UnicodeString(Ident); }
 
-UnicodeString __fastcall FmtLoadStr(int Ident, const TVarRecArray & Args)
+UnicodeString __fastcall FmtLoadStr(int Ident, const TVarRec * Args, int Args_Size)
 {
-  return Format(LoadStr(Ident), Args);
+  return Format(LoadStr(Ident), Args, Args_Size);
 }
