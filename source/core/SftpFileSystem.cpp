@@ -545,13 +545,13 @@ public:
   unsigned long GetCardinal()
   {
     unsigned long Result = PeekCardinal();
-    DataConsumed(sizeof(Result));
+    DataConsumed(4);  // WINSCP-NATIVE-PORT: SFTP cardinal is 4 bytes (sizeof(unsigned long)==8 on LP64)
     return Result;
   }
 
   bool CanGetCardinal()
   {
-    return (RemainingLength >= sizeof(unsigned long));
+    return (RemainingLength >= 4);  // WINSCP-NATIVE-PORT: SFTP cardinal is 4 bytes
   }
 
   unsigned long GetSmallCardinal()
@@ -1083,7 +1083,7 @@ private:
   unsigned long PeekCardinal()
   {
     unsigned long Result;
-    Need(sizeof(Result));
+    Need(4);  // WINSCP-NATIVE-PORT: SFTP cardinal is 4 bytes (sizeof(unsigned long)==8 on LP64)
     Result = GET_32BIT(FData + FPosition);
     return Result;
   }

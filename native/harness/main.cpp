@@ -80,9 +80,7 @@ int main(int argc, char ** argv)
     Terminal->Open();
     out(L"[harness] CONNECTED.");
 
-    Terminal->ChangeDirectory(L"/config");
-    Terminal->ReadCurrentDirectory();
-    Terminal->ReadDirectory(false);
+    // The session startup already resolved + read the home directory; just list it.
     TRemoteFileList * Files = Terminal->Files;
     out(FORMAT(L"[harness] %s : %d entries", (Terminal->CurrentDirectory, (Files ? Files->Count : 0))));
     if (Files != nullptr)

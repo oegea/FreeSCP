@@ -14,6 +14,7 @@
 #include <vector>
 #include <unistd.h>
 #include <sys/stat.h>
+#include <fcntl.h>
 #include <cerrno>
 #ifdef __APPLE__
 #include <mach-o/dyld.h>
@@ -433,13 +434,51 @@ int   __fastcall lstrcmpi(const wchar_t * a, const wchar_t * b) { return Unicode
 const wchar_t * __fastcall PathSkipRoot(const wchar_t * Path) { return Path; }
 bool __fastcall FileGetSymLinkTarget(const UnicodeString & FileName, UnicodeString & Target)
 { std::error_code ec; auto t = fs::read_symlink(ToU8(FileName), ec); if (ec) return false; Target = FromU8(t.string()); return true; }
-HANDLE __fastcall CreateFile(const wchar_t *, DWORD, DWORD, void *, DWORD, DWORD, HANDLE) { return INVALID_HANDLE_VALUE; }
+HANDLE __fastcall CreateFile(const wchar_t * FileName, DWORD Access, DWORD /*Share*/, void * /*Sec*/,
+                             DWORD Disposition, DWORD /*Flags*/, HANDLE /*Template*/)
+{
+  int flags = 0;
+  bool rd = (Access & GENERIC_READ) != 0, wr = (Access & GENERIC_WRITE) != 0;
+  if (rd && wr) flags = O_RDWR; else if (wr) flags = O_WRONLY; else flags = O_RDONLY;
+  switch (Disposition)
+  {
+    case CREATE_NEW:    flags |= O_CREAT | O_EXCL; break;
+    case CREATE_ALWAYS: flags |= O_CREAT | O_TRUNC; break;
+    case OPEN_ALWAYS:   flags |= O_CREAT; break;
+    case OPEN_EXISTING: default: break;
+  }
+  int fd = ::open(ToU8(UnicodeString(FileName)).c_str(), flags, 0644);
+  if (fd < 0) { SetLastError((DWORD)errno); return INVALID_HANDLE_VALUE; }
+  return reinterpret_cast<HANDLE>((intptr_t)fd);   // fd packed in a HANDLE (see FileSeek/TSafeHandleStream)
+}
 HANDLE __fastcall CreateToolhelp32Snapshot(DWORD, DWORD) { return INVALID_HANDLE_VALUE; }
 HANDLE __fastcall OpenProcess(DWORD, BOOL, DWORD) { return nullptr; }
 BOOL  __fastcall Process32First(HANDLE, PROCESSENTRY32 *) { return FALSE; }
 BOOL  __fastcall Process32Next(HANDLE, PROCESSENTRY32 *) { return FALSE; }
 int   __fastcall SHFileOperation(SHFILEOPSTRUCT *) { return 1; }
-long  __fastcall SHGetFolderPath(HWND, int, HANDLE, DWORD, wchar_t *) { return -1; }
+long  __fastcall SHGetFolderPath(HWND, int CSIdl, HANDLE, DWORD, wchar_t * Path)
+{
+  if (Path == nullptr) return -1;
+  const char * home = ::getenv("HOME"); if (home == nullptr) home = "/tmp";
+  std::string p(home);
+  switch (CSIdl)
+  {
+    case 0x001a: /*CSIDL_APPDATA*/        case 0x001c: /*CSIDL_LOCAL_APPDATA*/
+      p += "/.config"; break;
+    case 0x0005: /*CSIDL_PERSONAL*/       p += "/Documents"; break;
+    case 0x0010: /*CSIDL_DESKTOPDIRECTORY*/ p += "/Desktop"; break;
+    case 0x0028: /*CSIDL_PROFILE*/        break;                 // $HOME
+    case 0x0023: /*CSIDL_COMMON_APPDATA*/ case 0x002e: /*CSIDL_COMMON_DOCUMENTS*/
+      p += "/.config"; break;
+    default: break;                                              // $HOME
+  }
+  std::error_code ec; fs::create_directories(p, ec);             // ensure it exists/writable
+  UnicodeString u = FromU8(p);
+  int n = u.Length(); if (n > 2 * 260) n = 2 * 260;
+  for (int i = 0; i < n; ++i) Path[i] = (wchar_t)u[i + 1];
+  Path[n] = 0;
+  return 0; /*S_OK*/
+}
 BOOL  __fastcall GetProductInfo(DWORD, DWORD, DWORD, DWORD, DWORD *) { return FALSE; }
 DWORD __fastcall GetTimeZoneInformation(TIME_ZONE_INFORMATION *) { return TIME_ZONE_ID_UNKNOWN; }
 DWORD __fastcall GetModuleFileNameEx(HANDLE, HMODULE, wchar_t *, DWORD) { return 0; }

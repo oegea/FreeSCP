@@ -33,6 +33,11 @@ Windows/C++Builder build is byte-identical.
 - **source/core/SessionInfo.cpp** — `TSessionLog::GetCmdLineLog` guards the `TManagementScript`
   (scripting, unported) password-masking under `#ifdef _WIN32`; the headless engine logs no
   command line so there is nothing to mask.
+- **source/core/SftpFileSystem.cpp** — `TSFTPPacket::PeekCardinal/GetCardinal/CanGetCardinal`
+  used `sizeof(unsigned long)` for the SFTP 4-byte cardinal. `unsigned long` is 8 bytes on LP64
+  (macOS/Linux) vs 4 on Windows (LLP64), so reads over-consumed 4 bytes each and desynced every
+  SFTP response (e.g. SSH_FXP_NAME count came out as 7 instead of 1). Hardcoded the cardinal width
+  to 4 — identical to `sizeof(unsigned long)` on Windows, so no behavior change there.
 - **source/core/Configuration.cpp** — `GetStorage()` resolves `stDetect` to `stIniFile` under
   `#ifndef _WIN32`. There is no Windows registry on the native port, so storage (incl. host-key
   storage, which otherwise built a registry-backed `TRegistryStorage` whose `RootKey==NULL` made

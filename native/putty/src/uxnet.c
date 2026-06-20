@@ -1,4 +1,5 @@
 /*
+#include <stdio.h>
  * uxnet.c — BSD-socket network backend for the WinSCP PuTTY fork (replaces windows/network.c).
  *
  * Implements the Socket/Plug vtable over POSIX sockets with non-blocking async connect and
