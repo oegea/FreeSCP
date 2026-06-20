@@ -57,3 +57,5 @@ int __fastcall AnsiCompareStr(const UnicodeString & A, const UnicodeString & B) 
 bool __fastcall AnsiSameText(const UnicodeString & A, const UnicodeString & B) { return A.CompareIC(B) == 0; }
 
 UnicodeString __fastcall IntToHex(__int64 Value) { return IntToHex(Value, 1); }
+
+UnicodeString __fastcall UIntToStr(unsigned long long Value) { return UnicodeString(std::to_string(Value).c_str()); }

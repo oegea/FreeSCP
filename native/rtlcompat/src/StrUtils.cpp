@@ -52,3 +52,8 @@ int __fastcall IndexStr(const UnicodeString & AText, const UnicodeString * AValu
 { for (int i = 0; i < Count; ++i) if (AValues[i] == AText) return i; return -1; }
 int __fastcall IndexText(const UnicodeString & AText, const UnicodeString * AValues, int Count)
 { for (int i = 0; i < Count; ++i) if (AValues[i].CompareIC(AText) == 0) return i; return -1; }
+
+UnicodeString __fastcall LeftStr(const UnicodeString & S, int Count)
+{ if (Count <= 0) return UnicodeString(); if (Count >= S.Length()) return S; return S.SubString(1, Count); }
+int __fastcall FindDelimiter(const UnicodeString & Delimiters, const UnicodeString & S, int Offset)
+{ for (int i = (Offset < 1 ? 1 : Offset); i <= S.Length(); ++i) if (S.IsDelimiter(Delimiters, i)) return i; return 0; }

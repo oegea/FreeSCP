@@ -89,6 +89,14 @@ const Word fmShareDenyWrite = 0x0020;
 //--- CSIDL (special folders) ---
 #define CSIDL_PERSONAL 0x0005
 #define CSIDL_DESKTOPDIRECTORY 0x0010
+#define CSIDL_LOCAL_APPDATA 0x001c
+#define CSIDL_APPDATA 0x001a
+#define CSIDL_COMMON_APPDATA 0x0023
+#define CSIDL_PROFILE 0x0028
+#define CSIDL_PROGRAM_FILES 0x0026
+#define CSIDL_WINDOWS 0x0024
+#define CSIDL_SYSTEM 0x0025
+#define CSIDL_COMMON_DOCUMENTS 0x002e
 #define SHGFP_TYPE_CURRENT 0
 
 //--- registry access ---
