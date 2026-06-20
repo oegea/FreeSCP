@@ -60,6 +60,7 @@ set(CORE_PORTED_NAMES
   FileOperationProgress.cpp
   RemoteFiles.cpp
   Exceptions.cpp
+  Queue.cpp
 )
 set(CORE_GEN_SOURCES "")
 foreach(name ${CORE_PORTED_NAMES})

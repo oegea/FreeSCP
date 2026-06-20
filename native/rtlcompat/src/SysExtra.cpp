@@ -400,3 +400,7 @@ DWORD __fastcall SleepEx(DWORD ms, BOOL) { Sleep(ms); return 0; }
 
 UnicodeString __fastcall SysErrorMessage(int ErrorCode) { return UnicodeString(::strerror(ErrorCode)); }
 DWORD __fastcall GetLastError() { return (DWORD)errno; }
+
+long  __fastcall CoInitialize(void *) { return 0; }
+long  __fastcall CoInitializeEx(void *, DWORD) { return 0; }
+void  __fastcall CoUninitialize() {}

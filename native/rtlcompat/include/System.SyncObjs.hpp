@@ -17,6 +17,8 @@ public:
   void __fastcall Enter() { FMutex.lock(); }
   void __fastcall Leave() { FMutex.unlock(); }
   bool __fastcall TryEnter() { return FMutex.try_lock(); }
+  void __fastcall Acquire() { FMutex.lock(); }
+  void __fastcall Release() { FMutex.unlock(); }
 
 private:
   std::recursive_mutex FMutex;

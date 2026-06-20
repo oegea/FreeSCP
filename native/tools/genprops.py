@@ -250,8 +250,54 @@ def transform_try_finally(s):
     return ''.join(out)
 
 
+# --- Delphi __closure events -> std::function + implicit-this handler binds ----------------
+# 1) typedef RET __fastcall (__closure * NAME)(ARGS);  ->  typedef std::function<RET(ARGS)> NAME;
+CLOSURE_TYPEDEF_RE = re.compile(
+    r'typedef\s+(?P<ret>[\w:\*\s&<>,]+?)\s*(?:__fastcall\s*)?\(\s*__closure\s*\*\s*'
+    r'(?P<name>\w+)\s*\)\s*\((?P<args>[^;]*?)\)\s*;')
+
+def _closure_typedef(m):
+    ret = m.group('ret').strip()
+    return 'typedef ::std::function<%s(%s)> %s;' % (ret, m.group('args').strip(), m.group('name'))
+
+# 2) <lhs ending in OnXxx> = <bare member-fn name> ;  ->  bind via decltype(*this) (no class name)
+CLOSURE_BIND_RE = re.compile(
+    r'(?<![A-Za-z0-9_>.])'                              # not mid-chain/mid-identifier
+    r'(?P<lhs>(?:[A-Za-z_]\w*\s*(?:->|\.)\s*)*'
+    r'(?<![A-Za-z0-9_])On[A-Z]\w*)\s*=\s*'              # OnXxx event (capital after On)
+    r'(?P<rhs>[A-Za-z_]\w*)\s*;')
+_BIND_SKIP = {'NULL', 'nullptr', 'True', 'False', 'true', 'false'}
+
+def _closure_bind(m):
+    rhs = m.group('rhs')
+    # Skip: nulls/bools; event-to-event copies (OnXxx); and F-prefixed members which are
+    # event-holding *fields* (WinSCP convention) not handler methods — those are plain copies.
+    if rhs in _BIND_SKIP or rhs.startswith('On') or re.match(r'F[A-Z]', rhs):
+        return m.group(0)
+    return ('%s = ::winscp::MakeClosure(this, '
+            '&::std::remove_reference<decltype(*this)>::type::%s);'
+            % (m.group('lhs'), rhs))
+
+
+# 3) closure passed as a call argument to a known closure-taking method: f(Method) -> bind.
+#    (WinSCP funcs that take a Delphi event/closure by a bare member-method name.)
+CLOSURE_ARG_FUNCS = ['RunAction']
+CLOSURE_ARG_RE = re.compile(
+    r'\b(?P<fn>' + '|'.join(CLOSURE_ARG_FUNCS) + r')\(\s*(?P<rhs>[A-Za-z_]\w*)\s*\)')
+
+def _closure_arg(m):
+    rhs = m.group('rhs')
+    if rhs in _BIND_SKIP or re.match(r'F[A-Z]', rhs):
+        return m.group(0)
+    return ('%s(::winscp::MakeClosure(this, '
+            '&::std::remove_reference<decltype(*this)>::type::%s))' % (m.group('fn'), rhs))
+
+
 def process(text):
     text = transform_try_finally(text)
+    text = CLOSURE_TYPEDEF_RE.sub(_closure_typedef, text)
+    text = CLOSURE_BIND_RE.sub(_closure_bind, text)
+    text = CLOSURE_ARG_RE.sub(_closure_arg, text)
     return PROP_RE.sub(convert, text)
 
 

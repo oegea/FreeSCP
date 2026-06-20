@@ -23,9 +23,9 @@ struct TMethod
 
 #include "winscp/Object.h"   // TObject + RTTI shim (shared with SysUtils for Exception)
 
-// Delphi event types (closures). __closure is a no-op macro, so these are plain function
-// pointers here; method-pointer (TObject + code) fidelity is added if/when needed.
-typedef void __fastcall (__closure * TNotifyEvent)(TObject * Sender);
+// Delphi event types (closures) -> std::function (see winscp::MakeClosure / genprops).
+#include <functional>
+typedef ::std::function<void(TObject *)> TNotifyEvent;
 
 // Thread entry (System.Classes BeginThread). TThreadID = OS thread id.
 typedef int (* TThreadFunc)(void * Parameter);

@@ -131,6 +131,9 @@ BOOL  __fastcall FileTimeToSystemTime(const FILETIME * ft, SYSTEMTIME * st);
 BOOL  __fastcall FileTimeToLocalFileTime(const FILETIME * ft, FILETIME * lft);
 int   __fastcall StrCmpLogicalW(const wchar_t * a, const wchar_t * b);
 void  __fastcall CoTaskMemFree(void * p);
+long  __fastcall CoInitialize(void * p);
+long  __fastcall CoInitializeEx(void * p, DWORD f);
+void  __fastcall CoUninitialize();
 
 //--- TEncoding (System.SysUtils) — minimal ---
 class TEncoding

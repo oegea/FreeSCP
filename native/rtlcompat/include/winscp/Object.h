@@ -7,6 +7,7 @@
 
 #include "winscp/rtldefs.h"
 #include "winscp/UnicodeString.h"
+#include <functional>
 
 class TObject;
 
@@ -47,6 +48,18 @@ namespace winscp {
     ~TFinallyGuard() { if (armed) f(); }
   };
   template <class F> TFinallyGuard<F> MakeFinally(F f) { return TFinallyGuard<F>(f); }
+
+  // Delphi __closure events -> std::function. genprops rewrites:
+  //   event typedef  RET (__closure *T)(ARGS)        -> typedef std::function<RET(ARGS)> T
+  //   handler bind   X->OnE = Method;                -> X->OnE = MakeClosure(this, &Self::Method)
+  // so `EventField = MethodName` (Delphi implicit-this) binds the receiver, callable/nullable
+  // like the original. Covers non-const and const member functions.
+  template <class C, class R, class... A>
+  std::function<R(A...)> MakeClosure(C * self, R (C::*m)(A...))
+  { return [self, m](A... a) { return (self->*m)(a...); }; }
+  template <class C, class R, class... A>
+  std::function<R(A...)> MakeClosure(C * self, R (C::*m)(A...) const)
+  { return [self, m](A... a) { return (self->*m)(a...); }; }
 }
 
 #endif

@@ -123,18 +123,13 @@ Remaining 20 split by workstream (NOT missing-RTL-symbol grind anymore):
   std::thread + condition_variable, via an id-keyed handle table. Verified by a standalone
   test (spawn/join/exit-code/event signal+wait). Queue's threading symbols now resolve.
 
-- 🔴 **__closure events are the third deep nut** (after __property and RTTI), and the hardest.
-  WinSCP assigns event handlers Delphi-style with implicit `this`:
-      FTerminal->OnQueryUser = TerminalQueryUser;   // bare member name -> closure(this, &fn)
-  C++Builder's `__closure` is compiler-level method-pointer binding; clang has no equivalent,
-  and `EventField = MethodName` cannot be shimmed by a macro/template (no `this`, no class).
-  It is pervasive (every callback: Queue, Terminal, all session/protocol/GUI code).
-  Tractable fix = a **libclang/libtooling source rewriter** that turns `X = Method` (RHS an
-  unqualified member fn) into `X = MakeClosure(this, &EnclosingClass::Method)`, plus event
-  typedefs -> a closure object (obj+pmf, callable). This is a new tool, heavier than the
-  regex genprops. Until then, event-heavy .cpp (Queue, Terminal, SecureShell, sessions) stay
-  blocked even once their other symbols resolve.
-
-  Timeline impact: the engine port's hard core is now 3 nuts — __property (done), RTTI (done),
-  __closure (needs a semantic rewriter). The data-model/util layer (14/34) is event-free and
-  compiles; the session/transfer layer is event-driven and needs the closure rewriter first.
+- 
+## __closure SOLVED (lightweight — no libclang needed)
+The feared third nut has a regex+template solution in genprops:
+- event typedefs `RET __fastcall (__closure *T)(ARGS)` -> `typedef std::function<RET(ARGS)> T`.
+- handler binds `X->OnXxx = Method;` -> `X->OnXxx = winscp::MakeClosure(this,
+  &remove_reference<decltype(*this)>::type::Method)` (no class name needed; decltype trick).
+- event-to-event copies, F-prefixed event fields, nulls, `OnceDone...` (On+lowercase) are
+  left alone; `On[A-Z]` distinguishes real events. Call-arg closures handled for known funcs
+  (RunAction). MakeClosure binds receiver via a lambda; std::function is callable/nullable
+  like the Delphi closure. Queue.cpp now compiles -> 15/34 in libwinscpcore.a.
