@@ -27,6 +27,7 @@ typedef std::intptr_t   INT_PTR;
 typedef std::intptr_t   LONG_PTR;
 typedef std::uintptr_t  ULONG_PTR;
 typedef std::uintptr_t  DWORD_PTR;
+typedef std::size_t     SIZE_T;
 typedef UINT_PTR        WPARAM;
 typedef LONG_PTR        LPARAM;
 typedef LONG_PTR        LRESULT;

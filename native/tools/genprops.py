@@ -264,6 +264,15 @@ def _closure_typedef(m):
     ret = m.group('ret').strip()
     return 'typedef ::std::function<%s(%s)> %s;' % (ret, m.group('args').strip(), m.group('name'))
 
+# 1b) inline (non-typedef) __closure declarator — a parameter or local of closure type, e.g.
+#     `void __fastcall (__closure *f)(TLogLineType, const UnicodeString &)` -> std::function.
+#     Runs after the typedef rule (which has already removed the typedef'd ones).
+CLOSURE_DECL_RE = re.compile(
+    r'(?P<ret>[A-Za-z_][\w:]*\s*[\*&]?)\s+__fastcall\s*\(\s*__closure\s*\*\s*'
+    r'(?P<name>\w+)\s*\)\s*\((?P<args>[^;{]*?)\)')
+def _closure_decl(m):
+    return '::std::function<%s(%s)> %s' % (m.group('ret').strip(), m.group('args').strip(), m.group('name'))
+
 # 2) <lhs ending in OnXxx> = <bare member-fn name> ;  ->  bind via decltype(*this) (no class name)
 CLOSURE_BIND_RE = re.compile(
     r'(?<![A-Za-z0-9_>.])'                              # not mid-chain/mid-identifier
@@ -360,11 +369,15 @@ def _progress_ctor(m):
 #   ProcessLocalDirectory(a1, METHOD, ...)        slot 2
 #   ProcessFiles(a1, a2, METHOD, ...)             slot 3
 #   CalculateFilesChecksum(a1, a2, METHOD)        slot 3 (last)
-def _make_slot_rule(fn, pre_args, bare_ok=True):
+def _make_slot_rule(fn, pre_args, bare_ok=True, require_comma=False):
     args = ''.join(r'\s*(?P<a%d>[^,]+?)\s*,' % i for i in range(pre_args))
     regex = re.compile(r'\b' + fn + r'\(' + args + r'\s*(?P<m>' + _METHARG + r')\s*(?P<tail>[,)])')
     def sub(m):
         meth = m.group('m').strip()
+        # require_comma: only wrap when the slot is followed by more args (tail ','), used to
+        # avoid a single-arg overload whose lone arg is a plain value (DoAddStartupInfo(Data)).
+        if require_comma and m.group('tail') != ',':
+            return m.group(0)
         is_bare = ('->' not in meth) and ('.' not in meth)
         bare = re.sub(r'.*(?:->|\.)', '', meth)
         # Skip nulls/bools, F-fields, and On-prefixed names: an `OnXxx` arg is a passed-through
@@ -384,6 +397,8 @@ SLOT_RULES = [
     _make_slot_rule('ProcessFiles', 2),
     _make_slot_rule('CalculateFilesChecksum', 2),
     _make_slot_rule('DoAnyCommand', 1, bare_ok=False),
+    _make_slot_rule('DoAdd', 2),                              # DoAdd(Type, Line, DoAddToSelf)
+    _make_slot_rule('DoAddStartupInfo', 0, require_comma=True),  # (Entry, Conf, bool) not (Data)
 ]
 
 # 4d) 3-arg <-> 4-arg process-file event arity casts (std::function won't convert; the bridge
@@ -405,6 +420,7 @@ def _fileoploop(m):
 def process(text):
     text = transform_try_finally(text)
     text = CLOSURE_TYPEDEF_RE.sub(_closure_typedef, text)
+    text = CLOSURE_DECL_RE.sub(_closure_decl, text)
     text = CLOSURE_BIND_ADDR_RE.sub(_closure_bind_addr, text)
     text = CLOSURE_BIND_RE.sub(_closure_bind, text)
     text = PROGRESS_CTOR_RE.sub(_progress_ctor, text)

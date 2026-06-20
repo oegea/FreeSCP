@@ -140,6 +140,24 @@ const Word fmShareDenyWrite = 0x0020;
 #define OPEN_EXISTING 3
 #define OPEN_ALWAYS 4
 
+//--- virtual memory query (VirtualQuery / MEMORY_BASIC_INFORMATION) ---
+#define MEM_COMMIT  0x1000
+#define MEM_RESERVE 0x2000
+#define MEM_FREE    0x10000
+#define MEM_PRIVATE 0x20000
+#define MEM_MAPPED  0x40000
+#define MEM_IMAGE   0x1000000
+struct MEMORY_BASIC_INFORMATION
+{
+  void * BaseAddress = nullptr; void * AllocationBase = nullptr;
+  DWORD AllocationProtect = 0; SIZE_T RegionSize = 0;
+  DWORD State = 0; DWORD Protect = 0; DWORD Type = 0;
+};
+
+//--- extended username format (GetUserNameEx) ---
+enum EXTENDED_NAME_FORMAT { NameUnknown = 0, NameFullyQualifiedDN = 1, NameSamCompatible = 2,
+  NameDisplay = 3, NameUniqueId = 6, NameCanonical = 7, NameUserPrincipal = 8 };
+
 //--- process snapshot / access ---
 #define TH32CS_SNAPPROCESS 0x00000002
 #define PROCESS_QUERY_INFORMATION 0x0400

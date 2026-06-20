@@ -380,6 +380,19 @@ void __fastcall TFile::WriteAllText(const UnicodeString & FileName, const Unicod
   std::fclose(f);
 }
 
+const UnicodeString CmdLine = ParamStr(0);
+BOOL __fastcall GetUserNameEx(int, wchar_t * Buffer, DWORD * Size)
+{
+  UnicodeString u = GetEnvironmentVariable(UnicodeString(L"USER"));
+  if (u.IsEmpty()) u = UnicodeString(L"user");
+  if (Buffer && Size && (DWORD)(u.Length() + 1) <= *Size)
+  { for (int i = 1; i <= u.Length(); ++i) Buffer[i - 1] = (wchar_t)u[i]; Buffer[u.Length()] = 0;
+    *Size = (DWORD)u.Length(); return TRUE; }
+  if (Size) *Size = (DWORD)(u.Length() + 1);
+  return FALSE;
+}
+SIZE_T __fastcall VirtualQuery(const void *, struct MEMORY_BASIC_INFORMATION *, SIZE_T) { return 0; }
+
 DWORD __fastcall GetFileSize(HANDLE Handle, DWORD * SizeHigh)
 {
   int fd = static_cast<int>(reinterpret_cast<intptr_t>(Handle));

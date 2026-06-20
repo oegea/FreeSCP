@@ -189,6 +189,13 @@ public:
 // GetFileSize(HANDLE, DWORD* High) -> low 32 bits (INVALID_FILE_SIZE on error).
 DWORD __fastcall GetFileSize(HANDLE Handle, DWORD * SizeHigh);
 
+// System::CmdLine — the process command line (Delphi global).
+extern const UnicodeString CmdLine;
+// GetUserNameEx(format, buf, size) — fills the current username; BOOL success.
+BOOL __fastcall GetUserNameEx(int NameFormat, wchar_t * Buffer, DWORD * Size);
+// VirtualQuery — process memory map probe. Stubbed: returns 0 (no region) on the native port.
+SIZE_T __fastcall VirtualQuery(const void * Address, struct MEMORY_BASIC_INFORMATION * Info, SIZE_T Length);
+
 //--- command-line / executable path ---
 // ParamStr(0) = full path to the running executable; ParamStr(n) = nth argv (empty if absent).
 UnicodeString __fastcall ParamStr(int Index);
