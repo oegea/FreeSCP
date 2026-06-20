@@ -90,6 +90,12 @@ public:
   int ToIntDef(int d) const { if (FData.empty()) return d; std::string n; for (char16_t c : FData) n.push_back((char)c); char*e=nullptr; long v=std::strtol(n.c_str(),&e,10); return *e?d:(int)v; }
   double ToDouble() const { std::string n; for (char16_t c : FData) n.push_back((char)c); return std::strtod(n.c_str(),nullptr); }
 
+  // C++Builder UnicodeString::sprintf — printf-style format into *this (replaces contents).
+  // Implemented manually (vswprintf is unusable under -fshort-wchar); supports the conversions
+  // the engine uses: %s (wchar_t*), %c, %d/%u/%x/%X with l/ll/L (Borland Int64) length mods,
+  // %%, plus minimal width/zero-pad. Returns the resulting length (Borland returns the string).
+  int __cdecl sprintf(const wchar_t * Format, ...);
+
   // In-place edits (Delphi 1-based).
   void Delete(int index, int count)
   {
