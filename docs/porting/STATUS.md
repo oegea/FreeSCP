@@ -133,3 +133,11 @@ The feared third nut has a regex+template solution in genprops:
   left alone; `On[A-Z]` distinguishes real events. Call-arg closures handled for known funcs
   (RunAction). MakeClosure binds receiver via a lambda; std::function is callable/nullable
   like the Delphi closure. Queue.cpp now compiles -> 15/34 in libwinscpcore.a.
+
+## Phase 6 start: visual Qt Commander (local panel = real ported engine)
+winscp-qt is now a dual-pane Commander. The local panel lists real directories via the
+ported engine (FindFirst/TSearchRec/path helpers) through native/ui-qt/enginebridge — the
+clean std-only boundary that isolates the engine's -fshort-wchar/UnicodeString ABI from Qt's
+QString. enginebridge.cpp is the only UI TU built with engine flags; main.cpp is plain Qt.
+This is the exact pattern the remote (SSH/SFTP) panel will use once the backend lands.
+Verified: app launches; bridge enumerates real files (dirs-first, "..", sizes).
