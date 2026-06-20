@@ -159,3 +159,21 @@ noise.c (/dev/urandom + rusage entropy), getticktime (mach_absolute_time), stora
 seed file; host keys via WinSCP), callback_set pthread sync. Then compile PuttyIntf.cpp/
 SecureShell.cpp (C++ engine side) and wire SecureShell's event loop to select() — at which
 point the remote panel can do a real SSH/SFTP connect.
+
+## Phase 3 backend: uxsupport/uxstubs/uxstore done (119 -> 31 undefined)
+native/putty/src (libputtyplatform): uxsupport.c (getticktime/noise/entropy, get_username,
+platform_default_*, CriticalSection->pthread, Filename/FontSpec), uxstubs.c (stricmp,
+UTF-8 charset mb/wc, no-agent, platform_new_connection->NULL), uxstore.c (settings stubs —
+WinSCP uses Conf; random-seed file real; host-key STUBBED -> Seat asks WinSCP). defs.h
+guarded so HAVE_AES_NI is x86-only (arm uses software AES; UPSTREAM-PATCHES).
+
+Remaining undefined when force-linking puttycore+puttyplatform: 31.
+- 16 = NETWORK (sk_init/sk_namelookup/sk_new/sk_addr_*/...) -> the last platform file
+  native/putty/src/uxnet.c (BSD sockets + Socket/Plug vtable + async connect + do_select).
+- 15 = engine-side (get_callback_set/get_seat_callback_set/get_log_*, modalfatalbox,
+  ldisc_echoedit_update, old_keyfile_warning, pinger_*, schedule_timer, expire_timer_context,
+  sshver, putty_section, in_memory_key_data, argon2_internal_vs) — provided by WinSCP
+  PuttyIntf.cpp/SecureShell.cpp/timing when the engine side compiles+links.
+
+### Next: uxnet.c (the network backend) -> then compile PuttyIntf.cpp/SecureShell.cpp ->
+wire SecureShell event loop to select() -> real SSH/SFTP connect from the remote panel.

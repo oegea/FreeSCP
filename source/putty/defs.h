@@ -12,7 +12,13 @@
 #define PUTTY_DEFS_H
 
 #ifdef WINSCP
+/* WINSCP-NATIVE-PORT: AES-NI is x86-only; other arches (macOS arm64) use software AES.
+   Guarded so the native build doesn't reference x86 ssh_aes*_ni symbols. */
+#if defined(__i386__) || defined(__x86_64__) || defined(_M_IX86) || defined(_M_X64)
 #define HAVE_AES_NI 1
+#else
+#define HAVE_AES_NI 0
+#endif
 #define HAVE_WMEMCHR 1
 #define HAVE_CMAKE_H 0
 #define HAVE_NO_STDINT_H 0

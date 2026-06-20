@@ -38,3 +38,12 @@ target_include_directories(puttycore PUBLIC
 target_compile_options(puttycore PRIVATE
   -include platform.h -std=gnu11 -w -Wno-everything)
 set_target_properties(puttycore PROPERTIES C_STANDARD 11)
+
+# Unix/macOS platform BACKEND for putty (network/select/noise/time/storage). Grows until
+# puttycore links + connects. Built with the same flags as puttycore.
+file(GLOB PUTTY_PLATFORM_SRC ${CMAKE_CURRENT_SOURCE_DIR}/src/*.c)
+add_library(puttyplatform STATIC ${PUTTY_PLATFORM_SRC})
+target_compile_definitions(puttyplatform PRIVATE WINSCP MPEXT NO_GSSAPI)
+target_include_directories(puttyplatform PUBLIC
+  ${CMAKE_CURRENT_SOURCE_DIR}/include ${PUTTY_DIR} ${LIBS_DIR}/openssl/include)
+target_compile_options(puttyplatform PRIVATE -include platform.h -std=gnu11 -w -Wno-everything)
