@@ -201,6 +201,8 @@ BOOL  __fastcall VerQueryValue(const void *, const wchar_t *, void **, UINT *);
 void  __fastcall Randomize();
 DWORD __fastcall GetTickCount();
 void  __fastcall Sleep(DWORD ms);
+UnicodeString __fastcall SysErrorMessage(int ErrorCode);
+DWORD __fastcall GetLastError();
 DWORD __fastcall SleepEx(DWORD ms, BOOL alertable);
 int   __fastcall CompareValue(int A, int B);
 __int64 __fastcall CompareValue(__int64 A, __int64 B);

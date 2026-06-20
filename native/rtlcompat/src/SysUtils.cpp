@@ -37,3 +37,5 @@ int __fastcall FileWrite(int Handle, const System::DynamicArray<System::Byte> Bu
 }
 
 int RandSeed = 0;
+
+const UnicodeString System_Sysconst_SOSError = UnicodeString(L"System error. Code: %d. %s%s");

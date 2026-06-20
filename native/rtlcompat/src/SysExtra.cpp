@@ -13,6 +13,7 @@
 #include <map>
 #include <vector>
 #include <unistd.h>
+#include <cerrno>
 
 namespace fs = std::filesystem;
 
@@ -397,3 +398,6 @@ DWORD __fastcall SHGetFileInfo(const wchar_t *, DWORD, TSHFileInfoW *, UINT, UIN
 
 void  __fastcall Sleep(DWORD ms) { struct timespec ts{ms/1000, (long)(ms%1000)*1000000L}; nanosleep(&ts, nullptr); }
 DWORD __fastcall SleepEx(DWORD ms, BOOL) { Sleep(ms); return 0; }
+
+UnicodeString __fastcall SysErrorMessage(int ErrorCode) { return UnicodeString(::strerror(ErrorCode)); }
+DWORD __fastcall GetLastError() { return (DWORD)errno; }

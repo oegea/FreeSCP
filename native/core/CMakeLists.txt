@@ -58,6 +58,8 @@ set(CORE_PORTED_NAMES
   FileInfo.cpp
   CopyParam.cpp
   FileOperationProgress.cpp
+  RemoteFiles.cpp
+  Exceptions.cpp
 )
 set(CORE_GEN_SOURCES "")
 foreach(name ${CORE_PORTED_NAMES})

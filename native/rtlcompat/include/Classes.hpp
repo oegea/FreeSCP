@@ -53,6 +53,7 @@ public:
   __declspec(property(get=GetCount, put=SetCount)) int Count;
 
   void * __fastcall Get(int Index) { return FItems[static_cast<size_t>(Index)]; }
+  void * __fastcall Extract(void * Item) { int i = IndexOf(Item); if (i < 0) return nullptr; FItems.erase(FItems.begin()+i); return Item; }
   void __fastcall Put(int Index, void * Item) { FItems[static_cast<size_t>(Index)] = Item; }
   __declspec(property(get=Get, put=Put)) void * Items[];
 
@@ -99,6 +100,7 @@ public:
   int __fastcall IndexOfName(const UnicodeString & Name);
   void __fastcall Move(int CurIndex, int NewIndex);
   void __fastcall Exchange(int Index1, int Index2);
+  int __fastcall Append(const UnicodeString & S) { return Add(S); }
 
   UnicodeString __fastcall GetText();
   void __fastcall SetText(const UnicodeString & Text);
@@ -140,6 +142,7 @@ public:
   bool Sorted = false;
   bool CaseSensitive = false;
   bool StrictDelimiter = false;
+  bool OwnsObjects = false;
   System::Types::TDuplicates Duplicates = System::Types::dupIgnore;
 
 private:
@@ -255,6 +258,8 @@ class EAssertionFailed : public Exception { public: using Exception::Exception; 
 class EAbstractError : public Exception { public: using Exception::Exception; };
 class EInvalidCast : public Exception { public: using Exception::Exception; };
 class EInvalidArgument : public Exception { public: using Exception::Exception; };
+class EExternal : public Exception { public: using Exception::Exception; };
+class EHeapException : public EExternal { public: using EExternal::EExternal; void __fastcall FreeInstance() {} };
 class EReadError  : public EStreamError { public: using EStreamError::EStreamError; };
 class EWriteError : public EStreamError { public: using EStreamError::EStreamError; };
 class EFCreateError : public EStreamError { public: using EStreamError::EStreamError; };

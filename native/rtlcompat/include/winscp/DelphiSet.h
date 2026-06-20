@@ -17,6 +17,7 @@ public:
   Set & operator>>(const T v) { FBits.reset(idx(v)); return *this; } // exclude
   bool Contains(const T v) const { return FBits.test(idx(v)); }
   bool Empty() const { return FBits.none(); }
+  void Clear() { FBits.reset(); }
   Set operator+(const Set & o) const { Set r(*this); r.FBits |= o.FBits; return r; }
   Set operator*(const Set & o) const { Set r(*this); r.FBits &= o.FBits; return r; }
   bool operator==(const Set & o) const { return FBits == o.FBits; }

@@ -213,6 +213,7 @@ public:
 
 extern const UnicodeString EmptyStr;
 extern int RandSeed;
+extern const UnicodeString System_Sysconst_SOSError;
 
 // Delphi open-array constructor: ARRAYOFCONST((a, b, c)) -> TVarRecArray(a, b, c).
 struct TVarRecArray
