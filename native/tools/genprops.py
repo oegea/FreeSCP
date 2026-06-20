@@ -287,7 +287,7 @@ def _closure_bind(m):
 #     (e.g. CopyAlias.OnSubmit = &ClipboardHandler.Copy;)
 CLOSURE_BIND_ADDR_RE = re.compile(
     r'(?<![A-Za-z0-9_>.])'
-    r'(?P<lhs>(?:[A-Za-z_]\w*\s*(?:->|\.)\s*)*'
+    r'(?P<lhs>(?:[A-Za-z_]\w*(?:\[[^\]]*\])?\s*(?:->|\.)\s*)*'  # allow Aliases[0]. subscripts
     r'(?<![A-Za-z0-9_])On[A-Z]\w*)\s*=\s*'
     r'&\s*(?P<recv>[A-Za-z_]\w*)\s*\.\s*(?P<meth>[A-Za-z_]\w*)\s*;')
 
@@ -332,22 +332,69 @@ def _mc_obj(obj, meth):
 def _mc_this(meth):
     return ('::winscp::MakeClosure(this, &::std::remove_reference<decltype(*this)>::type::%s)' % meth)
 
-# 4a) TFileOperationProgressType Local(&recv->M1, &recv->M2);
+# A method reference token in a closure arg slot: `recv->M`, `recv.M`, or bare `M` (this-bound).
+_METHARG = r'(?:[A-Za-z_]\w*\s*(?:->|\.)\s*)?[A-Za-z_]\w*'
+def _mc_arg(tok):
+    tok = tok.strip()
+    m = re.match(r'^(\w+)\s*->\s*(\w+)$', tok)
+    if m: return _mc_recv(m.group(1), m.group(2))
+    m = re.match(r'^(\w+)\s*\.\s*(\w+)$', tok)
+    if m: return _mc_obj(m.group(1), m.group(2))
+    return _mc_this(tok)
+
+# 4a) TFileOperationProgressType Local(&M1, &M2) — both args are events; M may be bare (this) or
+#     recv->M. Address-of a bound member is illegal C++, so wrapping is unambiguous here.
 PROGRESS_CTOR_RE = re.compile(
     r'TFileOperationProgressType\s+(?P<var>\w+)\s*\(\s*'
-    r'&\s*(?P<r1>\w+)\s*->\s*(?P<m1>\w+)\s*,\s*'
-    r'&\s*(?P<r2>\w+)\s*->\s*(?P<m2>\w+)\s*\)')
+    r'&\s*(?P<m1>' + _METHARG + r')\s*,\s*'
+    r'&\s*(?P<m2>' + _METHARG + r')\s*\)')
 def _progress_ctor(m):
     return 'TFileOperationProgressType %s(%s, %s)' % (
-        m.group('var'), _mc_recv(m.group('r1'), m.group('m1')), _mc_recv(m.group('r2'), m.group('m2')))
+        m.group('var'), _mc_arg(m.group('m1')), _mc_arg(m.group('m2')))
 
-# 4b) ProcessDirectory(<arg1>, recv->Method, ...) — the 2nd arg is a TProcessFileEvent.
-PROCESSDIR_RE = re.compile(
-    r'ProcessDirectory\(\s*(?P<a1>[^,]+?)\s*,\s*(?P<recv>\w+)\s*->\s*(?P<meth>\w+)\s*,')
-def _processdir(m):
-    return 'ProcessDirectory(%s, %s,' % (m.group('a1'), _mc_recv(m.group('recv'), m.group('meth')))
+# 4b) Engine fan-out funcs that take a TProcessFileEvent/TFileOperationEvent in a fixed slot.
+#     The closure arg is a method ref (bare this-method or recv->M); the slot is always an event
+#     in these signatures, so wrapping is safe. Declarations don't match (their param is
+#     `Type Name`, two words, which fails the single-token + delimiter anchor).
+#   ProcessDirectory(a1, METHOD, ...)             slot 2
+#   ProcessLocalDirectory(a1, METHOD, ...)        slot 2
+#   ProcessFiles(a1, a2, METHOD, ...)             slot 3
+#   CalculateFilesChecksum(a1, a2, METHOD)        slot 3 (last)
+def _make_slot_rule(fn, pre_args, bare_ok=True):
+    args = ''.join(r'\s*(?P<a%d>[^,]+?)\s*,' % i for i in range(pre_args))
+    regex = re.compile(r'\b' + fn + r'\(' + args + r'\s*(?P<m>' + _METHARG + r')\s*(?P<tail>[,)])')
+    def sub(m):
+        meth = m.group('m').strip()
+        is_bare = ('->' not in meth) and ('.' not in meth)
+        bare = re.sub(r'.*(?:->|\.)', '', meth)
+        # Skip nulls/bools, F-fields, and On-prefixed names: an `OnXxx` arg is a passed-through
+        # event *variable* (not a this-method), e.g. CalculateFilesChecksum(..., OnCalculatedChecksum).
+        # When bare_ok is False the bare form is also a passed-through variable (e.g. DoAnyCommand's
+        # OutputEvent param) — only explicit-receiver method refs (recv->M / recv.M) are wrapped.
+        if bare in _BIND_SKIP or re.match(r'F[A-Z]', bare) or bare.startswith('On'):
+            return m.group(0)
+        if is_bare and not bare_ok:
+            return m.group(0)
+        pre = ''.join(m.group('a%d' % i) + ', ' for i in range(pre_args))
+        return '%s(%s%s%s' % (fn, pre, _mc_arg(meth), m.group('tail'))
+    return (regex, sub)
+SLOT_RULES = [
+    _make_slot_rule('ProcessDirectory', 1),
+    _make_slot_rule('ProcessLocalDirectory', 1),
+    _make_slot_rule('ProcessFiles', 2),
+    _make_slot_rule('CalculateFilesChecksum', 2),
+    _make_slot_rule('DoAnyCommand', 1, bare_ok=False),
+]
 
-# 4c) FileOperationLoop(Method, ...) — the 1st arg is the operation's callback event (this-bound).
+# 4d) 3-arg <-> 4-arg process-file event arity casts (std::function won't convert; the bridge
+#     funcs live guarded in Terminal.h). Only single-identifier operands (passed-through event
+#     vars), so this never touches closure/lambda constructions.
+EVENTEX_CAST_RE = re.compile(r'\(\s*TProcessFileEventEx\s*\)\s*(?P<x>[A-Za-z_]\w*)')
+EVENT_CAST_RE   = re.compile(r'\bTProcessFileEvent\(\s*(?P<x>[A-Za-z_]\w*)\s*\)')
+def _eventex_cast(m): return '::WinscpToEventEx(%s)' % m.group('x')
+def _event_cast(m):   return '::WinscpToEvent(%s)' % m.group('x')
+
+# 4c) FileOperationLoop(Method, ...) — 1st arg is the operation's callback event (this-bound).
 FILEOPLOOP_RE = re.compile(r'FileOperationLoop\(\s*(?P<meth>[A-Za-z_]\w*)\s*,')
 def _fileoploop(m):
     if re.match(r'F[A-Z]', m.group('meth')) or m.group('meth') in _BIND_SKIP:
@@ -361,8 +408,11 @@ def process(text):
     text = CLOSURE_BIND_ADDR_RE.sub(_closure_bind_addr, text)
     text = CLOSURE_BIND_RE.sub(_closure_bind, text)
     text = PROGRESS_CTOR_RE.sub(_progress_ctor, text)
-    text = PROCESSDIR_RE.sub(_processdir, text)
+    for regex, sub in SLOT_RULES:
+        text = regex.sub(sub, text)
     text = FILEOPLOOP_RE.sub(_fileoploop, text)
+    text = EVENTEX_CAST_RE.sub(_eventex_cast, text)
+    text = EVENT_CAST_RE.sub(_event_cast, text)
     text = CLOSURE_ARG_RE.sub(_closure_arg, text)
     return PROP_RE.sub(convert, text)
 

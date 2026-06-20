@@ -178,6 +178,17 @@ public:
   static bool __fastcall IsDriveRooted(const UnicodeString & P);
 };
 
+// TFile (System.IOUtils) — whole-file text helpers (UTF-8).
+class TFile
+{
+public:
+  static UnicodeString __fastcall ReadAllText(const UnicodeString & FileName);
+  static void __fastcall WriteAllText(const UnicodeString & FileName, const UnicodeString & Content);
+};
+
+// GetFileSize(HANDLE, DWORD* High) -> low 32 bits (INVALID_FILE_SIZE on error).
+DWORD __fastcall GetFileSize(HANDLE Handle, DWORD * SizeHigh);
+
 //--- command-line / executable path ---
 // ParamStr(0) = full path to the running executable; ParamStr(n) = nth argv (empty if absent).
 UnicodeString __fastcall ParamStr(int Index);

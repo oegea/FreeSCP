@@ -13,6 +13,7 @@
 #include <map>
 #include <vector>
 #include <unistd.h>
+#include <sys/stat.h>
 #include <cerrno>
 #ifdef __APPLE__
 #include <mach-o/dyld.h>
@@ -358,6 +359,36 @@ BOOL __fastcall SetFileAttributes(const wchar_t * FileName, DWORD Attributes)
 
 long __fastcall RegSetValueEx(HKEY, const wchar_t *, DWORD, DWORD, const void *, DWORD) { return ERROR_ACCESS_DENIED; }
 long __fastcall RegQueryValueEx(HKEY, const wchar_t *, DWORD *, DWORD *, void *, DWORD *) { return ERROR_FILE_NOT_FOUND; }
+
+UnicodeString __fastcall TFile::ReadAllText(const UnicodeString & FileName)
+{
+  std::FILE * f = std::fopen(ToU8(FileName).c_str(), "rb");
+  if (!f) return UnicodeString();
+  std::string all; char buf[8192]; size_t n;
+  while ((n = std::fread(buf, 1, sizeof(buf), f)) > 0) all.append(buf, n);
+  std::fclose(f);
+  if (all.size() >= 3 && (unsigned char)all[0] == 0xEF && (unsigned char)all[1] == 0xBB && (unsigned char)all[2] == 0xBF)
+    all.erase(0, 3);
+  return FromU8(all);
+}
+void __fastcall TFile::WriteAllText(const UnicodeString & FileName, const UnicodeString & Content)
+{
+  std::FILE * f = std::fopen(ToU8(FileName).c_str(), "wb");
+  if (!f) return;
+  std::string s = ToU8(Content);
+  if (!s.empty()) std::fwrite(s.data(), 1, s.size(), f);
+  std::fclose(f);
+}
+
+DWORD __fastcall GetFileSize(HANDLE Handle, DWORD * SizeHigh)
+{
+  int fd = static_cast<int>(reinterpret_cast<intptr_t>(Handle));
+  struct stat st;
+  if (::fstat(fd, &st) != 0) return INVALID_FILE_SIZE;
+  unsigned long long sz = static_cast<unsigned long long>(st.st_size);
+  if (SizeHigh) *SizeHigh = static_cast<DWORD>(sz >> 32);
+  return static_cast<DWORD>(sz & 0xFFFFFFFFu);
+}
 
 UnicodeString __fastcall ParamStr(int Index)
 { // Index 0 = executable path; other indices = argv (not tracked yet -> empty).

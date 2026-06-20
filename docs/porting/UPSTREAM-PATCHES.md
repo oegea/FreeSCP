@@ -12,6 +12,11 @@ Windows/C++Builder build is byte-identical.
   putty backend's fd type. Avoids the engine↔putty SOCKET type clash.
 - **source/core/PuttyIntf.cpp** — `HasGSSAPI()` body guarded with `#ifdef NO_GSSAPI` (returns
   false); GSSAPI/Kerberos is not yet wired on the native build.
+- **source/core/Terminal.h** — under `#ifndef _WIN32`, two inline bridges `WinscpToEventEx` /
+  `WinscpToEvent` between the 3-arg `TProcessFileEvent` and 4-arg `TProcessFileEventEx`. Delphi
+  permits casting between these closures; the ported `std::function` types can't convert, so
+  genprops rewrites the two arity casts in Terminal.cpp to call these. Compiled out on Windows
+  (the typedefs are `__closure`s there).
 - **source/core/FileBuffer.h / FileBuffer.cpp** — extra `TSafeHandleStream(void *)` ctor under
   `#ifndef _WIN32`. Native callers cast OS file handles to `THandle` (which is `void*` in the
   rtlcompat layer, since it doubles as the Win threading HANDLE), so the existing `(int)` ctor

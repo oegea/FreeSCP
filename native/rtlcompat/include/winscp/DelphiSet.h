@@ -19,6 +19,7 @@ public:
   bool Empty() const { return FBits.none(); }
   void Clear() { FBits.reset(); }
   Set operator+(const Set & o) const { Set r(*this); r.FBits |= o.FBits; return r; }
+  Set operator-(const Set & o) const { Set r(*this); r.FBits &= ~o.FBits; return r; }  // difference
   Set operator*(const Set & o) const { Set r(*this); r.FBits &= o.FBits; return r; }
   bool operator==(const Set & o) const { return FBits == o.FBits; }
   bool operator!=(const Set & o) const { return FBits != o.FBits; }

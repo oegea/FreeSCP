@@ -52,6 +52,15 @@ typedef void __fastcall (__closure *TProcessFileEvent)
   (const UnicodeString FileName, const TRemoteFile * File, void * Param);
 typedef void __fastcall (__closure *TProcessFileEventEx)
   (const UnicodeString FileName, const TRemoteFile * File, void * Param, int Index);
+#ifndef _WIN32
+// WINSCP-NATIVE-PORT: Delphi permits casting between the 3-arg and 4-arg process-file events;
+// the ported std::function types don't, so bridge them explicitly (genprops rewrites the two
+// casts in Terminal.cpp to these). On Windows the typedefs are __closures and this is compiled out.
+inline TProcessFileEventEx WinscpToEventEx(TProcessFileEvent f)
+{ return f ? TProcessFileEventEx([f](const UnicodeString N, const TRemoteFile * F, void * P, int) { f(N, F, P); }) : TProcessFileEventEx(); }
+inline TProcessFileEvent WinscpToEvent(TProcessFileEventEx f)
+{ return f ? TProcessFileEvent([f](const UnicodeString N, const TRemoteFile * F, void * P) { f(N, F, P, 0); }) : TProcessFileEvent(); }
+#endif
 typedef int __fastcall (__closure *TFileOperationEvent)
   (void * Param1, void * Param2);
 typedef void __fastcall (__closure *TSynchronizeDirectory)

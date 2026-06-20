@@ -58,6 +58,8 @@ typedef long           HRESULT;
 #define FAILED(hr) (((HRESULT)(hr)) < 0)
 #define S_OK 0L
 #define ERROR_SUCCESS 0L
+#define NO_ERROR 0L
+#define INVALID_FILE_SIZE ((DWORD)0xFFFFFFFF)
 #define ERROR_FILE_NOT_FOUND 2L
 #define ERROR_NO_MORE_FILES 18L
 #define ERROR_INSUFFICIENT_BUFFER 122L
