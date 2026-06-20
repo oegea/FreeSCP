@@ -34,6 +34,7 @@ public:
   { std::string::size_type p = FData.find(sub.FData); return (p == std::string::npos) ? 0 : static_cast<int>(p) + 1; }
   void Delete(int index, int count)
   { if (index >= 1 && index <= Length() && count > 0) FData.erase(static_cast<size_t>(index - 1), static_cast<size_t>(count)); }
+  char * Unique() { return &FData[0]; }
 
 protected:
   std::string FData;

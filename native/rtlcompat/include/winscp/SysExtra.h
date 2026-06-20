@@ -11,6 +11,7 @@
 #include "winscp/rtldefs.h"
 #include "winscp/wintypes.h"
 #include "winscp/WinCompat.h"
+#include "winscp/Object.h"
 #include "winscp/UnicodeString.h"
 #include "winscp/AnsiStrings.h"
 
@@ -129,6 +130,61 @@ public:
   static TEncoding * __fastcall Default();
   RawByteString __fastcall GetBytes(const UnicodeString & S);
   UnicodeString __fastcall GetString(const RawByteString & B);
+  UnicodeString __fastcall GetBufferEncoding(const RawByteString & B, TEncoding *& E);
 };
+
+//--- Base64 (Soap.EncdDecd) ---
+UnicodeString __fastcall EncodeBase64(const void * Data, int Size);
+RawByteString __fastcall DecodeBase64(const UnicodeString & S);
+
+//--- misc Win/Delphi types used in Windows-only code paths ---
+typedef int TLocaleID;
+typedef UnicodeString TBrandingFormatString;
+typedef void * GetCurrentPackageFamilyNameProc;
+typedef void * TGetTimeZoneInformationForYear;
+struct CPINFOEX { UINT MaxCharSize = 0; wchar_t CodePageName[64] = {0}; };
+struct DYNAMIC_TIME_ZONE_INFORMATION { TIME_ZONE_INFORMATION tzi; wchar_t TimeZoneKeyName[128] = {0}; };
+typedef DYNAMIC_TIME_ZONE_INFORMATION * PDYNAMIC_TIME_ZONE_INFORMATION;
+
+// TPath (System.IOUtils) — minimal static helpers.
+class TPath
+{
+public:
+  static UnicodeString __fastcall GetTempPath();
+  static UnicodeString __fastcall Combine(const UnicodeString & A, const UnicodeString & B);
+  static UnicodeString __fastcall GetFileName(const UnicodeString & P);
+  static UnicodeString __fastcall GetDirectoryName(const UnicodeString & P);
+  static UnicodeString __fastcall GetExtension(const UnicodeString & P);
+};
+
+//--- Delphi exception introspection (stubs) ---
+TObject * __fastcall ExceptObject();
+void *    __fastcall ExceptAddr();
+
+//--- more Win32 stubs (Windows-only paths) ---
+DWORD __fastcall GetTempPathW(DWORD n, wchar_t * buf);
+int   __fastcall GetUserDefaultLCID();
+int   __fastcall lstrcmp(const wchar_t * a, const wchar_t * b);
+int   __fastcall lstrcmpi(const wchar_t * a, const wchar_t * b);
+bool  __fastcall PathSkipRoot(const wchar_t * Path);
+UnicodeString __fastcall FileGetSymLinkTarget(const UnicodeString & FileName);
+HANDLE __fastcall CreateFile(const wchar_t *, DWORD, DWORD, void *, DWORD, DWORD, HANDLE);
+HANDLE __fastcall CreateToolhelp32Snapshot(DWORD, DWORD);
+HANDLE __fastcall OpenProcess(DWORD, BOOL, DWORD);
+BOOL  __fastcall Process32First(HANDLE, PROCESSENTRY32 *);
+BOOL  __fastcall Process32Next(HANDLE, PROCESSENTRY32 *);
+int   __fastcall SHFileOperation(SHFILEOPSTRUCT *);
+long  __fastcall SHGetFolderPath(HWND, int, HANDLE, DWORD, wchar_t *);
+BOOL  __fastcall GetProductInfo(DWORD, DWORD, DWORD, DWORD, DWORD *);
+DWORD __fastcall GetTimeZoneInformation(TIME_ZONE_INFORMATION *);
+DWORD __fastcall GetModuleFileNameEx(HANDLE, HMODULE, wchar_t *, DWORD);
+BOOL  __fastcall IsWow64Process(HANDLE, BOOL *);
+void  __fastcall GlobalFree(void *);
+long  __fastcall FindMimeFromData(void *, const wchar_t *, void *, DWORD, const wchar_t *, DWORD, wchar_t **, DWORD);
+int   __fastcall LoadString(HINSTANCE, UINT, wchar_t *, int);
+DWORD __fastcall GetTempPath(DWORD n, wchar_t * buf);
+BOOL  __fastcall SystemTimeToTzSpecificLocalTime(TIME_ZONE_INFORMATION *, SYSTEMTIME *, SYSTEMTIME *);
+BOOL  __fastcall GetCPInfoEx(UINT, DWORD, CPINFOEX *);
+void * __fastcall _wfopen(const wchar_t * Path, const wchar_t * Mode);
 
 #endif

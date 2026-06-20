@@ -21,33 +21,7 @@ struct TMethod
   void * Data = nullptr;
 };
 
-class TObject;
-
-// Delphi RTTI shim. C++Builder's __classid(C)/InheritsFrom/ClassName, emulated with C++
-// typeid + dynamic_cast so no engine class needs editing. __classid(C) yields a token whose
-// isInstance does a real dynamic_cast<C*> — exact is-a semantics up the hierarchy.
-namespace winscp {
-  struct TClassInfo { bool (*isInstance)(const TObject *); const wchar_t * name; };
-}
-typedef const winscp::TClassInfo * TClass;
-
-class TObject
-{
-public:
-  TObject() = default;
-  virtual ~TObject() {}
-  virtual UnicodeString __fastcall ClassName() const;
-  bool __fastcall InheritsFrom(TClass cls) const { return cls && cls->isInstance(this); }
-};
-
-namespace winscp {
-  template <class C> const TClassInfo * classid()
-  {
-    static TClassInfo ci{ [](const TObject * o) { return dynamic_cast<const C *>(o) != nullptr; }, L"" };
-    return &ci;
-  }
-}
-#define __classid(C) (::winscp::classid<C>())
+#include "winscp/Object.h"   // TObject + RTTI shim (shared with SysUtils for Exception)
 
 // Delphi event types (closures). __closure is a no-op macro, so these are plain function
 // pointers here; method-pointer (TObject + code) fidelity is added if/when needed.
@@ -134,11 +108,14 @@ public:
   UnicodeString __fastcall GetName(int Index);
   UnicodeString __fastcall GetValue(const UnicodeString & Name);
   void __fastcall SetValue(const UnicodeString & Name, const UnicodeString & Value);
+  UnicodeString __fastcall GetValueFromIndex(int Index);
   __declspec(property(get=GetName)) UnicodeString Names[];
   __declspec(property(get=GetValue, put=SetValue)) UnicodeString Values[];
+  __declspec(property(get=GetValueFromIndex)) UnicodeString ValueFromIndex[];
 
   wchar_t Delimiter = L',';
   wchar_t QuoteChar = L'"';
+  UnicodeString NameValueSeparator = UnicodeString(L"=");
 };
 
 // TStringList — concrete TStrings backed by a vector.

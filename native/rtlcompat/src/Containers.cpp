@@ -155,3 +155,10 @@ void __fastcall TStringList::Sort()
   std::sort(FList.begin(), FList.end(), [ci](const TItem & a, const TItem & b) {
     return ci ? (a.FString.CompareIC(b.FString) < 0) : (a.FString.Compare(b.FString) < 0); });
 }
+
+UnicodeString __fastcall TStrings::GetValueFromIndex(int Index)
+{
+  UnicodeString S = Get(Index);
+  int p = S.Pos(UnicodeString(L"="));
+  return (p > 0) ? S.SubString(p + 1, S.Length()) : UnicodeString();
+}

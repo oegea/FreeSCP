@@ -9,6 +9,7 @@
 #include <ctime>
 #include <cmath>
 #include <cstring>
+#include <cstdio>
 #include <map>
 #include <vector>
 #include <unistd.h>
@@ -246,3 +247,96 @@ TEncoding * __fastcall TEncoding::ANSI() { return &g_ansi; }
 TEncoding * __fastcall TEncoding::Default() { return &g_utf8; }
 RawByteString __fastcall TEncoding::GetBytes(const UnicodeString & S) { return RawByteString(UTF8String(S).c_str()); }
 UnicodeString __fastcall TEncoding::GetString(const RawByteString & B) { return UTF8ToString(B); }
+
+//=== TDateTime string helpers + date consts + global FormatSettings ===
+const TDateTime MinDateTime = TDateTime(-657434.0);
+const TDateTime MaxDateTime = TDateTime(2958465.99999);
+TFormatSettings FormatSettings;
+UnicodeString __fastcall TDateTime::DateString() const
+{ Word y,m,d; DecodeDate(*this,y,m,d); return Format(L"%.4d-%.2d-%.2d", ARRAYOFCONST(((int)y,(int)m,(int)d))); }
+UnicodeString __fastcall TDateTime::TimeString() const
+{ Word h,mi,s,ms; DecodeTime(*this,h,mi,s,ms); return Format(L"%.2d:%.2d:%.2d", ARRAYOFCONST(((int)h,(int)mi,(int)s))); }
+UnicodeString __fastcall TDateTime::DateTimeString() const { return DateString() + UnicodeString(L" ") + TimeString(); }
+UnicodeString __fastcall TDateTime::FormatString(const UnicodeString &) const { return DateTimeString(); }
+
+//=== Base64 (Soap.EncdDecd) ===
+static const char B64[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+UnicodeString __fastcall EncodeBase64(const void * Data, int Size)
+{
+  const unsigned char * p = static_cast<const unsigned char *>(Data);
+  std::string r;
+  for (int i = 0; i < Size; i += 3)
+  {
+    int n = (p[i] << 16) | ((i+1 < Size ? p[i+1] : 0) << 8) | (i+2 < Size ? p[i+2] : 0);
+    r.push_back(B64[(n >> 18) & 63]); r.push_back(B64[(n >> 12) & 63]);
+    r.push_back(i+1 < Size ? B64[(n >> 6) & 63] : '=');
+    r.push_back(i+2 < Size ? B64[n & 63] : '=');
+  }
+  return UnicodeString(r.c_str());
+}
+RawByteString __fastcall DecodeBase64(const UnicodeString & S)
+{
+  auto val = [](char c) -> int {
+    if (c >= 'A' && c <= 'Z') return c - 'A';
+    if (c >= 'a' && c <= 'z') return c - 'a' + 26;
+    if (c >= '0' && c <= '9') return c - '0' + 52;
+    if (c == '+') return 62; if (c == '/') return 63; return -1; };
+  std::string in; for (char16_t c : S.raw()) if (c != u'\n' && c != u'\r' && c != u'=') in.push_back((char)c);
+  std::string out;
+  for (size_t i = 0; i + 1 < in.size(); )
+  {
+    int a = val(in[i++]), b = val(in[i++]);
+    int c = (i < in.size()) ? val(in[i++]) : -1;
+    int d = (i < in.size()) ? val(in[i++]) : -1;
+    out.push_back((char)((a << 2) | (b >> 4)));
+    if (c >= 0) out.push_back((char)(((b & 15) << 4) | (c >> 2)));
+    if (d >= 0) out.push_back((char)(((c & 3) << 6) | d));
+  }
+  return RawByteString(out.c_str(), (int)out.size());
+}
+
+//=== TPath ===
+UnicodeString __fastcall TPath::GetTempPath() { const char * t = ::getenv("TMPDIR"); return FromU8(t ? t : "/tmp"); }
+UnicodeString __fastcall TPath::Combine(const UnicodeString & A, const UnicodeString & B) { return IncludeTrailingBackslash(A) + B; }
+UnicodeString __fastcall TPath::GetFileName(const UnicodeString & P)
+{ int p = P.LastDelimiter(UnicodeString(L"/\\")); return (p > 0) ? P.SubString(p + 1, P.Length()) : P; }
+UnicodeString __fastcall TPath::GetDirectoryName(const UnicodeString & P) { return ExtractFileDir(P); }
+UnicodeString __fastcall TPath::GetExtension(const UnicodeString & P)
+{ int p = P.LastDelimiter(UnicodeString(L"./\\")); return (p > 0 && P[p] == L'.') ? P.SubString(p, P.Length()) : UnicodeString(); }
+
+UnicodeString __fastcall TEncoding::GetBufferEncoding(const RawByteString &, TEncoding *& E) { E = TEncoding::UTF8(); return UnicodeString(); }
+
+//=== Delphi exception introspection (stubs) ===
+TObject * __fastcall ExceptObject() { return nullptr; }
+void *    __fastcall ExceptAddr() { return nullptr; }
+
+//=== remaining Win32 stubs (Windows-only code paths; mac-appropriate no-ops) ===
+DWORD __fastcall GetTempPathW(DWORD, wchar_t *) { return 0; }
+int   __fastcall GetUserDefaultLCID() { return 0; }
+int   __fastcall lstrcmp(const wchar_t * a, const wchar_t * b) { return UnicodeString(a).Compare(UnicodeString(b)); }
+int   __fastcall lstrcmpi(const wchar_t * a, const wchar_t * b) { return UnicodeString(a).CompareIC(UnicodeString(b)); }
+bool  __fastcall PathSkipRoot(const wchar_t *) { return false; }
+UnicodeString __fastcall FileGetSymLinkTarget(const UnicodeString & FileName)
+{ std::error_code ec; auto t = fs::read_symlink(ToU8(FileName), ec); return ec ? UnicodeString() : FromU8(t.string()); }
+HANDLE __fastcall CreateFile(const wchar_t *, DWORD, DWORD, void *, DWORD, DWORD, HANDLE) { return INVALID_HANDLE_VALUE; }
+HANDLE __fastcall CreateToolhelp32Snapshot(DWORD, DWORD) { return INVALID_HANDLE_VALUE; }
+HANDLE __fastcall OpenProcess(DWORD, BOOL, DWORD) { return nullptr; }
+BOOL  __fastcall Process32First(HANDLE, PROCESSENTRY32 *) { return FALSE; }
+BOOL  __fastcall Process32Next(HANDLE, PROCESSENTRY32 *) { return FALSE; }
+int   __fastcall SHFileOperation(SHFILEOPSTRUCT *) { return 1; }
+long  __fastcall SHGetFolderPath(HWND, int, HANDLE, DWORD, wchar_t *) { return -1; }
+BOOL  __fastcall GetProductInfo(DWORD, DWORD, DWORD, DWORD, DWORD *) { return FALSE; }
+DWORD __fastcall GetTimeZoneInformation(TIME_ZONE_INFORMATION *) { return TIME_ZONE_ID_UNKNOWN; }
+DWORD __fastcall GetModuleFileNameEx(HANDLE, HMODULE, wchar_t *, DWORD) { return 0; }
+BOOL  __fastcall IsWow64Process(HANDLE, BOOL * w) { if (w) *w = FALSE; return TRUE; }
+void  __fastcall GlobalFree(void *) {}
+long  __fastcall FindMimeFromData(void *, const wchar_t *, void *, DWORD, const wchar_t *, DWORD, wchar_t **, DWORD) { return -1; }
+int   __fastcall LoadString(HINSTANCE, UINT, wchar_t *, int) { return 0; }
+
+DWORD __fastcall GetTempPath(DWORD, wchar_t * buf) { if (buf) buf[0] = 0; return 0; }
+BOOL  __fastcall SystemTimeToTzSpecificLocalTime(TIME_ZONE_INFORMATION *, SYSTEMTIME * in, SYSTEMTIME * out) { if (out && in) *out = *in; return TRUE; }
+BOOL  __fastcall GetCPInfoEx(UINT, DWORD, CPINFOEX * info) { if (info) info->MaxCharSize = 1; return TRUE; }
+void * __fastcall _wfopen(const wchar_t * Path, const wchar_t * Mode)
+{ UnicodeString p(Path), m(Mode); std::string np, nm;
+  for (char16_t c : p.raw()) np.push_back((char)c); for (char16_t c : m.raw()) nm.push_back((char)c);
+  return ::fopen(np.c_str(), nm.c_str()); }

@@ -9,6 +9,7 @@
 #include "winscp/rtldefs.h"
 #include "winscp/wintypes.h"
 #include "winscp/WinCompat.h"
+#include "winscp/Object.h"
 #include "winscp/UnicodeString.h"
 #include "winscp/AnsiStrings.h"
 #include "winscp/DynamicArray.h"
@@ -24,19 +25,36 @@ public:
   TDateTime(double value) : FValue(value) {}
   operator double() const { return FValue; }
   double Val() const { return FValue; }
+  // Delphi C++Builder TDateTime helpers (bodies in SysExtra.cpp).
+  UnicodeString __fastcall DateString() const;
+  UnicodeString __fastcall TimeString() const;
+  UnicodeString __fastcall DateTimeString() const;
+  UnicodeString __fastcall FormatString(const UnicodeString & Fmt) const;
 private:
   double FValue = 0.0;
 };
+
+extern const TDateTime MinDateTime;
+extern const TDateTime MaxDateTime;
 
 struct TFormatSettings
 {
   Char DecimalSeparator = '.';
   Char ThousandSeparator = ',';
+  Char DateSeparator = '/';
+  Char TimeSeparator = ':';
   UnicodeString ShortDateFormat;
   UnicodeString LongDateFormat;
   UnicodeString ShortTimeFormat;
   UnicodeString LongTimeFormat;
+  UnicodeString ShortMonthNames[13];
+  UnicodeString LongMonthNames[13];
+  UnicodeString ShortDayNames[8];
+  UnicodeString LongDayNames[8];
+  static TFormatSettings __fastcall Create() { return TFormatSettings(); }
+  static TFormatSettings __fastcall Create(int /*Locale*/) { return TFormatSettings(); }
 };
+extern TFormatSettings FormatSettings;
 
 // Delphi varargs element (ARRAYOFCONST). Richer than the Win layout — carries enough type
 // info for Format to render each value. Constructible from the scalar/string types the
@@ -69,9 +87,9 @@ struct TVarRec
 struct TResStringRec { unsigned int * Module; int Identifier; };
 typedef TResStringRec * PResStringRec;
 
-// Sysutils::Exception — base of ExtException. Only the surface the engine touches.
+// Sysutils::Exception — base of ExtException. Derives TObject so InheritsFrom/ClassName work.
 namespace Sysutils {
-  class Exception
+  class Exception : public TObject
   {
   public:
     __fastcall Exception(const UnicodeString & Msg) : Message(Msg) {}
@@ -117,8 +135,30 @@ struct TTimeStamp { int Time = 0; int Date = 0; };
 struct TTimeSpan
 {
   __int64 Ticks = 0;  // 100ns units
-  double TotalSeconds() const { return Ticks / 1e7; }
-  double TotalMilliseconds() const { return Ticks / 1e4; }
+  TTimeSpan() = default;
+  explicit TTimeSpan(__int64 ticks) : Ticks(ticks) {}
+  double __fastcall GetTotalSeconds() const { return Ticks / 1e7; }
+  double __fastcall GetTotalMilliseconds() const { return Ticks / 1e4; }
+  double __fastcall GetTotalMinutes() const { return Ticks / 6e8; }
+  double __fastcall GetTotalHours() const { return Ticks / 3.6e10; }
+  double __fastcall GetTotalDays() const { return Ticks / 8.64e11; }
+  __declspec(property(get=GetTotalSeconds)) double TotalSeconds;
+  __declspec(property(get=GetTotalMilliseconds)) double TotalMilliseconds;
+  __declspec(property(get=GetTotalMinutes)) double TotalMinutes;
+  __declspec(property(get=GetTotalHours)) double TotalHours;
+  __declspec(property(get=GetTotalDays)) double TotalDays;
+  // integer components
+  int __fastcall GetSeconds() const { return static_cast<int>((Ticks / 10000000) % 60); }
+  int __fastcall GetMinutes() const { return static_cast<int>((Ticks / 600000000) % 60); }
+  int __fastcall GetHours() const { return static_cast<int>((Ticks / 36000000000LL) % 24); }
+  int __fastcall GetDays() const { return static_cast<int>(Ticks / 864000000000LL); }
+  __declspec(property(get=GetSeconds)) int Seconds;
+  __declspec(property(get=GetMinutes)) int Minutes;
+  __declspec(property(get=GetHours)) int Hours;
+  __declspec(property(get=GetDays)) int Days;
+  static TTimeSpan __fastcall Zero() { return TTimeSpan(); }
+  static TTimeSpan __fastcall FromSeconds(double s) { return TTimeSpan(static_cast<__int64>(s * 1e7)); }
+  static TTimeSpan __fastcall FromMilliseconds(double m) { return TTimeSpan(static_cast<__int64>(m * 1e4)); }
 };
 
 class EDirectoryNotFoundException : public Exception { public: using Exception::Exception; };
@@ -127,6 +167,7 @@ class EEncodingError : public Exception { public: using Exception::Exception; };
 struct TLibModule
 {
   void * Instance = nullptr;
+  void * ResInstance = nullptr;
   TLibModule * Next = nullptr;
 };
 

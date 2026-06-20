@@ -36,6 +36,8 @@ typedef long           HRESULT;
 #define INVALID_HANDLE_VALUE ((HANDLE)(LONG_PTR)-1)
 
 //--- HRESULT / error codes ---
+#define SUCCEEDED(hr) (((HRESULT)(hr)) >= 0)
+#define FAILED(hr) (((HRESULT)(hr)) < 0)
 #define S_OK 0L
 #define ERROR_SUCCESS 0L
 #define ERROR_FILE_NOT_FOUND 2L

@@ -26,6 +26,15 @@ public:
   void __fastcall CloseKey();
   void __fastcall GetKeyNames(TStrings * Strings);
   void __fastcall GetValueNames(TStrings * Strings);
+  // value read/write (file-backed in the platform adapter; declared here for compile)
+  bool __fastcall ReadBool(const UnicodeString & Name);
+  int __fastcall ReadInteger(const UnicodeString & Name);
+  __int64 __fastcall ReadInt64(const UnicodeString & Name);
+  UnicodeString __fastcall ReadString(const UnicodeString & Name);
+  double __fastcall ReadFloat(const UnicodeString & Name);
+  void __fastcall WriteBool(const UnicodeString & Name, bool Value);
+  void __fastcall WriteInteger(const UnicodeString & Name, int Value);
+  void __fastcall WriteString(const UnicodeString & Name, const UnicodeString & Value);
 };
 
 // System::Inifiles subset — base for TCustomIniFileStorage. File-backed config (Phase 2).

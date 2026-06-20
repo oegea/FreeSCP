@@ -73,6 +73,8 @@ public:
   }
 
   void SetLength(int len) { FData.resize(static_cast<size_t>(len)); }
+  wchar_t * Unique() { return reinterpret_cast<wchar_t *>(&FData[0]); }  // mutable buffer (copy-on-write no-op here)
+  static UnicodeString StringOfChar(wchar_t Ch, int Count) { return UnicodeString(static_cast<char16_t>(Ch), Count); }
 
   // In-place edits (Delphi 1-based).
   void Delete(int index, int count)
