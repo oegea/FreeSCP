@@ -172,7 +172,13 @@ public:
   static UnicodeString __fastcall GetFileName(const UnicodeString & P);
   static UnicodeString __fastcall GetDirectoryName(const UnicodeString & P);
   static UnicodeString __fastcall GetExtension(const UnicodeString & P);
+  // Windows: "C:\..." style; POSIX: an absolute path ("/..."). Used to test if a path is rooted.
+  static bool __fastcall IsDriveRooted(const UnicodeString & P);
 };
+
+//--- command-line / executable path ---
+// ParamStr(0) = full path to the running executable; ParamStr(n) = nth argv (empty if absent).
+UnicodeString __fastcall ParamStr(int Index);
 
 //--- Delphi exception introspection (stubs) ---
 TObject * __fastcall ExceptObject();

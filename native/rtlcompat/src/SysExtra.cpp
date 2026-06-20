@@ -14,6 +14,9 @@
 #include <vector>
 #include <unistd.h>
 #include <cerrno>
+#ifdef __APPLE__
+#include <mach-o/dyld.h>
+#endif
 
 namespace fs = std::filesystem;
 
@@ -319,6 +322,24 @@ UnicodeString __fastcall TPath::GetFileName(const UnicodeString & P)
 UnicodeString __fastcall TPath::GetDirectoryName(const UnicodeString & P) { return ExtractFileDir(P); }
 UnicodeString __fastcall TPath::GetExtension(const UnicodeString & P)
 { int p = P.LastDelimiter(UnicodeString(L"./\\")); return (p > 0 && P[p] == L'.') ? P.SubString(p, P.Length()) : UnicodeString(); }
+bool __fastcall TPath::IsDriveRooted(const UnicodeString & P)
+{ // POSIX: rooted == absolute (leading '/'); also accept Windows "X:\" so config paths round-trip.
+  if (P.Length() >= 1 && (P[1] == L'/' || P[1] == L'\\')) return true;
+  return (P.Length() >= 2 && P[2] == L':'); }
+
+UnicodeString __fastcall ParamStr(int Index)
+{ // Index 0 = executable path; other indices = argv (not tracked yet -> empty).
+  if (Index == 0)
+  {
+#ifdef __APPLE__
+    uint32_t size = 0; _NSGetExecutablePath(nullptr, &size);
+    std::vector<char> buf(size); if (_NSGetExecutablePath(buf.data(), &size) == 0) return FromU8(buf.data());
+#elif defined(__linux__)
+    std::error_code ec; auto p = fs::read_symlink("/proc/self/exe", ec); if (!ec) return FromU8(p.string());
+#endif
+  }
+  return UnicodeString();
+}
 
 int __fastcall TEncoding::GetBufferEncoding(const System::DynamicArray<System::Byte> &, TEncoding *& E, TEncoding * Default) { E = Default ? Default : TEncoding::UTF8; return 0; }
 UnicodeString __fastcall TEncoding::GetString(const System::DynamicArray<System::Byte> & B, int Offset, int Count)

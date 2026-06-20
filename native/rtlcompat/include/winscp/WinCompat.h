@@ -45,6 +45,14 @@ typedef long           HRESULT;
 #endif
 #define INVALID_HANDLE_VALUE ((HANDLE)(LONG_PTR)-1)
 
+//--- word/byte extraction macros (windef.h) ---
+#define LOWORD(l) ((Word)((DWORD_PTR)(l) & 0xffff))
+#define HIWORD(l) ((Word)(((DWORD_PTR)(l) >> 16) & 0xffff))
+#define LOBYTE(w) ((unsigned char)((DWORD_PTR)(w) & 0xff))
+#define HIBYTE(w) ((unsigned char)(((DWORD_PTR)(w) >> 8) & 0xff))
+#define MAKEWORD(a,b) ((Word)(((unsigned char)(a)) | ((Word)((unsigned char)(b))) << 8))
+#define MAKELONG(a,b) ((LONG)(((Word)(a)) | ((DWORD)((Word)(b))) << 16))
+
 //--- HRESULT / error codes ---
 #define SUCCEEDED(hr) (((HRESULT)(hr)) >= 0)
 #define FAILED(hr) (((HRESULT)(hr)) < 0)
