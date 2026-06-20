@@ -123,4 +123,23 @@ struct strbuf;
 void escape_registry_key(const char *in, struct strbuf *out);
 void unescape_registry_key(const char *in, struct strbuf *out);
 
+/* handle-wait API (Windows handle-wait.c equivalent). On unix there are no waitable handles —
+ * sockets are driven by select() — so the wait list is always empty and these are no-ops/stubs.
+ * SecureShell's EventSelectLoop then waits only on its socket event. (impl: uxhandlewait.c) */
+#ifndef MAXIMUM_WAIT_OBJECTS
+#define MAXIMUM_WAIT_OBJECTS 64
+#endif
+struct callback_set;
+typedef struct HandleWait HandleWait;
+typedef int (*handle_wait_callback_fn_t)(struct callback_set *callback_set, void *);
+HandleWait *add_handle_wait(struct callback_set *callback_set, HANDLE h, handle_wait_callback_fn_t callback, void *callback_ctx);
+void delete_handle_wait(struct callback_set *callback_set, HandleWait *hw);
+typedef struct HandleWaitList {
+    HANDLE handles[MAXIMUM_WAIT_OBJECTS];
+    int nhandles;
+} HandleWaitList;
+HandleWaitList *get_handle_wait_list(struct callback_set *callback_set);
+int handle_wait_activate(struct callback_set *callback_set, HandleWaitList *hwl, int index);
+void handle_wait_list_free(HandleWaitList *hwl);
+
 #endif /* PUTTY_UNIX_PLATFORM_H */

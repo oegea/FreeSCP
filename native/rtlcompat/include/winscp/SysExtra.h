@@ -115,6 +115,7 @@ void __fastcall FindClose(TSearchRec & F);
 
 //--- misc string ---
 UnicodeString __fastcall UTF8ToString(const RawByteString & S);
+UnicodeString __fastcall UTF8ArrayToString(const char * Str, int Length);
 UnicodeString __fastcall AnsiLowerCase(const UnicodeString & S);
 UnicodeString __fastcall AnsiReplaceStr(const UnicodeString & Text, const UnicodeString & From, const UnicodeString & To);
 UnicodeString __fastcall RightStr(const UnicodeString & S, int Count);

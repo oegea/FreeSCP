@@ -217,6 +217,11 @@ void __fastcall FindClose(TSearchRec & F)
 }
 
 //=== misc string ===
+UnicodeString __fastcall UTF8ArrayToString(const char * Str, int Length)
+{
+  if (Str == nullptr || Length <= 0) return UnicodeString();
+  return UTF8ToString(RawByteString(Str, Length));
+}
 UnicodeString __fastcall UTF8ToString(const RawByteString & S)
 {
   const std::string & b = S.raw(); std::u16string w;

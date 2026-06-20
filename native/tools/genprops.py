@@ -283,16 +283,38 @@ def _closure_bind(m):
             % (m.group('lhs'), rhs))
 
 
+# 2b) <lhs ending in OnXxx> = &recv.Method ;  ->  bind with an explicit receiver object.
+#     (e.g. CopyAlias.OnSubmit = &ClipboardHandler.Copy;)
+CLOSURE_BIND_ADDR_RE = re.compile(
+    r'(?<![A-Za-z0-9_>.])'
+    r'(?P<lhs>(?:[A-Za-z_]\w*\s*(?:->|\.)\s*)*'
+    r'(?<![A-Za-z0-9_])On[A-Z]\w*)\s*=\s*'
+    r'&\s*(?P<recv>[A-Za-z_]\w*)\s*\.\s*(?P<meth>[A-Za-z_]\w*)\s*;')
+
+def _closure_bind_addr(m):
+    return ('%s = ::winscp::MakeClosure(&%s, '
+            '&::std::remove_reference<decltype(%s)>::type::%s);'
+            % (m.group('lhs'), m.group('recv'), m.group('recv'), m.group('meth')))
+
+
 # 3) closure passed as a call argument to a known closure-taking method: f(Method) -> bind.
-#    (WinSCP funcs that take a Delphi event/closure by a bare member-method name.)
-CLOSURE_ARG_FUNCS = ['RunAction']
+#    (WinSCP funcs that take a Delphi event/closure by a member-method name, optionally with an
+#    explicit receiver: f(Method) -> this-bound, f(obj.Method) -> obj-bound.)
+CLOSURE_ARG_FUNCS = ['RunAction', 'TimeoutPrompt']
 CLOSURE_ARG_RE = re.compile(
-    r'\b(?P<fn>' + '|'.join(CLOSURE_ARG_FUNCS) + r')\(\s*(?P<rhs>[A-Za-z_]\w*)\s*\)')
+    r'\b(?P<fn>' + '|'.join(CLOSURE_ARG_FUNCS) + r')\(\s*'
+    r'(?:(?P<recv>[A-Za-z_]\w*)\s*\.\s*)?'
+    r'(?P<rhs>[A-Za-z_]\w*)\s*\)')
 
 def _closure_arg(m):
     rhs = m.group('rhs')
     if rhs in _BIND_SKIP or re.match(r'F[A-Z]', rhs):
         return m.group(0)
+    recv = m.group('recv')
+    if recv:
+        return ('%s(::winscp::MakeClosure(&%s, '
+                '&::std::remove_reference<decltype(%s)>::type::%s))'
+                % (m.group('fn'), recv, recv, rhs))
     return ('%s(::winscp::MakeClosure(this, '
             '&::std::remove_reference<decltype(*this)>::type::%s))' % (m.group('fn'), rhs))
 
@@ -300,6 +322,7 @@ def _closure_arg(m):
 def process(text):
     text = transform_try_finally(text)
     text = CLOSURE_TYPEDEF_RE.sub(_closure_typedef, text)
+    text = CLOSURE_BIND_ADDR_RE.sub(_closure_bind_addr, text)
     text = CLOSURE_BIND_RE.sub(_closure_bind, text)
     text = CLOSURE_ARG_RE.sub(_closure_arg, text)
     return PROP_RE.sub(convert, text)
