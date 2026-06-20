@@ -49,6 +49,17 @@ cmake --build build && ctest --test-dir build
   (UINT_PTR/WPARAM/LPARAM/INFINITE/VS_FIXEDFILEINFO/TShortCut); stubs Masks/Registry/
   SysInit/Xml.XMLIntf/TCustomIniFile.
 
+## Build note for .cpp bodies (important)
+A `.cpp` in `source/core` resolves `#include "Foo.h"` to its **sibling raw header** first
+(C++ quote-include rule), bypassing the `__property`-rewritten shadow in `geninclude`. So to
+compile bodies, also emit shadow **.cpp** copies into `geninclude/core` (via genprops, which
+is a no-op on files without `__property`) and compile those, so their quoted includes hit the
+shadow headers in the same dir. The parse guard avoids this because its stubs live in `build/`.
+
+Per-file body surface is moderate (e.g. FileBuffer.cpp needs TStream ReadBuffer/WriteBuffer/
+Seek + soFromBeginning/soCurrent, RaiseLastOSError, EReadError/EWriteError, THandleStream
+ctor) — implement in rtlcompat on demand, leaf-first.
+
 ## Next up (Phase 1 → 2/3): compile .cpp bodies
 1. Compile engine **.cpp bodies** leaf-first (FileMasks/CopyParam/RemoteFiles), implementing
    RTL method bodies on demand: UnicodeString Format/Trim/IntToStr/case ops, TStringList,
