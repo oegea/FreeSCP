@@ -101,3 +101,18 @@ Then leaf data models (RemoteFiles/FileMasks/CopyParam/Option) fall quickly. Sur
 
 ## Legend
 ✅ done · 🟡 in progress · ⬜ todo · 🔴 blocked
+
+## Phase 1.5 update (.cpp bodies): 14/34 compile + link
+Compiling into libwinscpcore.a: Global, FileBuffer, NamedObjs, Common, FileSystems, Option,
+Usage, FileMasks, Bookmarks, FileInfo, CopyParam, FileOperationProgress, RemoteFiles,
+Exceptions. genprops now handles every __property form (field/method/indexed/index=N/const)
++ try/finally->RAII. rtlcompat ~full SysUtils/Classes/strings/dates/Format/containers.
+
+Remaining 20 split by workstream (NOT missing-RTL-symbol grind anymore):
+- Threading: Queue (+) need TThread/CreateThread/event adapter (Phase 2 threading).
+- Closures: Script needs __closure method-pointer fidelity.
+- PuTTY backend (Phase 3): Configuration, CoreMain, Cryptography, HierarchicalStorage,
+  SessionData, SessionInfo, SecureShell, SftpFileSystem, ScpFileSystem, FtpFileSystem,
+  PuttyIntf, Terminal (include PuttyIntf.h / putty.h).
+- neon/libs3 (Phase 4): NeonIntf, Http, WebDAVFileSystem, S3FileSystem.
+- Edge: KeyGen (#included into another TU), Security (Windows CryptoAPI cert chain -> OpenSSL).
