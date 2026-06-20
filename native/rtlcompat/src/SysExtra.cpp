@@ -228,7 +228,6 @@ UnicodeString __fastcall RightStr(const UnicodeString & S, int Count)
 { if (Count >= S.Length()) return S; return S.SubString(S.Length() - Count + 1, Count); }
 
 //=== Win32 stubs ===
-BOOL  __fastcall CloseHandle(HANDLE) { return TRUE; }
 HANDLE __fastcall GetCurrentProcess() { return nullptr; }
 DWORD __fastcall GetCurrentProcessId() { return static_cast<DWORD>(getpid()); }
 HMODULE __fastcall GetModuleHandle(const wchar_t *) { return nullptr; }

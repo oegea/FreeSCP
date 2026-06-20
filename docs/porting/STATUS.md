@@ -116,3 +116,25 @@ Remaining 20 split by workstream (NOT missing-RTL-symbol grind anymore):
   PuttyIntf, Terminal (include PuttyIntf.h / putty.h).
 - neon/libs3 (Phase 4): NeonIntf, Http, WebDAVFileSystem, S3FileSystem.
 - Edge: KeyGen (#included into another TU), Security (Windows CryptoAPI cert chain -> OpenSSL).
+
+## Threading adapter done; __closure is the next deep blocker
+- ✅ Phase 2 threading: winscp/WinThreads.h + src/Threading.cpp — Win32 thread/event API
+  (StartThread/CreateEvent/SetEvent/WaitForSingleObject/ResumeThread/CloseHandle/...) over
+  std::thread + condition_variable, via an id-keyed handle table. Verified by a standalone
+  test (spawn/join/exit-code/event signal+wait). Queue's threading symbols now resolve.
+
+- 🔴 **__closure events are the third deep nut** (after __property and RTTI), and the hardest.
+  WinSCP assigns event handlers Delphi-style with implicit `this`:
+      FTerminal->OnQueryUser = TerminalQueryUser;   // bare member name -> closure(this, &fn)
+  C++Builder's `__closure` is compiler-level method-pointer binding; clang has no equivalent,
+  and `EventField = MethodName` cannot be shimmed by a macro/template (no `this`, no class).
+  It is pervasive (every callback: Queue, Terminal, all session/protocol/GUI code).
+  Tractable fix = a **libclang/libtooling source rewriter** that turns `X = Method` (RHS an
+  unqualified member fn) into `X = MakeClosure(this, &EnclosingClass::Method)`, plus event
+  typedefs -> a closure object (obj+pmf, callable). This is a new tool, heavier than the
+  regex genprops. Until then, event-heavy .cpp (Queue, Terminal, SecureShell, sessions) stay
+  blocked even once their other symbols resolve.
+
+  Timeline impact: the engine port's hard core is now 3 nuts — __property (done), RTTI (done),
+  __closure (needs a semantic rewriter). The data-model/util layer (14/34) is event-free and
+  compiles; the session/transfer layer is event-driven and needs the closure rewriter first.
