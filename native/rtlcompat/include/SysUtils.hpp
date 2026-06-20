@@ -8,6 +8,7 @@
 
 #include "winscp/rtldefs.h"
 #include "winscp/wintypes.h"
+#include "winscp/WinCompat.h"
 #include "winscp/UnicodeString.h"
 #include "winscp/AnsiStrings.h"
 #include "winscp/DynamicArray.h"
@@ -99,11 +100,29 @@ using Sysutils::EConvertError;
 // TSearchRec — directory enumeration record (base of WinSCP's TSearchRecSmart).
 struct TSearchRec
 {
-  int Attr = 0;
+  int Time = 0;
   __int64 Size = 0;
-  TDateTime TimeStamp;
+  int Attr = 0;
   UnicodeString Name;
+  int ExcludeAttr = 0;
+  TDateTime TimeStamp;
+  TWin32FindData FindData{};
+  int FindHandle = -1;
 };
+
+typedef UnicodeString TFileName;
+
+// Delphi timestamp (date+time split) and time span.
+struct TTimeStamp { int Time = 0; int Date = 0; };
+struct TTimeSpan
+{
+  __int64 Ticks = 0;  // 100ns units
+  double TotalSeconds() const { return Ticks / 1e7; }
+  double TotalMilliseconds() const { return Ticks / 1e4; }
+};
+
+class EDirectoryNotFoundException : public Exception { public: using Exception::Exception; };
+class EEncodingError : public Exception { public: using Exception::Exception; };
 
 struct TLibModule
 {
@@ -143,6 +162,7 @@ UnicodeString __fastcall LoadStr(int Ident);
 void __fastcall RaiseLastOSError();
 void __fastcall RaiseLastOSError(int LastError);
 NORETURN void __fastcall Abort();   // raises EAbort (silent exception)
+#include "winscp/SysExtra.h"
 
 // Low-level file IO (System.SysUtils). Handle is an OS fd here. -1 on error.
 int __fastcall FileRead(int Handle, void * Buffer, int Count);

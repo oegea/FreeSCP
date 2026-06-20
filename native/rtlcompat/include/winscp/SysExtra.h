@@ -1,0 +1,134 @@
+//---------------------------------------------------------------------------
+// SysExtra.h — remaining System.SysUtils / DateUtils / IOUtils / Win32 surface used by
+// engine bodies: date math, path helpers, file ops, TEncoding, and Windows-API stubs.
+// Portable parts are real (paths via std::filesystem, Delphi serial dates); Windows-only
+// parts (modules, processes, timezone) are stubs returning mac-appropriate defaults so the
+// Windows code paths compile and are simply skipped.
+//---------------------------------------------------------------------------
+#ifndef WINSCP_RTLCOMPAT_SYSEXTRA_H
+#define WINSCP_RTLCOMPAT_SYSEXTRA_H
+
+#include "winscp/rtldefs.h"
+#include "winscp/wintypes.h"
+#include "winscp/WinCompat.h"
+#include "winscp/UnicodeString.h"
+#include "winscp/AnsiStrings.h"
+
+class TDateTime;       // from SysUtils.hpp
+struct TSearchRec;
+struct TTimeStamp;
+
+//--- Delphi date/time constants ---
+const int    HoursPerDay   = 24;
+const int    MinsPerHour   = 60;
+const int    SecsPerMin    = 60;
+const int    MinsPerDay    = HoursPerDay * MinsPerHour;
+const int    SecsPerDay    = MinsPerDay * SecsPerMin;
+const int    MSecsPerSec   = 1000;
+const __int64 MSecsPerDay  = (__int64)SecsPerDay * MSecsPerSec;
+const int    DateDelta     = 693594;   // days between 0000-12-31 and 1899-12-30
+const int    UnixDateDelta = 25569;    // days between 1899-12-30 and 1970-01-01
+extern const UnicodeString sLineBreak;
+
+//--- Windows version globals (functions here; stubbed to "not Windows") ---
+int  __fastcall Win32MajorVersion();
+int  __fastcall Win32MinorVersion();
+int  __fastcall Win32BuildNumber();
+UnicodeString __fastcall Win32CSDVersion();
+bool __fastcall CheckWin32Version(int AMajor, int AMinor);
+#define kernel32 L"kernel32"
+extern void * HInstance;
+extern void * LibModuleList;
+
+//--- date/time (Delphi TDateTime = days since 1899-12-30) ---
+TDateTime __fastcall Now();
+TDateTime __fastcall Date();
+TDateTime __fastcall Time();
+TDateTime __fastcall EncodeDate(int Year, int Month, int Day);
+TDateTime __fastcall EncodeTime(int Hour, int Min, int Sec, int MSec);
+void __fastcall DecodeDate(const TDateTime & DT, Word & Year, Word & Month, Word & Day);
+void __fastcall DecodeTime(const TDateTime & DT, Word & Hour, Word & Min, Word & Sec, Word & MSec);
+int  __fastcall DayOfWeek(const TDateTime & DT);
+TDateTime __fastcall IncMilliSecond(const TDateTime & DT, __int64 N);
+TDateTime __fastcall IncSecond(const TDateTime & DT, __int64 N);
+TDateTime __fastcall IncMinute(const TDateTime & DT, __int64 N);
+TDateTime __fastcall IncHour(const TDateTime & DT, __int64 N);
+TDateTime __fastcall IncDay(const TDateTime & DT, int N);
+TDateTime __fastcall IncYear(const TDateTime & DT, int N);
+bool __fastcall IsSameDay(const TDateTime & A, const TDateTime & B);
+double __fastcall DaysBetween(const TDateTime & A, const TDateTime & B);
+double __fastcall HoursBetween(const TDateTime & A, const TDateTime & B);
+double __fastcall MinutesBetween(const TDateTime & A, const TDateTime & B);
+double __fastcall SecondsBetween(const TDateTime & A, const TDateTime & B);
+double __fastcall MonthsBetween(const TDateTime & A, const TDateTime & B);
+double __fastcall YearsBetween(const TDateTime & A, const TDateTime & B);
+int __fastcall MilliSecondOfTheDay(const TDateTime & DT);
+int __fastcall MilliSecondOfTheHour(const TDateTime & DT);
+int __fastcall MilliSecondOfTheMinute(const TDateTime & DT);
+int __fastcall MilliSecondOfTheSecond(const TDateTime & DT);
+__int64 __fastcall MilliSecondOfTheYear(const TDateTime & DT);
+UnicodeString __fastcall FormatDateTime(const UnicodeString & Fmt, const TDateTime & DT);
+UnicodeString __fastcall FormatFloat(const UnicodeString & Fmt, double Value);
+TDateTime __fastcall SystemTimeToDateTime(const SYSTEMTIME & ST);
+TTimeStamp __fastcall DateTimeToTimeStamp(const TDateTime & DT);
+bool __fastcall TryStrToDateTime(const UnicodeString & S, TDateTime & Value);
+bool __fastcall TryStrToInt(const UnicodeString & S, int & Value);
+bool __fastcall TryStrToInt64(const UnicodeString & S, __int64 & Value);
+
+//--- path / file helpers (std::filesystem-backed) ---
+UnicodeString __fastcall ExtractFilePath(const UnicodeString & FileName);
+UnicodeString __fastcall ExtractFileDir(const UnicodeString & FileName);
+UnicodeString __fastcall ExtractFileDrive(const UnicodeString & FileName);
+UnicodeString __fastcall ChangeFileExt(const UnicodeString & FileName, const UnicodeString & Ext);
+UnicodeString __fastcall IncludeTrailingBackslash(const UnicodeString & S);
+UnicodeString __fastcall IncludeTrailingPathDelimiter(const UnicodeString & S);
+UnicodeString __fastcall ExcludeTrailingBackslash(const UnicodeString & S);
+UnicodeString __fastcall ExpandFileName(const UnicodeString & FileName);
+UnicodeString __fastcall ExtractShortPathName(const UnicodeString & FileName);
+UnicodeString __fastcall GetCurrentDir();
+bool __fastcall DirectoryExists(const UnicodeString & Dir);
+bool __fastcall FileExists(const UnicodeString & FileName);
+bool __fastcall DeleteFile(const UnicodeString & FileName);
+bool __fastcall RemoveDir(const UnicodeString & Dir);
+int  __fastcall GetFileAttributes(const wchar_t * FileName);
+UnicodeString __fastcall ExpandEnvironmentStrings(const UnicodeString & S);
+UnicodeString __fastcall GetEnvironmentVariable(const UnicodeString & Name);
+bool __fastcall PathIsRelative(const wchar_t * Path);
+
+//--- Delphi FindFirst/FindNext/FindClose (std::filesystem-backed) ---
+int  __fastcall FindFirst(const UnicodeString & Path, int Attr, TSearchRec & F);
+int  __fastcall FindNext(TSearchRec & F);
+void __fastcall FindClose(TSearchRec & F);
+
+//--- misc string ---
+UnicodeString __fastcall UTF8ToString(const RawByteString & S);
+UnicodeString __fastcall AnsiLowerCase(const UnicodeString & S);
+UnicodeString __fastcall AnsiReplaceStr(const UnicodeString & Text, const UnicodeString & From, const UnicodeString & To);
+UnicodeString __fastcall RightStr(const UnicodeString & S, int Count);
+
+//--- Win32 API stubs (return mac-appropriate defaults; callers gate on results) ---
+BOOL  __fastcall CloseHandle(HANDLE h);
+HANDLE __fastcall GetCurrentProcess();
+DWORD __fastcall GetCurrentProcessId();
+HMODULE __fastcall GetModuleHandle(const wchar_t * Name);
+HMODULE __fastcall LoadLibrary(const wchar_t * Name);
+BOOL  __fastcall FreeLibrary(HMODULE h);
+void * __fastcall GetProcAddress(HMODULE h, const char * Name);
+void  __fastcall SetLastError(DWORD e);
+BOOL  __fastcall FileTimeToSystemTime(const FILETIME * ft, SYSTEMTIME * st);
+BOOL  __fastcall FileTimeToLocalFileTime(const FILETIME * ft, FILETIME * lft);
+int   __fastcall StrCmpLogicalW(const wchar_t * a, const wchar_t * b);
+void  __fastcall CoTaskMemFree(void * p);
+
+//--- TEncoding (System.SysUtils) — minimal ---
+class TEncoding
+{
+public:
+  static TEncoding * __fastcall UTF8();
+  static TEncoding * __fastcall ANSI();
+  static TEncoding * __fastcall Default();
+  RawByteString __fastcall GetBytes(const UnicodeString & S);
+  UnicodeString __fastcall GetString(const RawByteString & B);
+};
+
+#endif

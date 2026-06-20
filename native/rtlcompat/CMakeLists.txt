@@ -10,6 +10,7 @@ add_library(rtlcompat STATIC
   src/StringConv.cpp
   src/StrUtils.cpp
   src/Format.cpp
+  src/SysExtra.cpp
 )
 target_include_directories(rtlcompat PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_features(rtlcompat PUBLIC cxx_std_17)

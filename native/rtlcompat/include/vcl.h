@@ -8,6 +8,7 @@
 
 #include "winscp/rtldefs.h"
 #include "winscp/wintypes.h"
+#include "winscp/WinCompat.h"
 #include "System.hpp"
 #include "System.Types.hpp"
 #include "System.SyncObjs.hpp"
