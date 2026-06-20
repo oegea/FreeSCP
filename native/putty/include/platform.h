@@ -20,6 +20,7 @@
 #include <netinet/in.h>
 #include <sys/select.h>
 #include <limits.h>
+#include <stdbool.h>
 
 struct Plug;   /* fwd (network.h) */
 
@@ -27,6 +28,8 @@ struct Plug;   /* fwd (network.h) */
 typedef const char *HelpCtx;
 #define NULL_HELPCTX ((HelpCtx)0)
 #define HELPCTX(x) NULL_HELPCTX   /* headless: ignore help ids */
+#define _T(x) x
+#define TEXT(x) x
 
 #define BUILDINFO_PLATFORM "macOS"
 #define THREADLOCAL __thread
@@ -87,7 +90,7 @@ typedef int SOCKET;
 #endif
 
 /* Network platform hooks implemented by native/putty/src/uxnet-winscp.c. */
-const char *do_select(struct Plug *plug, SOCKET skt, int enable);  /* WINSCP-style */
+const char *do_select(struct Plug *plug, SOCKET skt, bool enable);  /* WINSCP-style */
 /* select_result(WPARAM,LPARAM) is declared by puttyexp.h (Windows-shaped: w=socket, l=events) */
 SOCKET first_socket(int *state);
 SOCKET next_socket(int *state);
@@ -97,5 +100,22 @@ void socket_reselect_all(void);
 /* GSSAPI buffer types (referenced if GSS code is compiled; harmless to declare). */
 typedef struct Ssh_gss_buf { size_t length; void *value; } Ssh_gss_buf;
 typedef void *Ssh_gss_name;
+
+
+/* registry constants + PuTTY reg paths (engine/PuttyIntf reference them; values irrelevant) */
+#define REG_SZ 1
+#define REG_DWORD 4
+#define REG_BINARY 3
+#define PUTTY_REG_POS "Software/SimonTatham/PuTTY"
+#define PUTTY_REG_PARENT "Software/SimonTatham"
+#define PUTTY_REG_PARENT_CHILD "PuTTY"
+#define PUTTY_REG_GPARENT "Software"
+#define PUTTY_REG_GPARENT_CHILD "SimonTatham"
+
+/* Win critical-section API (impl in uxsupport.c) */
+void InitializeCriticalSection(CRITICAL_SECTION *);
+void DeleteCriticalSection(CRITICAL_SECTION *);
+void EnterCriticalSection(CRITICAL_SECTION *);
+void LeaveCriticalSection(CRITICAL_SECTION *);
 
 #endif /* PUTTY_UNIX_PLATFORM_H */

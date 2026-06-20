@@ -56,3 +56,12 @@ Socket *platform_new_connection(SockAddr *addr, const char *hostname, int port,
                                 Plug *plug, Conf *conf, Interactor *itr)
 { (void)addr; (void)hostname; (void)port; (void)privport; (void)oobinline; (void)nodelay;
   (void)keepalive; (void)plug; (void)conf; (void)itr; return NULL; }
+
+/* GSSAPI disabled: report no libraries. */
+#include "ssh\gss.h"
+ssh_gss_liblist *ssh_gss_setup(struct Conf *conf, void *unused)
+{ (void)conf; (void)unused; static ssh_gss_liblist empty = { 0, 0 }; return &empty; }
+void ssh_gss_cleanup(ssh_gss_liblist *list) { (void)list; }
+
+/* filename from UTF-8 (engine passes UTF-8 paths) */
+Filename *filename_from_utf8(const char *utf8) { return filename_from_str(utf8); }

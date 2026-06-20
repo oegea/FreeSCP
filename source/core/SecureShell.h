@@ -15,7 +15,10 @@ struct Conf;
 //---------------------------------------------------------------------------
 struct _WSANETWORKEVENTS;
 typedef struct _WSANETWORKEVENTS WSANETWORKEVENTS;
+/* WINSCP-NATIVE-PORT: on non-Windows SOCKET is PuTTY's int fd (from platform.h) */
+#ifdef _WIN32
 typedef UINT_PTR SOCKET;
+#endif
 typedef std::set<SOCKET> TSockets;
 struct TPuttyTranslation;
 struct callback_set;

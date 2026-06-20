@@ -1043,6 +1043,10 @@ UnicodeString GetPublicKeyLine(const UnicodeString & FileName, UnicodeString & C
 //---------------------------------------------------------------------------
 bool __fastcall HasGSSAPI(UnicodeString CustomPath)
 {
+#ifdef NO_GSSAPI  // WINSCP-NATIVE-PORT: GSSAPI/Kerberos not yet wired on the native build
+  (void)CustomPath;
+  return false;
+#else
   static int has = -1;
   if (has < 0)
   {
@@ -1076,6 +1080,7 @@ bool __fastcall HasGSSAPI(UnicodeString CustomPath)
     }
   }
   return (has > 0);
+#endif
 }
 //---------------------------------------------------------------------------
 static void __fastcall DoNormalizeFingerprint(UnicodeString & Fingerprint, UnicodeString & KeyName, UnicodeString & KeyType)

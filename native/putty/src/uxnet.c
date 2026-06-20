@@ -197,7 +197,7 @@ Socket *sk_newlistener(const char *srcaddr, int port, Plug *plug, bool local_hos
 { (void)srcaddr; (void)port; (void)plug; (void)local_host_only; (void)address_family; return NULL; }
 
 /* ---------- select integration ---------- */
-const char *do_select(Plug *plug, SOCKET skt, int enable) { (void)plug; (void)skt; (void)enable; return NULL; }
+const char *do_select(Plug *plug, SOCKET skt, bool enable) { (void)plug; (void)skt; (void)enable; return NULL; }
 
 void select_result(WPARAM wParam, LPARAM lParam)
 {

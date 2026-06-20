@@ -195,3 +195,20 @@ which include PuttyIntf.h). They include putty headers via the engine flags + ne
 (__property/__closure already handled) + putty include path. They supply the last 16 symbols
 and call backend_init/backend_send/select_result. Then wire SecureShell's event loop to
 winscp_net_select() -> real SSH/SFTP connect from the remote panel.
+
+## Phase 3 step 2 START: PuttyIntf.cpp (engine<->putty bridge) compiles
+The hardest C++ bridge file compiles (0 errors) under engine flags (-fshort-wchar -fms-
+extensions) + putty include path. Key reconciliations:
+- native/putty/include/windows/platform.h redirects PuTTY's <windows\platform.h> to the unix
+  platform.h (clang normalises the backslash; -I native/putty/include precedes source/putty).
+- platform.h gained REG_*/PUTTY_REG_*/_T/TEXT, CriticalSection decls, do_select(bool).
+- ssh\gss.h backslash stub + uxstubs GSS no-op (ssh_gss_setup->empty liblist) +
+  filename_from_utf8.
+- Guarded source edits (see UPSTREAM-PATCHES.md): defs.h HAVE_AES_NI x86-only, SecureShell.h
+  SOCKET, PuttyIntf.cpp HasGSSAPI under NO_GSSAPI.
+- wchar_t note: putty libs currently build WITHOUT -fshort-wchar (4-byte) while the engine
+  uses 2-byte; SFTP/SSH is char-based so the boundary is fine, but for full ABI safety the
+  putty libs should also be built with -fshort-wchar before runtime use.
+
+### Next: SecureShell.cpp (event loop -> winscp_net_select) + the PuttyIntf.h-including engine
+.cpp (Configuration/SessionData/Cryptography/HierarchicalStorage), then link + real connect.
