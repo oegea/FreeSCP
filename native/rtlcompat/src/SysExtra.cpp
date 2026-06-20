@@ -173,6 +173,17 @@ void Fill(TSearchRec & F, const fs::directory_entry & e)
   F.Size = e.is_regular_file(ec) ? static_cast<__int64>(e.file_size(ec)) : 0;
   std::memset(&F.FindData, 0, sizeof(F.FindData));
   F.FindData.dwFileAttributes = static_cast<DWORD>(F.Attr);
+  // last-write time -> TDateTime (best-effort; file_clock -> system_clock -> local tm).
+  auto ftime = fs::last_write_time(e.path(), ec);
+  if (!ec)
+  {
+    auto sctp = std::chrono::time_point_cast<std::chrono::system_clock::duration>(
+      ftime - fs::file_time_type::clock::now() + std::chrono::system_clock::now());
+    std::time_t tt = std::chrono::system_clock::to_time_t(sctp);
+    std::tm lt{}; localtime_r(&tt, &lt);
+    F.TimeStamp = EncodeDate(lt.tm_year + 1900, lt.tm_mon + 1, lt.tm_mday) +
+                  EncodeTime(lt.tm_hour, lt.tm_min, lt.tm_sec, 0);
+  }
 }
 }
 int __fastcall FindFirst(const UnicodeString & Path, int /*Attr*/, TSearchRec & F)

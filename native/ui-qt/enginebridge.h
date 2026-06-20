@@ -25,6 +25,7 @@ struct DirEntry
   std::int64_t size = 0;
   bool isDir = false;
   bool isParent = false;  // the ".." entry
+  std::string modified;   // formatted timestamp (empty for "..")
 };
 
 // Engine version/banner (proves winscpcore is linked and callable).
@@ -39,6 +40,9 @@ std::string homeDir();
 std::string parentDir(const std::string & utf8Path);
 std::string joinPath(const std::string & dir, const std::string & name);
 std::string formatSize(std::int64_t bytes);
+
+// Copy a local file (real file operation via the platform layer). Returns true on success.
+bool copyFile(const std::string & srcUtf8, const std::string & dstUtf8);
 
 } // namespace engine
 

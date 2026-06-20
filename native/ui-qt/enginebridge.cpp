@@ -8,6 +8,7 @@
                               // FindFirst/TSearchRec, path helpers, GetEnvironmentVariable.
 #include <algorithm>
 #include <cstdio>
+#include <filesystem>
 
 namespace {
 
@@ -52,6 +53,14 @@ std::string formatSize(std::int64_t bytes)
   return buf;
 }
 
+bool copyFile(const std::string & srcUtf8, const std::string & dstUtf8)
+{
+  std::error_code ec;
+  std::filesystem::copy_file(srcUtf8, dstUtf8,
+    std::filesystem::copy_options::overwrite_existing, ec);
+  return !ec;
+}
+
 std::vector<DirEntry> listLocalDir(const std::string & utf8Path)
 {
   std::vector<DirEntry> result;
@@ -74,6 +83,7 @@ std::vector<DirEntry> listLocalDir(const std::string & utf8Path)
       e.name = ToU8(n);
       e.isDir = (rec.Attr & faDirectory) != 0;
       e.size = rec.Size;
+      e.modified = ToU8(rec.TimeStamp.DateTimeString());
       result.push_back(e);
     }
     while (FindNext(rec) == 0);
