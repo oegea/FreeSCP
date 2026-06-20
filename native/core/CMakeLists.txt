@@ -48,7 +48,8 @@ set(CORE_PARSE_HEADERS
   Exceptions.h FileInfo.h RemoteFiles.h
   Cryptography.h FileBuffer.h FileMasks.h HierarchicalStorage.h Usage.h
   Configuration.h CopyParam.h Bookmarks.h FileOperationProgress.h SessionData.h
-  PuttyTools.h
+  PuttyTools.h CoreMain.h FileSystems.h Interface.h SessionInfo.h S3FileSystem.h
+  ScpFileSystem.h
 )
 # Headers are written assuming Common.h is already included (as in every engine .cpp), so the
 # guard mirrors that — include Common.h first (except for Common.h itself).

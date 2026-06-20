@@ -9,6 +9,7 @@
 #include "winscp/rtldefs.h"
 #include "winscp/wintypes.h"
 #include "winscp/UnicodeString.h"
+#include "winscp/DelphiSet.h"
 #include "System.Types.hpp"
 
 // Delphi method pointer (code+data); TMulticastEvent in Common.h reinterprets through it.
@@ -28,6 +29,15 @@ public:
 // Delphi event types (closures). __closure is a no-op macro, so these are plain function
 // pointers here; method-pointer (TObject + code) fidelity is added if/when needed.
 typedef void __fastcall (__closure * TNotifyEvent)(TObject * Sender);
+
+// Thread entry (System.Classes BeginThread). TThreadID = OS thread id.
+typedef int (* TThreadFunc)(void * Parameter);
+typedef unsigned long TThreadID;
+
+// Keyboard/mouse modifier set (Vcl.Controls TShiftState).
+enum TShiftStateEnum { ssShift, ssAlt, ssCtrl, ssLeft, ssRight, ssMiddle,
+  ssDouble, ssTouch, ssPen, ssCommand, ssHorizontal };
+typedef Set<TShiftStateEnum, ssShift, ssHorizontal> TShiftState;
 
 class TPersistent : public TObject
 {

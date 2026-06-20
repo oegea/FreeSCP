@@ -35,6 +35,8 @@ public:
   // From the engine's wchar_t literals/buffers (2-byte under -fshort-wchar; converted
   // element-wise so it is correct even if wchar_t is 4 bytes).
   UnicodeString(const wchar_t * s) { if (s) while (*s) FData.push_back(static_cast<char16_t>(*s++)); }
+  // C++Builder UnicodeString accepts narrow (ANSI) literals/strings too.
+  UnicodeString(const char * s) { if (s) while (*s) FData.push_back(static_cast<char16_t>(static_cast<unsigned char>(*s++))); }
   UnicodeString(const wchar_t * s, int len)
   { for (int i = 0; i < len; ++i) FData.push_back(static_cast<char16_t>(s[i])); }
 
