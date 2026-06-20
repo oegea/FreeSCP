@@ -129,6 +129,28 @@ Run the link via the "Survey one-liners" force-load command + `-Wl,-force_load,.
    unix stubs for win_misc_cleanup/win_secur_cleanup/wingss_cleanup/retrieve_host_key/
    in_memory_key_data (add to uxstubs.c/uxstore.c).
 
+## RUNTIME STATUS — the engine connects via SSH (debugging userauth)
+`native/build/harness/winscp-harness 127.0.0.1 2222 winscp winscp123` (Docker sshd). The engine:
+creates Configuration/SessionData/Terminal, opens the session, the **event loop pumps**
+(select_result fires thousands of times), SSH2 version exchange completes, **host-key verification
+fires** (OnQueryUser shows the server's ed25519 fingerprint), then it reaches **userauth and the
+client closes the connection during preauth** → the harness FATALs.
+- Confirmed NOT a credential issue: right vs wrong password fail identically, and the server log
+  shows "Connection closed by ... [preauth]" both ways. So our SSH client aborts userauth itself.
+- Clues for the next session: `TSecureShell::PuttyLogEvent` (SecureShell.cpp:660, the LogPolicy
+  `eventlog` sink) does NOT fire, and `OnPromptUser` is never called — yet the host-key Seat
+  callback DOES fire. So the Seat path works but the LogPolicy eventlog path (and possibly the
+  userpass-input Seat path) doesn't. Investigate: is FLogCtx's policy wired so `logevent` reaches
+  `eventlog`? Does ScpSeat::get_userpass_input route to FUI->PromptUser? Is putty's userauth
+  picking a method (CONF_try_password/CONF_try_ki_auth from StoreToConfig)? Re-add the temp trace
+  `fprintf(stderr,"[putty] %s\n",AStr)` at the top of PuttyLogEvent to watch the SSH transcript.
+- Debug aids: harness logs via Configuration->Logging (file /tmp/winscp-harness.log, but only the
+  startup banner is captured so far — the per-line log write path needs checking too). sshd has
+  LogLevel DEBUG2; read `docker exec winscp-test-sshd cat /config/logs/openssh/current`.
+- LoadStr is still a stub (messages show as `str#NNN`); wiring real resource strings (generate an
+  id->text table from source/resource/TextsCore.h + TextsCore1.rc) would make all errors readable
+  and is the highest-leverage debug investment.
+
 ## NEXT STEPS (in order) — now a RUNTIME problem
 1. **Runtime harness main** (native/harness/main.cpp + a CMake exe target linking the libs above):
    - create a TConfiguration (set the `Configuration` global the stub declares), a TSessionData
