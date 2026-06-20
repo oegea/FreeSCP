@@ -14,10 +14,14 @@
 #include "winscp/Object.h"
 #include "winscp/UnicodeString.h"
 #include "winscp/AnsiStrings.h"
+#include "winscp/DynamicArray.h"
+#include <cstdio>
 
 class TDateTime;       // from SysUtils.hpp
 struct TSearchRec;
 struct TTimeStamp;
+struct TFormatSettings;
+int __fastcall ExceptionErrorMessage(TObject * E, void * Addr, wchar_t * Buffer, int Len);
 
 //--- Delphi date/time constants ---
 const int    HoursPerDay   = 24;
@@ -73,11 +77,14 @@ UnicodeString __fastcall FormatFloat(const UnicodeString & Fmt, double Value);
 TDateTime __fastcall SystemTimeToDateTime(const SYSTEMTIME & ST);
 TTimeStamp __fastcall DateTimeToTimeStamp(const TDateTime & DT);
 bool __fastcall TryStrToDateTime(const UnicodeString & S, TDateTime & Value);
+bool __fastcall TryStrToDateTime(const UnicodeString & S, TDateTime & Value, const TFormatSettings & FS);
 bool __fastcall TryStrToInt(const UnicodeString & S, int & Value);
 bool __fastcall TryStrToInt64(const UnicodeString & S, __int64 & Value);
 
 //--- path / file helpers (std::filesystem-backed) ---
 UnicodeString __fastcall ExtractFilePath(const UnicodeString & FileName);
+UnicodeString __fastcall ExtractFileName(const UnicodeString & FileName);
+UnicodeString __fastcall ExtractFileExt(const UnicodeString & FileName);
 UnicodeString __fastcall ExtractFileDir(const UnicodeString & FileName);
 UnicodeString __fastcall ExtractFileDrive(const UnicodeString & FileName);
 UnicodeString __fastcall ChangeFileExt(const UnicodeString & FileName, const UnicodeString & Ext);
@@ -93,6 +100,7 @@ bool __fastcall DeleteFile(const UnicodeString & FileName);
 bool __fastcall RemoveDir(const UnicodeString & Dir);
 int  __fastcall GetFileAttributes(const wchar_t * FileName);
 UnicodeString __fastcall ExpandEnvironmentStrings(const UnicodeString & S);
+DWORD __fastcall ExpandEnvironmentStrings(const wchar_t * Src, wchar_t * Dst, DWORD Size);  // Win
 UnicodeString __fastcall GetEnvironmentVariable(const UnicodeString & Name);
 bool __fastcall PathIsRelative(const wchar_t * Path);
 
@@ -125,26 +133,28 @@ void  __fastcall CoTaskMemFree(void * p);
 class TEncoding
 {
 public:
-  static TEncoding * __fastcall UTF8();
-  static TEncoding * __fastcall ANSI();
-  static TEncoding * __fastcall Default();
+  // Class properties in Delphi — used without parens (TEncoding::UTF8).
+  static TEncoding * UTF8;
+  static TEncoding * ANSI;
+  static TEncoding * Default;
   RawByteString __fastcall GetBytes(const UnicodeString & S);
   UnicodeString __fastcall GetString(const RawByteString & B);
-  UnicodeString __fastcall GetBufferEncoding(const RawByteString & B, TEncoding *& E);
+  UnicodeString __fastcall GetString(const System::DynamicArray<System::Byte> & B);
+  UnicodeString __fastcall GetString(const System::DynamicArray<System::Byte> & B, int Offset, int Count);
+  static int __fastcall GetBufferEncoding(const System::DynamicArray<System::Byte> & B, TEncoding *& E, TEncoding * Default);
 };
 
 //--- Base64 (Soap.EncdDecd) ---
 UnicodeString __fastcall EncodeBase64(const void * Data, int Size);
-RawByteString __fastcall DecodeBase64(const UnicodeString & S);
+System::DynamicArray<System::Byte> __fastcall DecodeBase64(const UnicodeString & S);  // TBytes
 
 //--- misc Win/Delphi types used in Windows-only code paths ---
 typedef int TLocaleID;
-typedef UnicodeString TBrandingFormatString;
-typedef void * GetCurrentPackageFamilyNameProc;
-typedef void * TGetTimeZoneInformationForYear;
 struct CPINFOEX { UINT MaxCharSize = 0; wchar_t CodePageName[64] = {0}; };
 struct DYNAMIC_TIME_ZONE_INFORMATION { TIME_ZONE_INFORMATION tzi; wchar_t TimeZoneKeyName[128] = {0}; };
 typedef DYNAMIC_TIME_ZONE_INFORMATION * PDYNAMIC_TIME_ZONE_INFORMATION;
+// (TGetTimeZoneInformationForYear / GetCurrentPackageFamilyNameProc / TBrandingFormatString
+//  are typedef'd locally by the engine via WINAPI — defined empty in WinCompat.h.)
 
 // TPath (System.IOUtils) — minimal static helpers.
 class TPath
@@ -166,8 +176,8 @@ DWORD __fastcall GetTempPathW(DWORD n, wchar_t * buf);
 int   __fastcall GetUserDefaultLCID();
 int   __fastcall lstrcmp(const wchar_t * a, const wchar_t * b);
 int   __fastcall lstrcmpi(const wchar_t * a, const wchar_t * b);
-bool  __fastcall PathSkipRoot(const wchar_t * Path);
-UnicodeString __fastcall FileGetSymLinkTarget(const UnicodeString & FileName);
+const wchar_t * __fastcall PathSkipRoot(const wchar_t * Path);
+bool __fastcall FileGetSymLinkTarget(const UnicodeString & FileName, UnicodeString & Target);
 HANDLE __fastcall CreateFile(const wchar_t *, DWORD, DWORD, void *, DWORD, DWORD, HANDLE);
 HANDLE __fastcall CreateToolhelp32Snapshot(DWORD, DWORD);
 HANDLE __fastcall OpenProcess(DWORD, BOOL, DWORD);
@@ -185,6 +195,6 @@ int   __fastcall LoadString(HINSTANCE, UINT, wchar_t *, int);
 DWORD __fastcall GetTempPath(DWORD n, wchar_t * buf);
 BOOL  __fastcall SystemTimeToTzSpecificLocalTime(TIME_ZONE_INFORMATION *, SYSTEMTIME *, SYSTEMTIME *);
 BOOL  __fastcall GetCPInfoEx(UINT, DWORD, CPINFOEX *);
-void * __fastcall _wfopen(const wchar_t * Path, const wchar_t * Mode);
+std::FILE * __fastcall _wfopen(const wchar_t * Path, const wchar_t * Mode);
 
 #endif

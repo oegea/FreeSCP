@@ -23,8 +23,15 @@ class TDateTime
 public:
   TDateTime() = default;
   TDateTime(double value) : FValue(value) {}
+  // C++Builder TDateTime(Hour,Min,Sec,MSec) — time-of-day fraction.
+  TDateTime(int H, int M, int S, int MS)
+  { FValue = (((H * 60.0 + M) * 60.0 + S) * 1000.0 + MS) / 86400000.0; }
   operator double() const { return FValue; }
   double Val() const { return FValue; }
+  TDateTime & operator+=(double d) { FValue += d; return *this; }
+  TDateTime & operator-=(double d) { FValue -= d; return *this; }
+  TDateTime & operator+=(const TDateTime & o) { FValue += o.FValue; return *this; }
+  TDateTime & operator-=(const TDateTime & o) { FValue -= o.FValue; return *this; }
   // Delphi C++Builder TDateTime helpers (bodies in SysExtra.cpp).
   UnicodeString __fastcall DateString() const;
   UnicodeString __fastcall TimeString() const;
@@ -37,6 +44,19 @@ private:
 extern const TDateTime MinDateTime;
 extern const TDateTime MaxDateTime;
 
+// Delphi static array (e.g. ShortMonthNames): has .Size() and decays to a pointer.
+template <class T, int N>
+struct StaticArray
+{
+  T FData[N];
+  T & operator[](int i) { return FData[i]; }
+  const T & operator[](int i) const { return FData[i]; }
+  int __fastcall Size() const { return N; }
+  int __fastcall Length() const { return N; }
+  operator T *() { return FData; }
+  operator const T *() const { return FData; }
+};
+
 struct TFormatSettings
 {
   Char DecimalSeparator = '.';
@@ -47,10 +67,10 @@ struct TFormatSettings
   UnicodeString LongDateFormat;
   UnicodeString ShortTimeFormat;
   UnicodeString LongTimeFormat;
-  UnicodeString ShortMonthNames[13];
-  UnicodeString LongMonthNames[13];
-  UnicodeString ShortDayNames[8];
-  UnicodeString LongDayNames[8];
+  StaticArray<UnicodeString, 13> ShortMonthNames;
+  StaticArray<UnicodeString, 13> LongMonthNames;
+  StaticArray<UnicodeString, 8> ShortDayNames;
+  StaticArray<UnicodeString, 8> LongDayNames;
   static TFormatSettings __fastcall Create() { return TFormatSettings(); }
   static TFormatSettings __fastcall Create(int /*Locale*/) { return TFormatSettings(); }
 };
@@ -156,9 +176,15 @@ struct TTimeSpan
   __declspec(property(get=GetMinutes)) int Minutes;
   __declspec(property(get=GetHours)) int Hours;
   __declspec(property(get=GetDays)) int Days;
-  static TTimeSpan __fastcall Zero() { return TTimeSpan(); }
+  static const TTimeSpan Zero;
   static TTimeSpan __fastcall FromSeconds(double s) { return TTimeSpan(static_cast<__int64>(s * 1e7)); }
   static TTimeSpan __fastcall FromMilliseconds(double m) { return TTimeSpan(static_cast<__int64>(m * 1e4)); }
+  bool operator==(const TTimeSpan & o) const { return Ticks == o.Ticks; }
+  bool operator!=(const TTimeSpan & o) const { return Ticks != o.Ticks; }
+  bool operator<(const TTimeSpan & o) const { return Ticks < o.Ticks; }
+  bool operator>(const TTimeSpan & o) const { return Ticks > o.Ticks; }
+  bool operator<=(const TTimeSpan & o) const { return Ticks <= o.Ticks; }
+  bool operator>=(const TTimeSpan & o) const { return Ticks >= o.Ticks; }
 };
 
 class EDirectoryNotFoundException : public Exception { public: using Exception::Exception; };
@@ -166,8 +192,8 @@ class EEncodingError : public Exception { public: using Exception::Exception; };
 
 struct TLibModule
 {
-  void * Instance = nullptr;
-  void * ResInstance = nullptr;
+  NativeUInt Instance = 0;   // HINSTANCE-like handle (compared against (unsigned)ptr)
+  NativeUInt ResInstance = 0;
   TLibModule * Next = nullptr;
 };
 

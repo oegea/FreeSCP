@@ -35,6 +35,11 @@ public:
   void Delete(int index, int count)
   { if (index >= 1 && index <= Length() && count > 0) FData.erase(static_cast<size_t>(index - 1), static_cast<size_t>(count)); }
   char * Unique() { return &FData[0]; }
+  AnsiStringBase & operator=(const char * s) { FData = s ? s : ""; return *this; }
+  AnsiStringBase & operator=(const wchar_t * s) { FData.clear(); if (s) while (*s) FData.push_back((char)(*s++)); return *this; }
+  AnsiStringBase & operator+=(char c) { FData.push_back(c); return *this; }
+  AnsiStringBase & operator+=(const AnsiStringBase & o) { FData += o.FData; return *this; }
+  AnsiStringBase & operator+=(const char * s) { if (s) FData += s; return *this; }
 
 protected:
   std::string FData;
@@ -42,18 +47,21 @@ protected:
 
 class AnsiString : public AnsiStringBase
 { public: using AnsiStringBase::AnsiStringBase;
+  using AnsiStringBase::operator=;
   AnsiString() = default;
   AnsiString(const AnsiStringBase & o) : AnsiStringBase(o.raw()) {}  // from Raw/UTF8
   AnsiString(const UnicodeString & s);                              // UTF-16 -> latin1
 };
 class RawByteString : public AnsiStringBase
 { public: using AnsiStringBase::AnsiStringBase;
+  using AnsiStringBase::operator=;
   RawByteString() = default;
   RawByteString(const AnsiStringBase & o) : AnsiStringBase(o.raw()) {}
   RawByteString(const UnicodeString & s);
 };
 class UTF8String : public AnsiStringBase
 { public: using AnsiStringBase::AnsiStringBase;
+  using AnsiStringBase::operator=;
   UTF8String() = default;
   UTF8String(const AnsiStringBase & o) : AnsiStringBase(o.raw()) {}
   UTF8String(const UnicodeString & s);                             // UTF-16 -> UTF-8

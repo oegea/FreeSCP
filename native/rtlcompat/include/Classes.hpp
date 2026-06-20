@@ -162,6 +162,10 @@ public:
   virtual ~TStream() {}
   virtual int __fastcall Read(void * Buffer, int Count) = 0;
   virtual int __fastcall Write(const void * Buffer, int Count) = 0;
+  virtual int __fastcall Read(System::DynamicArray<System::Byte> Buffer, int Offset, int Count)
+  { return Read(&Buffer[Offset], Count); }
+  virtual int __fastcall Write(const System::DynamicArray<System::Byte> Buffer, int Offset, int Count)
+  { return Write(&const_cast<System::DynamicArray<System::Byte> &>(Buffer)[Offset], Count); }
   virtual __int64 __fastcall Seek(__int64 Offset, Word Origin);
 
   void __fastcall ReadBuffer(void * Buffer, int Count);
@@ -180,6 +184,8 @@ class THandleStream : public TStream
 {
 public:
   __fastcall THandleStream(int AHandle) : FHandle(AHandle) {}
+  using TStream::Read;   // un-hide the DynamicArray overloads hidden by the decls below
+  using TStream::Write;
   virtual int __fastcall Read(void * Buffer, int Count);
   virtual int __fastcall Write(const void * Buffer, int Count);
   virtual __int64 __fastcall Seek(__int64 Offset, Word Origin);
@@ -201,6 +207,8 @@ class TMemoryStream : public TStream
 public:
   __fastcall TMemoryStream() = default;
   virtual __fastcall ~TMemoryStream();
+  using TStream::Read;
+  using TStream::Write;
   virtual int __fastcall Read(void * Buffer, int Count);
   virtual int __fastcall Write(const void * Buffer, int Count);
   virtual __int64 __fastcall Seek(__int64 Offset, Word Origin);

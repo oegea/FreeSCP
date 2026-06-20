@@ -21,6 +21,16 @@ typedef const wchar_t * LPCTSTR;
 typedef const wchar_t * PCWSTR;
 typedef long           HRESULT;
 
+// Calling-convention macros (no-ops on clang) — engine uses them in local typedefs.
+#define WINAPI
+#define CALLBACK
+#define APIENTRY
+#define WINAPIV
+#define STDAPICALLTYPE
+#ifndef PASCAL
+#define PASCAL
+#endif
+
 //--- Windows BOOL constants ---
 #ifndef TRUE
 #define TRUE  1

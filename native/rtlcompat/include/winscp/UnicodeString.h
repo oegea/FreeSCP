@@ -49,10 +49,15 @@ public:
   int Length() const { return static_cast<int>(FData.size()); }
   bool IsEmpty() const { return FData.empty(); }
 
-  char16_t & operator[](int index) { return FData[static_cast<size_t>(index - 1)]; }
-  char16_t operator[](int index) const { return FData[static_cast<size_t>(index - 1)]; }
+  // Public API is wchar_t-typed to match the engine (wchar_t == 2 bytes under -fshort-wchar,
+  // bit-identical to the char16_t storage); reinterpret is safe. Internals use FData/char16_t.
+  wchar_t & operator[](int index) { return reinterpret_cast<wchar_t &>(FData[static_cast<size_t>(index - 1)]); }
+  wchar_t operator[](int index) const { return static_cast<wchar_t>(FData[static_cast<size_t>(index - 1)]); }
 
-  const char16_t * c_str() const { return FData.c_str(); }
+  // C++Builder c_str() is non-const (writable internal buffer); provide both.
+  wchar_t * c_str() { return reinterpret_cast<wchar_t *>(&FData[0]); }
+  const wchar_t * c_str() const { return reinterpret_cast<const wchar_t *>(FData.c_str()); }
+  const wchar_t * data() const { return c_str(); }
   const std::u16string & raw() const { return FData; }
 
   // SubString(start, count) — 1-based start, Delphi semantics.
@@ -73,7 +78,8 @@ public:
   }
 
   void SetLength(int len) { FData.resize(static_cast<size_t>(len)); }
-  wchar_t * Unique() { return reinterpret_cast<wchar_t *>(&FData[0]); }  // mutable buffer (copy-on-write no-op here)
+  wchar_t * Unique() { return reinterpret_cast<wchar_t *>(&FData[0]); }
+  wchar_t * c_str_mutable() { return reinterpret_cast<wchar_t *>(&FData[0]); }
   static UnicodeString StringOfChar(wchar_t Ch, int Count) { return UnicodeString(static_cast<char16_t>(Ch), Count); }
 
   // In-place edits (Delphi 1-based).

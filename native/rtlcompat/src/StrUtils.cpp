@@ -47,3 +47,8 @@ int __fastcall PosEx(const UnicodeString & SubStr, const UnicodeString & S, int 
   int p = S.SubString(Offset, S.Length()).Pos(SubStr);
   return (p == 0) ? 0 : p + Offset - 1;
 }
+
+int __fastcall IndexStr(const UnicodeString & AText, const UnicodeString * AValues, int Count)
+{ for (int i = 0; i < Count; ++i) if (AValues[i] == AText) return i; return -1; }
+int __fastcall IndexText(const UnicodeString & AText, const UnicodeString * AValues, int Count)
+{ for (int i = 0; i < Count; ++i) if (AValues[i].CompareIC(AText) == 0) return i; return -1; }

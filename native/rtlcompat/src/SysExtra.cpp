@@ -242,11 +242,13 @@ void  __fastcall CoTaskMemFree(void *) {}
 
 //=== TEncoding ===
 static TEncoding g_utf8, g_ansi;
-TEncoding * __fastcall TEncoding::UTF8() { return &g_utf8; }
-TEncoding * __fastcall TEncoding::ANSI() { return &g_ansi; }
-TEncoding * __fastcall TEncoding::Default() { return &g_utf8; }
+TEncoding * TEncoding::UTF8 = &g_utf8;
+TEncoding * TEncoding::ANSI = &g_ansi;
+TEncoding * TEncoding::Default = &g_utf8;
 RawByteString __fastcall TEncoding::GetBytes(const UnicodeString & S) { return RawByteString(UTF8String(S).c_str()); }
 UnicodeString __fastcall TEncoding::GetString(const RawByteString & B) { return UTF8ToString(B); }
+UnicodeString __fastcall TEncoding::GetString(const System::DynamicArray<System::Byte> & B)
+{ RawByteString r; for (int i = 0; i < const_cast<System::DynamicArray<System::Byte>&>(B).Length; ++i) r.raw().push_back((char)const_cast<System::DynamicArray<System::Byte>&>(B)[i]); return UTF8ToString(r); }
 
 //=== TDateTime string helpers + date consts + global FormatSettings ===
 const TDateTime MinDateTime = TDateTime(-657434.0);
@@ -274,7 +276,7 @@ UnicodeString __fastcall EncodeBase64(const void * Data, int Size)
   }
   return UnicodeString(r.c_str());
 }
-RawByteString __fastcall DecodeBase64(const UnicodeString & S)
+System::DynamicArray<System::Byte> __fastcall DecodeBase64(const UnicodeString & S)
 {
   auto val = [](char c) -> int {
     if (c >= 'A' && c <= 'Z') return c - 'A';
@@ -292,7 +294,9 @@ RawByteString __fastcall DecodeBase64(const UnicodeString & S)
     if (c >= 0) out.push_back((char)(((b & 15) << 4) | (c >> 2)));
     if (d >= 0) out.push_back((char)(((c & 3) << 6) | d));
   }
-  return RawByteString(out.c_str(), (int)out.size());
+  System::DynamicArray<System::Byte> r((int)out.size());
+  for (size_t i = 0; i < out.size(); ++i) r[(int)i] = (System::Byte)out[i];
+  return r;
 }
 
 //=== TPath ===
@@ -304,7 +308,9 @@ UnicodeString __fastcall TPath::GetDirectoryName(const UnicodeString & P) { retu
 UnicodeString __fastcall TPath::GetExtension(const UnicodeString & P)
 { int p = P.LastDelimiter(UnicodeString(L"./\\")); return (p > 0 && P[p] == L'.') ? P.SubString(p, P.Length()) : UnicodeString(); }
 
-UnicodeString __fastcall TEncoding::GetBufferEncoding(const RawByteString &, TEncoding *& E) { E = TEncoding::UTF8(); return UnicodeString(); }
+int __fastcall TEncoding::GetBufferEncoding(const System::DynamicArray<System::Byte> &, TEncoding *& E, TEncoding * Default) { E = Default ? Default : TEncoding::UTF8; return 0; }
+UnicodeString __fastcall TEncoding::GetString(const System::DynamicArray<System::Byte> & B, int Offset, int Count)
+{ RawByteString r; for (int i = 0; i < Count; ++i) r.raw().push_back((char)const_cast<System::DynamicArray<System::Byte>&>(B)[Offset + i]); return UTF8ToString(r); }
 
 //=== Delphi exception introspection (stubs) ===
 TObject * __fastcall ExceptObject() { return nullptr; }
@@ -315,9 +321,9 @@ DWORD __fastcall GetTempPathW(DWORD, wchar_t *) { return 0; }
 int   __fastcall GetUserDefaultLCID() { return 0; }
 int   __fastcall lstrcmp(const wchar_t * a, const wchar_t * b) { return UnicodeString(a).Compare(UnicodeString(b)); }
 int   __fastcall lstrcmpi(const wchar_t * a, const wchar_t * b) { return UnicodeString(a).CompareIC(UnicodeString(b)); }
-bool  __fastcall PathSkipRoot(const wchar_t *) { return false; }
-UnicodeString __fastcall FileGetSymLinkTarget(const UnicodeString & FileName)
-{ std::error_code ec; auto t = fs::read_symlink(ToU8(FileName), ec); return ec ? UnicodeString() : FromU8(t.string()); }
+const wchar_t * __fastcall PathSkipRoot(const wchar_t * Path) { return Path; }
+bool __fastcall FileGetSymLinkTarget(const UnicodeString & FileName, UnicodeString & Target)
+{ std::error_code ec; auto t = fs::read_symlink(ToU8(FileName), ec); if (ec) return false; Target = FromU8(t.string()); return true; }
 HANDLE __fastcall CreateFile(const wchar_t *, DWORD, DWORD, void *, DWORD, DWORD, HANDLE) { return INVALID_HANDLE_VALUE; }
 HANDLE __fastcall CreateToolhelp32Snapshot(DWORD, DWORD) { return INVALID_HANDLE_VALUE; }
 HANDLE __fastcall OpenProcess(DWORD, BOOL, DWORD) { return nullptr; }
@@ -336,7 +342,24 @@ int   __fastcall LoadString(HINSTANCE, UINT, wchar_t *, int) { return 0; }
 DWORD __fastcall GetTempPath(DWORD, wchar_t * buf) { if (buf) buf[0] = 0; return 0; }
 BOOL  __fastcall SystemTimeToTzSpecificLocalTime(TIME_ZONE_INFORMATION *, SYSTEMTIME * in, SYSTEMTIME * out) { if (out && in) *out = *in; return TRUE; }
 BOOL  __fastcall GetCPInfoEx(UINT, DWORD, CPINFOEX * info) { if (info) info->MaxCharSize = 1; return TRUE; }
-void * __fastcall _wfopen(const wchar_t * Path, const wchar_t * Mode)
+std::FILE * __fastcall _wfopen(const wchar_t * Path, const wchar_t * Mode)
 { UnicodeString p(Path), m(Mode); std::string np, nm;
   for (char16_t c : p.raw()) np.push_back((char)c); for (char16_t c : m.raw()) nm.push_back((char)c);
   return ::fopen(np.c_str(), nm.c_str()); }
+
+//=== additional bodies (overload/signature matches for Common.cpp) ===
+UnicodeString __fastcall ExtractFileName(const UnicodeString & FileName)
+{ int p = FileName.LastDelimiter(UnicodeString(L"/\\:")); return (p > 0) ? FileName.SubString(p + 1, FileName.Length()) : FileName; }
+UnicodeString __fastcall ExtractFileExt(const UnicodeString & FileName)
+{ int p = FileName.LastDelimiter(UnicodeString(L"./\\:")); return (p > 0 && FileName[p] == L'.') ? FileName.SubString(p, FileName.Length()) : UnicodeString(); }
+DWORD __fastcall ExpandEnvironmentStrings(const wchar_t * Src, wchar_t * Dst, DWORD Size)
+{ UnicodeString r = ExpandEnvironmentStrings(UnicodeString(Src));
+  DWORD n = static_cast<DWORD>(r.Length()) + 1;
+  if (Dst && Size >= n) { for (int i = 1; i <= r.Length(); ++i) Dst[i-1] = static_cast<wchar_t>(r[i]); Dst[r.Length()] = 0; }
+  return n; }
+bool __fastcall TryStrToDateTime(const UnicodeString & S, TDateTime & V, const TFormatSettings &)
+{ return TryStrToDateTime(S, V); }
+int __fastcall ExceptionErrorMessage(TObject *, void *, wchar_t * Buffer, int Len)
+{ if (Buffer && Len > 0) Buffer[0] = 0; return 0; }
+
+const TTimeSpan TTimeSpan::Zero;

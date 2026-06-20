@@ -17,5 +17,7 @@ UnicodeString __fastcall ReplaceStr(const UnicodeString & Text, const UnicodeStr
 UnicodeString __fastcall ReplaceText(const UnicodeString & Text, const UnicodeString & From, const UnicodeString & To);
 UnicodeString __fastcall DupeString(const UnicodeString & S, int Count);
 int __fastcall PosEx(const UnicodeString & SubStr, const UnicodeString & S, int Offset);
+int __fastcall IndexStr(const UnicodeString & AText, const UnicodeString * AValues, int Count);
+int __fastcall IndexText(const UnicodeString & AText, const UnicodeString * AValues, int Count);
 
 #endif

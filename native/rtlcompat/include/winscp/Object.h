@@ -34,4 +34,18 @@ namespace winscp {
 }
 #define __classid(C) (::winscp::classid<C>())
 
+// Delphi try/finally -> RAII scope guard. genprops.py rewrites
+//   try { A } __finally { B }   ->   { auto _f = winscp::MakeFinally([&]{ B }); A }
+// so B runs on every exit (normal, return, or exception) — exact try/finally semantics.
+namespace winscp {
+  template <class F> struct TFinallyGuard
+  {
+    F f; bool armed = true;
+    explicit TFinallyGuard(F fn) : f(fn) {}
+    TFinallyGuard(TFinallyGuard && o) : f(o.f), armed(o.armed) { o.armed = false; }
+    ~TFinallyGuard() { if (armed) f(); }
+  };
+  template <class F> TFinallyGuard<F> MakeFinally(F f) { return TFinallyGuard<F>(f); }
+}
+
 #endif

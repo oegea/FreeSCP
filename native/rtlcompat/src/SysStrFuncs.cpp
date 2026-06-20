@@ -55,3 +55,5 @@ int __fastcall CompareText(const UnicodeString & A, const UnicodeString & B) { r
 int __fastcall AnsiCompareText(const UnicodeString & A, const UnicodeString & B) { return A.CompareIC(B); }
 int __fastcall AnsiCompareStr(const UnicodeString & A, const UnicodeString & B) { return A.Compare(B); }
 bool __fastcall AnsiSameText(const UnicodeString & A, const UnicodeString & B) { return A.CompareIC(B) == 0; }
+
+UnicodeString __fastcall IntToHex(__int64 Value) { return IntToHex(Value, 1); }

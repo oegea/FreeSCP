@@ -33,10 +33,12 @@ add_library(winscpcore_flags INTERFACE)
 target_link_libraries(winscpcore_flags INTERFACE rtlcompat)
 target_include_directories(winscpcore_flags INTERFACE
   ${GEN_DIR} ${CORE_DIR}
+  ${CMAKE_CURRENT_SOURCE_DIR}/../rtlcompat/include/winapi  # Win32 header stubs (shlobj, ...)
   ${CMAKE_SOURCE_DIR}/../source/resource   # TextsCore.h, resource string IDs
   ${LIBS_DIR}/neon/src      # WebDAV (NeonIntf, WebDAVFileSystem)
   ${LIBS_DIR}/expat/lib     # XML (pulled in via neon)
-  ${LIBS_DIR}/libs3/inc)    # S3
+  ${LIBS_DIR}/libs3/inc     # S3
+  ${LIBS_DIR}/openssl/include)  # crypto
 target_compile_options(winscpcore_flags INTERFACE -fms-extensions -Wno-unknown-pragmas)
 
 # --- step 2: ported engine objects ---
@@ -47,6 +49,8 @@ set(CORE_PORTED_NAMES
   Global.cpp
   FileBuffer.cpp
   NamedObjs.cpp
+  Common.cpp
+  FileSystems.cpp
 )
 set(CORE_GEN_SOURCES "")
 foreach(name ${CORE_PORTED_NAMES})

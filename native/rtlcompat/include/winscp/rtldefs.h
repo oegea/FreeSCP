@@ -34,10 +34,7 @@
 #define EXCEPT noexcept(false)
 #endif
 
-// MSVC/bcc 64-bit integer keyword. As a macro so `unsigned __int64` also works.
-#ifndef __int64
-#define __int64 long long
-#endif
+// __int64 is a builtin type under -fms-extensions (== long long); no typedef needed.
 
 // Delphi-style integer aliases used across the engine.
 typedef int            Integer;

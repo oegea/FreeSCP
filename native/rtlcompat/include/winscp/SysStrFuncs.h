@@ -10,6 +10,7 @@
 
 UnicodeString __fastcall IntToStr(__int64 Value);
 UnicodeString __fastcall IntToHex(__int64 Value, int Digits);
+UnicodeString __fastcall IntToHex(__int64 Value);
 int __fastcall StrToInt(const UnicodeString & S);
 __int64 __fastcall StrToInt64(const UnicodeString & S);
 int __fastcall StrToIntDef(const UnicodeString & S, int Default);

@@ -56,18 +56,28 @@ def convert(match):
     accessors = []
     get_fn = put_fn = None
 
+    # Always emit a forwarding accessor (placed where __property was, i.e. its visibility —
+    # usually public). It can legally read a private field or call a private getter/setter,
+    # which __declspec(property) targeting the private member directly cannot from outside.
     if read is not None:
-        if is_field(read) and not indexed:
-            get_fn = '__pg_%s' % name
-            accessors.append('%s __fastcall %s() { return %s; }' % (typ, get_fn, read))
-        else:
+        if indexed:
             get_fn = read
-    if write is not None:
-        if is_field(write) and not indexed:
-            put_fn = '__ps_%s' % name
-            accessors.append('void __fastcall %s(%s v) { %s = v; }' % (put_fn, typ, write))
         else:
+            get_fn = '__pg_%s' % name
+            # C-style cast to the property type: Delphi getters may return a const/related
+            # type that the property exposes mutably.
+            expr = read if is_field(read) else (read + '()')
+            accessors.append('%s __fastcall %s() { return (%s)(%s); }'
+                             % (typ, get_fn, typ, expr))
+    if write is not None:
+        if indexed:
             put_fn = write
+        else:
+            put_fn = '__ps_%s' % name
+            if is_field(write):
+                accessors.append('void __fastcall %s(%s v) { %s = v; }' % (put_fn, typ, write))
+            else:
+                accessors.append('void __fastcall %s(%s v) { %s(v); }' % (put_fn, typ, write))
 
     spec = []
     if get_fn:
@@ -81,7 +91,126 @@ def convert(match):
     return prefix + decl_line
 
 
+# --- Borland try/finally -> RAII scope guard -------------------------------------------
+# clang has no `try {} __finally {}`. Rewrite (brace/string/comment aware):
+#   try { A } [catch(...){C}]* __finally { B }
+#     no catch  -> { auto __finN = ::winscp::MakeFinally([&]() { B }); { A } }
+#     w/ catch  -> { auto __finN = ::winscp::MakeFinally([&]() { B }); try { A } catch(...){C} }
+# B runs on every exit path. Pure try/catch (no __finally) is left untouched (valid C++).
+
+def _skip_trivia(s, i):
+    n = len(s)
+    while i < n:
+        c = s[i]
+        if c in ' \t\r\n':
+            i += 1
+        elif c == '/' and i + 1 < n and s[i+1] == '/':
+            while i < n and s[i] != '\n':
+                i += 1
+        elif c == '/' and i + 1 < n and s[i+1] == '*':
+            i += 2
+            while i + 1 < n and not (s[i] == '*' and s[i+1] == '/'):
+                i += 1
+            i += 2
+        else:
+            break
+    return i
+
+
+def _read_block(s, i):
+    # s[i] must be '{'; return index just past the matching '}', string/comment aware.
+    assert s[i] == '{'
+    n = len(s)
+    depth = 0
+    while i < n:
+        c = s[i]
+        if c == '"' or c == "'":
+            q = c
+            i += 1
+            while i < n and s[i] != q:
+                if s[i] == '\\':
+                    i += 1
+                i += 1
+            i += 1
+        elif c == '/' and i + 1 < n and s[i+1] == '/':
+            while i < n and s[i] != '\n':
+                i += 1
+        elif c == '/' and i + 1 < n and s[i+1] == '*':
+            i += 2
+            while i + 1 < n and not (s[i] == '*' and s[i+1] == '/'):
+                i += 1
+            i += 2
+        else:
+            if c == '{':
+                depth += 1
+            elif c == '}':
+                depth -= 1
+                if depth == 0:
+                    return i + 1
+            i += 1
+    return -1
+
+
+WORD = re.compile(r'\w')
+
+
+def transform_try_finally(s):
+    out = []
+    i = 0
+    n = len(s)
+    counter = [0]
+    while i < n:
+        c = s[i]
+        # copy over strings/comments verbatim so we never match inside them
+        if c == '"' or c == "'":
+            j = i + 1
+            while j < n and s[j] != c:
+                if s[j] == '\\':
+                    j += 1
+                j += 1
+            out.append(s[i:j+1]); i = j + 1; continue
+        if c == '/' and i + 1 < n and s[i+1] == '/':
+            j = s.find('\n', i)
+            j = n if j < 0 else j
+            out.append(s[i:j]); i = j; continue
+        if c == '/' and i + 1 < n and s[i+1] == '*':
+            j = s.find('*/', i)
+            j = n if j < 0 else j + 2
+            out.append(s[i:j]); i = j; continue
+        # match `try` as a whole word
+        if s.startswith('try', i) and (i == 0 or not WORD.match(s[i-1])) \
+           and (i + 3 >= n or not WORD.match(s[i+3])):
+            k = _skip_trivia(s, i + 3)
+            if k < n and s[k] == '{':
+                a_end = _read_block(s, k)
+                if a_end > 0:
+                    block_a = s[k:a_end]
+                    catches = []
+                    m = _skip_trivia(s, a_end)
+                    while s.startswith('catch', m) and (m + 5 >= n or not WORD.match(s[m+5])):
+                        p = s.index('{', m)
+                        c_end = _read_block(s, p)
+                        catches.append(s[m:c_end])
+                        m = _skip_trivia(s, c_end)
+                    if s.startswith('__finally', m) and (m + 9 >= n or not WORD.match(s[m+9])):
+                        fb = _skip_trivia(s, m + 9)
+                        b_end = _read_block(s, fb)
+                        block_b = s[fb:b_end]
+                        counter[0] += 1
+                        guard = '{ auto __fin%d = ::winscp::MakeFinally([&]() %s); ' % (counter[0], block_b)
+                        if catches:
+                            out.append(guard + 'try ' + block_a + ' ' + ' '.join(catches) + ' }')
+                        else:
+                            out.append(guard + block_a + ' }')
+                        i = b_end
+                        continue
+        out.append(c)
+        i += 1
+    return ''.join(out)
+
+
 def process(text):
+    text = transform_try_finally(text)
     return PROP_RE.sub(convert, text)
 
 
