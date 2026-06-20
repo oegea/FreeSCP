@@ -70,27 +70,38 @@ PuttyIntf.cpp compiles with: engine flags + `-DWINSCP -DMPEXT -DNO_GSSAPI` + `-I
 include -I source/putty` + the core include set above.
 
 ## State (Phase 3 in progress)
-- Phase 0/1 done (foundation, RTL, 35/36 headers parse). Phase 1.5: 15/34 engine .cpp compile.
-- Phase 2 threading done; file/date platform done; sockets done (uxnet).
-- Phase 3: PuTTY core+platform compile+link; **PuttyIntf.cpp compiles**. Force-linking
-  puttycore+puttyplatform leaves 16 engine-side undefined (get_callback_set/get_seat_callback_
-  set/get_log_callback_set/get_log_seat, modalfatalbox, ldisc_echoedit_update, old_keyfile_
-  warning, pinger_free/new/reconfig, schedule_timer, expire_timer_context, sshver,
-  putty_section, in_memory_key_data, argon2_internal_vs) — supplied by PuttyIntf.cpp/
-  SecureShell.cpp/WinSCP timing when those compile+link.
+- Phase 0/1 done (foundation, RTL, 35/36 headers parse). Phase 2 threading/file/date/sockets done.
+- Phase 3: PuTTY core+platform compile+link. **6 SSH-side engine .cpp compile + build** into
+  libwinscpcore via the new `winscpcore_ssh` CMake OBJECT group (putty includes + WINSCP/
+  NO_GSSAPI): **PuttyIntf, Cryptography, Configuration, HierarchicalStorage, SecureShell** (+ the
+  15 leaf TUs). See STATUS.md "Phase 3 step 2 progress" for the landmark infra added:
+  - file-backed INI storage (rtlcompat/src/IniFiles.cpp) — the real config backend on non-Win
+  - BSD-backed Winsock async-select emulation (rtlcompat winsock2.h + WinSock.cpp)
+  - putty handle-wait stub (native/putty platform.h + src/uxhandlewait.c) — empty list on unix
+  - genprops closure extensions: f(obj.Method) + X.OnXxx=&obj.Method
+- ⚠ The build was RED at the prior HEAD (SecureShell.h SOCKET guard broke the header-parse
+  guard); fixed first thing. Always `cmake --build build` before trusting green.
+- ⚠ RUNTIME UNVALIDATED: SecureShell's EventSelectLoop waits on FSocketEvent, which our
+  WSAEventSelect emulation can't auto-signal on socket activity. Wiring FSocketEvent to
+  winscp_net_select() is THE first runtime task once a test SSH server exists (compiles/links now).
 
 ## NEXT STEPS (in order)
-1. Compile **SecureShell.cpp** (engine flags + putty includes, genprops shadow). Wire its
-   event loop to `winscp_net_select(ms)` (declared in uxnet.c) instead of WaitForMultipleObjects.
-2. Compile the other PuttyIntf.h-including engine .cpp: Cryptography, HierarchicalStorage,
-   Configuration, SessionData, CoreMain, SessionInfo, SecureShell, Sftp/Scp/Ftp FileSystem.
-3. Build a `winscpcore` that links (add these .cpp to CORE_PORTED_NAMES; ensure puttycore/
-   puttyplatform compiled WITH -fshort-wchar for ABI; link winscpcore+puttycore+puttyplatform+
-   rtlcompat+openssl).
-4. Headless harness: open a TTerminal/SecureShell session over SFTP to a test server, list a
-   dir. NEED A TEST SSH SERVER (local sshd on the Mac, or user-provided). Debug runtime.
-5. Then wire the Qt remote panel to a real SFTP session via enginebridge (listRemoteDir/
-   download/upload mirroring the local panel).
+1. Compile the remaining connect-path TUs (add to CORE_SSH_NAMES once 0 errors via the survey
+   one-liner): **SftpFileSystem (39), Terminal (49), SessionData (45), SessionInfo (71)**.
+   - SessionData's bulk is the Xml.XMLIntf surface (IXMLNode/IXMLDocument ChildNodes/Count/
+     FindNode/Get/Text/NodeName/GetAttribute + TXMLDocument/OleVariant) for session import/export
+     — flesh out native/rtlcompat XMLIntf.hpp/XMLDoc to a working-enough node tree (expat-backed
+     or stub-import). ScpFileSystem (5) needs a 2-byte-wchar `UnicodeString::sprintf` varargs
+     formatter + TSafeHandleStream(THandle) ctor + multi-arg closure (ProcessDirectory). CoreMain
+     (1) needs FileZillaIntf.h (FTP — deferred).
+2. **Link** winscpcore + puttycore + puttyplatform + rtlcompat + openssl. NOTE: putty libs build
+   WITHOUT -fshort-wchar (4-byte wchar) vs engine 2-byte — add -fshort-wchar to puttycore/
+   puttyplatform for ABI safety before runtime (SFTP is char-based so compile/link is OK now).
+3. **Wire the event loop**: tie FSocketEvent to winscp_net_select() so EventSelectLoop wakes on
+   socket data (see the RUNTIME UNVALIDATED note). Guarded SecureShell.cpp edit if needed.
+4. Headless harness: open a TTerminal/SecureShell SFTP session to a test server, list a dir.
+   NEED A TEST SSH SERVER (local sshd on the Mac, or user-provided). Debug runtime.
+5. Wire the Qt remote panel to a real SFTP session via enginebridge (mirror the local panel).
 6. Phase 4 (neon/libs3 WebDAV/S3), Phase 7 (faithful dialog rebuild), Phase 9 (Linux).
 
 ## Conceptual nuts — ALL solved

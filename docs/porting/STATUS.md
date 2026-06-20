@@ -212,3 +212,38 @@ extensions) + putty include path. Key reconciliations:
 
 ### Next: SecureShell.cpp (event loop -> winscp_net_select) + the PuttyIntf.h-including engine
 .cpp (Configuration/SessionData/Cryptography/HierarchicalStorage), then link + real connect.
+
+## Phase 3 step 2 progress: 6 SSH-side engine TUs compile+build (winscpcore_ssh group)
+The build was RED at HEAD (SecureShell.h SOCKET typedef left the header-parse guard broken);
+fixed (non-Windows `typedef int SOCKET` matching putty). New CMake `winscpcore_ssh` OBJECT lib
+compiles PuttyIntf.h-including TUs with the putty include set + WINSCP/NO_GSSAPI, folded into
+libwinscpcore. **Now compiling: PuttyIntf, Cryptography, Configuration, HierarchicalStorage,
+SecureShell.** ctest green.
+
+Landmark pieces this round (all no-source-edit except the SOCKET guard):
+- **Storage backend** `native/rtlcompat/src/IniFiles.cpp`: real file-backed TCustomIniFile/
+  TMemIniFile (case-insensitive, UTF-8, UpdateFile persist, GetStrings/SetStrings). TRegistry =
+  honest absent-registry stub (Configuration picks INI on non-Windows). + TStrings SaveToStream/
+  LoadFromStream/Equals/BeginUpdate/EndUpdate; escape_registry_key.c (portable putty util) into
+  puttyplatform.
+- **Winsock async-select emulation** `native/rtlcompat/{include/winapi/winsock2.h,src/WinSock.cpp}`:
+  real BSD-backed WSAEventSelect/WSAEnumNetworkEvents over select() (one-shot FD_CONNECT/FD_CLOSE),
+  FD_*/WSANETWORKEVENTS/SOCKADDR_IN/hostent/WSAIoctl/closesocket. Made SecureShell 44->11 errors.
+- **handle-wait stub** `native/putty/{include/platform.h,src/uxhandlewait.c}`: empty wait list on
+  unix (sockets via select) → SecureShell's EventSelectLoop waits only on its socket event.
+- **genprops closure extensions**: `f(obj.Method)` call-arg + `X.OnXxx = &obj.Method` bind
+  (TimeoutPrompt, CopyAlias.OnSubmit) — generalizes the __closure codegen beyond bare this-methods.
+- RTL adds: HIWORD/LOWORD/MAKEWORD/DWORD_PTR, ParamStr, TPath::IsDriveRooted, StrToFloat/
+  ForceDirectories/FileSetAttr/ExpandUNCFileName, free LastDelimiter, UnicodeString(char16_t,
+  count=1) implicit single-char ctor + (const char*,int), KEY_WRITE/REG_*/ERROR_* consts.
+
+⚠ RUNTIME UNVALIDATED: SecureShell's EventSelectLoop waits on FSocketEvent via WaitForMultiple-
+Objects, but our WSAEventSelect emulation can't auto-signal that event on socket activity (Windows
+ties them at the kernel). Compiles+links, but the loop won't wake on data until FSocketEvent is
+wired to winscp_net_select(). This is THE first runtime task once a test SSH server exists.
+
+### Remaining SSH .cpp (error counts w/ putty flags): ScpFileSystem 5 (sprintf 2-byte-wchar
+formatter + TSafeHandleStream(THandle) + multi-arg closure ProcessDirectory), SftpFileSystem 39,
+Terminal 49, SessionData 45 (Xml.XMLIntf surface: IXMLNode/IXMLDocument ChildNodes/Count/FindNode/
+Get/Text/NodeName/GetAttribute — session import/export), SessionInfo 71, CoreMain 1 (FileZillaIntf.h
+— FTP, deferred). Next best path to a connect: SftpFileSystem + Terminal + SessionData.
