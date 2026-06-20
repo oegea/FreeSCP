@@ -95,9 +95,14 @@ include -I source/putty` + the core include set above.
     `UnicodeString::sprintf`.
   - genprops grew a lot: inline-`__closure`→std::function, fixed-slot closure wrappers
     (ProcessFiles/ProcessDirectory/DoAdd/...), arity-cast bridges, On/bare skip heuristics.
-- **First link done** (force-load winscpcore+puttycore+puttyplatform+puttycrypto_vs+rtlcompat+
-  openssl): 77→58 undefined after adding **puttycrypto_vs** (recompiles aes-sw.c+sha256-sw.c with
-  -DWINSCP_VS — WinSCP gates the C software crypto behind that flag; disjoint symbols, no dup).
+- **THE ENGINE LINKS** — winscpcore + winscp_harness + puttycore + puttyplatform + puttycrypto_vs
+  + rtlcompat + openssl link into a 6.7MB arm64 Mach-O with **0 undefined, 0 duplicate**. Got there
+  via: puttycrypto_vs (software crypto under -DWINSCP_VS, 77→58); resolving the putty side (conf_data
+  shadow / argon2 VS / unix cleanup+host-key stubs / Masks.cpp, 58→45); the headless Interface stub
+  (native/harness/interface_stub.cpp, 45→0 undefined); then dedup (removed redundant uxnet/uxstore
+  stubs that PuttyIntf.cpp now provides + #ifndef MPEXT guards on be_list.c/settings.c, 32 dups→0).
+- Link command: the "Survey one-liners" force-load + `-Wl,-force_load,...libwinscp_harness.a` +
+  `...libputtycrypto_vs.a`.
 - ⚠ RUNTIME UNVALIDATED: SecureShell's EventSelectLoop waits on FSocketEvent, which the
   WSAEventSelect emulation can't auto-signal on socket activity. Wiring FSocketEvent to
   winscp_net_select() is THE first runtime task once linked.
@@ -124,16 +129,23 @@ Run the link via the "Survey one-liners" force-load command + `-Wl,-force_load,.
    unix stubs for win_misc_cleanup/win_secur_cleanup/wingss_cleanup/retrieve_host_key/
    in_memory_key_data (add to uxstubs.c/uxstore.c).
 
-## NEXT STEPS (in order)
-1. Knock out the 58 (above): headless Interface stub TU + config-glue stub + filesystem-ctor
-   stubs + Masks.cpp + the putty bits. Goal: a clean link of a headless engine harness exe.
-2. Build `-fshort-wchar` into puttycore/puttyplatform/puttycrypto_vs for wchar ABI safety before
-   trusting runtime (SFTP is char-based so the current 4-byte-wchar putty is fine to link).
-3. Wire the event loop: tie FSocketEvent → winscp_net_select() so EventSelectLoop wakes on data.
-4. Headless harness: TTerminal SFTP connect to the Docker server (localhost:2222 winscp/winscp123),
-   list /config. Debug runtime.
+## NEXT STEPS (in order) — now a RUNTIME problem
+1. **Runtime harness main** (native/harness/main.cpp + a CMake exe target linking the libs above):
+   - create a TConfiguration (set the `Configuration` global the stub declares), a TSessionData
+     (HostName=localhost, PortNumber=2222, UserName=winscp, Password=winscp123, FSProtocol=fsSFTP),
+     a TTerminal, and a minimal callback/Seat that answers prompts from the session credentials and
+     auto-accepts the host key (have_ssh_host_key/PuttyIntf path). Call Terminal->Open(), then list
+     /config. The Docker server is staged (see "Test SSH/SFTP server").
+2. **Wire FSocketEvent → winscp_net_select()** — SecureShell's EventSelectLoop waits on FSocketEvent
+   via WaitForMultipleObjects, but the WSAEventSelect emulation can't auto-signal it on socket
+   activity, so the loop won't wake on data. This is the #1 runtime blocker. Options: make the
+   WinThreads WaitForMultipleObjects integrate a winscp_net_select() pass for socket-backed events,
+   or a guarded SecureShell.cpp edit that calls winscp_net_select(timeout) in the loop.
+3. Build `-fshort-wchar` into puttycore/puttyplatform/puttycrypto_vs for wchar ABI safety (SFTP is
+   char-based so the current 4-byte-wchar putty linked fine, but UTF-16 crossings need it).
+4. Debug the connect end-to-end (auth, host-key, SFTP init, readdir). Iterate.
 5. Wire the Qt remote panel to a real SFTP session via enginebridge (mirror the local panel).
-6. Phase 4 (neon/libs3 WebDAV/S3 + FTP), Phase 7 (faithful dialog rebuild), Phase 9 (Linux).
+6. Phase 4 (neon/libs3 WebDAV/S3 + FTP — unguard Terminal.cpp), Phase 7 (dialogs), Phase 9 (Linux).
 
 ## Conceptual nuts — ALL solved
 __property (codegen), RTTI/__classid (typeid+dynamic_cast), wchar_t (u16+-fshort-wchar),
