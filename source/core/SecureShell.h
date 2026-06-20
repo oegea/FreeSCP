@@ -15,9 +15,13 @@ struct Conf;
 //---------------------------------------------------------------------------
 struct _WSANETWORKEVENTS;
 typedef struct _WSANETWORKEVENTS WSANETWORKEVENTS;
-/* WINSCP-NATIVE-PORT: on non-Windows SOCKET is PuTTY's int fd (from platform.h) */
+/* WINSCP-NATIVE-PORT: on non-Windows SOCKET is PuTTY's int fd (matches platform.h's
+   `typedef int SOCKET` exactly, so including both is a legal identical redefinition; this
+   keeps SecureShell.h self-contained for the header-parse guard, which omits putty includes) */
 #ifdef _WIN32
 typedef UINT_PTR SOCKET;
+#else
+typedef int SOCKET;
 #endif
 typedef std::set<SOCKET> TSockets;
 struct TPuttyTranslation;
