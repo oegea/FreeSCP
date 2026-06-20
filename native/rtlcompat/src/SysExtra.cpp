@@ -150,6 +150,7 @@ UnicodeString __fastcall GetCurrentDir() { std::error_code ec; auto p = fs::curr
 bool __fastcall DirectoryExists(const UnicodeString & Dir) { std::error_code ec; return fs::is_directory(ToU8(Dir), ec); }
 bool __fastcall FileExists(const UnicodeString & FileName) { std::error_code ec; return fs::exists(ToU8(FileName), ec) && !fs::is_directory(ToU8(FileName), ec); }
 bool __fastcall DeleteFile(const UnicodeString & FileName) { std::error_code ec; return fs::remove(ToU8(FileName), ec); }
+bool __fastcall RenameFile(const UnicodeString & O, const UnicodeString & N) { std::error_code ec; fs::rename(ToU8(O), ToU8(N), ec); return !ec; }
 bool __fastcall RemoveDir(const UnicodeString & Dir) { std::error_code ec; return fs::remove(ToU8(Dir), ec); }
 int  __fastcall GetFileAttributes(const wchar_t * FileName)
 { std::error_code ec; UnicodeString fn(FileName); auto st = fs::status(ToU8(fn), ec);
@@ -404,3 +405,7 @@ DWORD __fastcall GetLastError() { return (DWORD)errno; }
 long  __fastcall CoInitialize(void *) { return 0; }
 long  __fastcall CoInitializeEx(void *, DWORD) { return 0; }
 void  __fastcall CoUninitialize() {}
+
+BOOL __fastcall GetFileTime(HANDLE, FILETIME * c, FILETIME * a, FILETIME * w)
+{ if (c) *c = FILETIME{}; if (a) *a = FILETIME{}; if (w) *w = FILETIME{}; return TRUE; }
+BOOL __fastcall SetFileTime(HANDLE, const FILETIME *, const FILETIME *, const FILETIME *) { return TRUE; }

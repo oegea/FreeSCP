@@ -238,6 +238,10 @@ def transform_try_finally(s):
                         b_end = _read_block(s, fb)
                         block_b = s[fb:b_end]
                         counter[0] += 1
+                        # Recurse so nested try/finally inside A/B/catches are also rewritten.
+                        block_a = transform_try_finally(block_a)
+                        block_b = transform_try_finally(block_b)
+                        catches = [transform_try_finally(c) for c in catches]
                         guard = '{ auto __fin%d = ::winscp::MakeFinally([&]() %s); ' % (counter[0], block_b)
                         if catches:
                             out.append(guard + 'try ' + block_a + ' ' + ' '.join(catches) + ' }')

@@ -4,6 +4,7 @@
 #include "Classes.hpp"
 #include "winscp/SysStrFuncs.h"
 #include <algorithm>
+#include <cstdio>
 
 //--- TList ---
 int __fastcall TList::Add(void * Item)
@@ -172,3 +173,21 @@ void __fastcall TStrings::Exchange(int I1, int I2)
 
 bool __fastcall TStringList::Find(const UnicodeString & S, int & Index)
 { Index = IndexOf(S); if (Index >= 0) return true; Index = GetCount(); return false; }
+
+void __fastcall TStrings::LoadFromFile(const UnicodeString & FileName)
+{
+  std::string path; for (char16_t c : FileName.raw()) path.push_back((char)c);
+  std::FILE * f = std::fopen(path.c_str(), "rb"); if (!f) return;
+  std::string all; char buf[4096]; size_t n;
+  while ((n = std::fread(buf, 1, sizeof(buf), f)) > 0) all.append(buf, n);
+  std::fclose(f);
+  UnicodeString u; for (char c : all) u += UnicodeString((char16_t)(unsigned char)c, 1);
+  SetText(u);
+}
+void __fastcall TStrings::SaveToFile(const UnicodeString & FileName)
+{
+  std::string path; for (char16_t c : FileName.raw()) path.push_back((char)c);
+  std::FILE * f = std::fopen(path.c_str(), "wb"); if (!f) return;
+  UnicodeString t = GetText(); for (int i = 1; i <= t.Length(); ++i) { char c = (char)t[i]; std::fwrite(&c, 1, 1, f); }
+  std::fclose(f);
+}

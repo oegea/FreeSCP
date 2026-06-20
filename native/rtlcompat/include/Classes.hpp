@@ -101,6 +101,8 @@ public:
   void __fastcall Move(int CurIndex, int NewIndex);
   void __fastcall Exchange(int Index1, int Index2);
   int __fastcall Append(const UnicodeString & S) { return Add(S); }
+  void __fastcall LoadFromFile(const UnicodeString & FileName);
+  void __fastcall SaveToFile(const UnicodeString & FileName);
 
   UnicodeString __fastcall GetText();
   void __fastcall SetText(const UnicodeString & Text);

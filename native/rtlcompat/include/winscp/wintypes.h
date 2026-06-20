@@ -21,6 +21,7 @@ typedef unsigned char   BYTE;
 typedef unsigned short  Word;
 typedef unsigned long   LCID;
 typedef DWORD           REGSAM;
+typedef HANDLE          THandle;
 typedef std::uintptr_t  UINT_PTR;
 typedef std::intptr_t   INT_PTR;
 typedef std::intptr_t   LONG_PTR;
