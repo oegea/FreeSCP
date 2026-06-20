@@ -76,6 +76,36 @@ add_library(winscpcore STATIC ${CORE_GEN_SOURCES})
 add_dependencies(winscpcore winscpcore_genheaders)
 target_link_libraries(winscpcore PUBLIC winscpcore_flags)
 
+# --- step 3: SSH-side engine objects (include PuttyIntf.h / putty.h) ---
+# These TUs need the PuTTY backend on the include path plus the WinSCP/MPEXT build defines
+# (matching upstream's engine build). Same genprops shadow pipeline, extra flags. They compile
+# into the SAME libwinscpcore but via an OBJECT lib so the putty include set + defines are
+# scoped to them and don't perturb the 15 leaf TUs above.
+# NOTE: ideally every engine TU would carry -DWINSCP -DMPEXT for ABI/ODR consistency; the leaf
+# group predates this and links without it. Revisit unifying the defines before runtime trust.
+set(CORE_SSH_NAMES
+  PuttyIntf.cpp
+  Cryptography.cpp
+)
+set(CORE_SSH_GEN_SOURCES "")
+foreach(name ${CORE_SSH_NAMES})
+  add_custom_command(
+    OUTPUT ${GEN_DIR}/${name}
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/../tools/genprops.py ${CORE_DIR}/${name} ${GEN_DIR}/${name}
+    DEPENDS ${CORE_DIR}/${name} ${CMAKE_CURRENT_SOURCE_DIR}/../tools/genprops.py
+    COMMENT "genprops ${name}")
+  list(APPEND CORE_SSH_GEN_SOURCES ${GEN_DIR}/${name})
+endforeach()
+
+add_library(winscpcore_ssh OBJECT ${CORE_SSH_GEN_SOURCES})
+add_dependencies(winscpcore_ssh winscpcore_genheaders)
+target_link_libraries(winscpcore_ssh PUBLIC winscpcore_flags)
+target_compile_definitions(winscpcore_ssh PRIVATE WINSCP NO_GSSAPI)  # MPEXT comes from PuttyIntf.h
+target_include_directories(winscpcore_ssh PRIVATE
+  ${CMAKE_SOURCE_DIR}/putty/include      # unix PuTTY platform contract (precedes source/putty)
+  ${CMAKE_SOURCE_DIR}/../source/putty)
+target_sources(winscpcore PRIVATE $<TARGET_OBJECTS:winscpcore_ssh>)
+
 # --- header-parse regression guard: each listed header must compile standalone ---
 # (proves the RTL surface + __property codegen keep covering them as rtlcompat grows)
 # Guard = every core header EXCEPT those that still need the putty backend (Phase 3:
