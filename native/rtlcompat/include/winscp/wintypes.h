@@ -33,6 +33,10 @@ struct VS_FIXEDFILEINFO
   DWORD dwFileFlagsMask, dwFileFlags, dwFileOS, dwFileType, dwFileSubtype;
   DWORD dwFileDateMS, dwFileDateLS;
 };
+typedef VS_FIXEDFILEINFO   TVSFixedFileInfo;
 typedef VS_FIXEDFILEINFO * PVSFixedFileInfo;
+
+// Vcl.Menus TShortCut (a packed key code). Word-sized.
+typedef Word TShortCut;
 
 #endif

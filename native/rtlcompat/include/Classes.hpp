@@ -25,6 +25,10 @@ public:
   virtual ~TObject() {}
 };
 
+// Delphi event types (closures). __closure is a no-op macro, so these are plain function
+// pointers here; method-pointer (TObject + code) fidelity is added if/when needed.
+typedef void __fastcall (__closure * TNotifyEvent)(TObject * Sender);
+
 class TPersistent : public TObject
 {
 public:
