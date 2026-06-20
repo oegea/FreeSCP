@@ -20,8 +20,8 @@ enable_testing()
 # Phase 1 keystone: Embarcadero RTL compatibility layer.
 add_subdirectory(rtlcompat)
 
+add_subdirectory(core)         # Phase 1+ ported engine (libwinscpcore), grows leaf-first
 add_subdirectory(ui-qt)        # Phase 0 skeleton -> Phase 6 real GUI
 
 # Later phases (guarded until their groundwork exists):
 #   add_subdirectory(platform)   # Phase 2
-#   add_subdirectory(core)       # Phase 5 — builds ../source/core into libwinscpcore
