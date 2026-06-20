@@ -10,6 +10,7 @@
 #include "winscp/wintypes.h"
 #include "winscp/UnicodeString.h"
 #include "winscp/AnsiStrings.h"
+#include "winscp/DynamicArray.h"
 
 // Delphi date/time = floating day count since 1899-12-30.
 class TDateTime
@@ -97,5 +98,15 @@ public:
 };
 
 extern const UnicodeString EmptyStr;
+
+// Raise EOSError for the current/last OS error (errno on POSIX).
+void __fastcall RaiseLastOSError();
+void __fastcall RaiseLastOSError(int LastError);
+
+// Low-level file IO (System.SysUtils). Handle is an OS fd here. -1 on error.
+int __fastcall FileRead(int Handle, void * Buffer, int Count);
+int __fastcall FileWrite(int Handle, const void * Buffer, int Count);
+int __fastcall FileRead(int Handle, System::DynamicArray<System::Byte> Buffer, int Offset, int Count);
+int __fastcall FileWrite(int Handle, const System::DynamicArray<System::Byte> Buffer, int Offset, int Count);
 
 #endif

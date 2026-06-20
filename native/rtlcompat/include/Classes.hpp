@@ -11,6 +11,7 @@
 #include "winscp/UnicodeString.h"
 #include "winscp/DelphiSet.h"
 #include "System.Types.hpp"
+#include "SysUtils.hpp"   // Exception (base of stream errors)
 
 // Delphi method pointer (code+data); TMulticastEvent in Common.h reinterprets through it.
 struct TMethod
@@ -83,39 +84,78 @@ public:
   System::Types::TDuplicates Duplicates = System::Types::dupIgnore;
 };
 
+// Delphi TSeekOrigin + legacy integer constants (engine uses soFromBeginning/soCurrent/soEnd).
+enum TSeekOrigin { soBeginning, soCurrent, soEnd };
+const int soFromBeginning = 0;
+const int soFromCurrent = 1;
+const int soFromEnd = 2;
+
+// Stream file-open mode bits (System.Classes / SysUtils fmXxx).
+const Word fmCreate = 0xFF00;
+const Word fmOpenRead = 0x0000;
+const Word fmOpenWrite = 0x0001;
+const Word fmOpenReadWrite = 0x0002;
+const Word fmShareDenyNone = 0x0040;
+
 class TStream : public TObject
 {
 public:
-  virtual __int64 __fastcall Read(void * Buffer, __int64 Count) = 0;
-  virtual __int64 __fastcall Write(const void * Buffer, __int64 Count) = 0;
-  virtual __int64 __fastcall Seek(__int64 Offset, int Origin);
-  __int64 Position = 0;
-  __int64 Size = 0;
+  virtual ~TStream() {}
+  virtual int __fastcall Read(void * Buffer, int Count) = 0;
+  virtual int __fastcall Write(const void * Buffer, int Count) = 0;
+  virtual __int64 __fastcall Seek(__int64 Offset, Word Origin);
+
+  void __fastcall ReadBuffer(void * Buffer, int Count);
+  void __fastcall WriteBuffer(const void * Buffer, int Count);
+  __int64 __fastcall CopyFrom(TStream * Source, __int64 Count);
+
+  __int64 __fastcall GetPosition();
+  void __fastcall SetPosition(__int64 Pos);
+  __declspec(property(get=GetPosition, put=SetPosition)) __int64 Position;
+  virtual __int64 __fastcall GetSize();
+  virtual void __fastcall SetSize(__int64 NewSize);
+  __declspec(property(get=GetSize, put=SetSize)) __int64 Size;
 };
 
 class THandleStream : public TStream
 {
 public:
-  virtual __int64 __fastcall Read(void * Buffer, __int64 Count);
-  virtual __int64 __fastcall Write(const void * Buffer, __int64 Count);
-  int Handle = -1;
+  __fastcall THandleStream(int AHandle) : FHandle(AHandle) {}
+  virtual int __fastcall Read(void * Buffer, int Count);
+  virtual int __fastcall Write(const void * Buffer, int Count);
+  virtual __int64 __fastcall Seek(__int64 Offset, Word Origin);
+  __declspec(property(get=GetHandle)) int Handle;
+  int __fastcall GetHandle() { return FHandle; }
+protected:
+  int FHandle = -1;
 };
 
 class TFileStream : public THandleStream
 {
 public:
   __fastcall TFileStream(const UnicodeString & FileName, Word Mode);
+  virtual __fastcall ~TFileStream();
 };
 
 class TMemoryStream : public TStream
 {
 public:
-  virtual __int64 __fastcall Read(void * Buffer, __int64 Count);
-  virtual __int64 __fastcall Write(const void * Buffer, __int64 Count);
+  __fastcall TMemoryStream() = default;
+  virtual __fastcall ~TMemoryStream();
+  virtual int __fastcall Read(void * Buffer, int Count);
+  virtual int __fastcall Write(const void * Buffer, int Count);
+  virtual __int64 __fastcall Seek(__int64 Offset, Word Origin);
+  virtual __int64 __fastcall GetSize();
+  virtual void __fastcall SetSize(__int64 NewSize);
   void * __fastcall GetMemory();
   __declspec(property(get=GetMemory)) void * Memory;  // Delphi property, used as ->Memory
   void __fastcall Clear();
-  void __fastcall SetSize(__int64 NewSize);
+protected:
+  unsigned char * FData = nullptr;
+  __int64 FSize = 0;
+  __int64 FCapacity = 0;
+  __int64 FPosition = 0;
+  friend class TStream;
 };
 
 class TStringStream : public TMemoryStream
@@ -124,6 +164,13 @@ public:
   __fastcall TStringStream(const UnicodeString & AString);
   UnicodeString __fastcall DataString();
 };
+
+// Stream exceptions (System.Classes).
+class EStreamError : public Exception { public: using Exception::Exception; };
+class EReadError  : public EStreamError { public: using EStreamError::EStreamError; };
+class EWriteError : public EStreamError { public: using EStreamError::EStreamError; };
+class EFCreateError : public EStreamError { public: using EStreamError::EStreamError; };
+class EFOpenError : public EStreamError { public: using EStreamError::EStreamError; };
 
 // The engine qualifies these as Classes::TStrings or System::TObject (their Embarcadero
 // units). Expose both spellings.

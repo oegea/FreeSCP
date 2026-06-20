@@ -22,6 +22,7 @@ class UnicodeString
 public:
   UnicodeString() = default;
   UnicodeString(const char16_t * s) : FData(s ? s : u"") {}
+  UnicodeString(const char16_t * s, int len) : FData(s, s + len) {}
   UnicodeString(const std::u16string & s) : FData(s) {}
   UnicodeString(char16_t c, int count) : FData(static_cast<size_t>(count), c) {}
 

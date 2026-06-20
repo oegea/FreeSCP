@@ -39,10 +39,24 @@ target_include_directories(winscpcore_flags INTERFACE
 target_compile_options(winscpcore_flags INTERFACE -fms-extensions -Wno-unknown-pragmas)
 
 # --- step 2: ported engine objects ---
-set(CORE_PORTED_SOURCES
-  ${CORE_DIR}/Global.cpp
+# Each ported .cpp is run through genprops into GEN_DIR and compiled FROM there, so its quoted
+# #includes ("Foo.h") resolve to the __property-rewritten shadow header in the same dir
+# (a .cpp in source/core would otherwise pick up its raw sibling header). Grows leaf-first.
+set(CORE_PORTED_NAMES
+  Global.cpp
+  FileBuffer.cpp
 )
-add_library(winscpcore STATIC ${CORE_PORTED_SOURCES})
+set(CORE_GEN_SOURCES "")
+foreach(name ${CORE_PORTED_NAMES})
+  add_custom_command(
+    OUTPUT ${GEN_DIR}/${name}
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/../tools/genprops.py ${CORE_DIR}/${name} ${GEN_DIR}/${name}
+    DEPENDS ${CORE_DIR}/${name} ${CMAKE_CURRENT_SOURCE_DIR}/../tools/genprops.py
+    COMMENT "genprops ${name}")
+  list(APPEND CORE_GEN_SOURCES ${GEN_DIR}/${name})
+endforeach()
+
+add_library(winscpcore STATIC ${CORE_GEN_SOURCES})
 add_dependencies(winscpcore winscpcore_genheaders)
 target_link_libraries(winscpcore PUBLIC winscpcore_flags)
 
