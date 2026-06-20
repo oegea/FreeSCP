@@ -101,6 +101,7 @@ bool __fastcall DirectoryExists(const UnicodeString & Dir);
 bool __fastcall FileExists(const UnicodeString & FileName);
 bool __fastcall DeleteFile(const UnicodeString & FileName);
 bool __fastcall RenameFile(const UnicodeString & OldName, const UnicodeString & NewName);
+namespace Sysutils { using ::RenameFile; }   // engine also calls Sysutils::RenameFile
 bool __fastcall RemoveDir(const UnicodeString & Dir);
 int  __fastcall GetFileAttributes(const wchar_t * FileName);
 UnicodeString __fastcall ExpandEnvironmentStrings(const UnicodeString & S);

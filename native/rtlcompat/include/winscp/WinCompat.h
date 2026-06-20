@@ -82,6 +82,10 @@ const int faAnyFile   = 0x000001FF;
 #define GENERIC_READ  0x80000000
 #define GENERIC_WRITE 0x40000000
 #define CREATE_NEW 1
+#define FILE_SHARE_READ  0x00000001
+#define FILE_SHARE_WRITE 0x00000002
+#define FILE_SHARE_DELETE 0x00000004
+#define FILE_FLAG_BACKUP_SEMANTICS 0x02000000
 const Word fmShareDenyWrite = 0x0020;
 
 //--- shell file op (SHFileOperation) ---

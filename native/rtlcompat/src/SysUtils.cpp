@@ -2,11 +2,18 @@
 // SysUtils.cpp — System.Sysutils bodies (subset). Grows as engine .cpp files need it.
 //---------------------------------------------------------------------------
 #include "SysUtils.hpp"
+#include "Classes.hpp"   // TSeekOrigin (soBeginning/soCurrent/soEnd)
 #include <cerrno>
 #include <cstring>
 #include <unistd.h>
 
 const UnicodeString EmptyStr;
+
+__int64 __fastcall FileSeek(int Handle, __int64 Offset, int Origin)
+{
+  int whence = (Origin == soCurrent) ? SEEK_CUR : (Origin == soEnd) ? SEEK_END : SEEK_SET;
+  return static_cast<__int64>(::lseek(Handle, static_cast<off_t>(Offset), whence));
+}
 
 void __fastcall RaiseLastOSError() { RaiseLastOSError(errno); }
 

@@ -246,5 +246,7 @@ int __fastcall FileRead(int Handle, void * Buffer, int Count);
 int __fastcall FileWrite(int Handle, const void * Buffer, int Count);
 int __fastcall FileRead(int Handle, System::DynamicArray<System::Byte> Buffer, int Offset, int Count);
 int __fastcall FileWrite(int Handle, const System::DynamicArray<System::Byte> Buffer, int Offset, int Count);
+// lseek over an OS fd; Origin is a TSeekOrigin (soBeginning/soCurrent/soEnd). -1 on error.
+__int64 __fastcall FileSeek(int Handle, __int64 Offset, int Origin);
 
 #endif

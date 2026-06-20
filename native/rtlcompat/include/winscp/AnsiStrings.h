@@ -18,6 +18,9 @@ public:
   AnsiStringBase(const char * s) : FData(s ? s : "") {}
   AnsiStringBase(const char * s, int len) : FData(s, static_cast<size_t>(len)) {}
   AnsiStringBase(const std::string & s) : FData(s) {}
+  // C++Builder's byte-string family narrows wide literals/buffers (each wchar -> one byte),
+  // e.g. RawByteString r = L"check-file-name"; matches the implicit ANSI conversion.
+  AnsiStringBase(const wchar_t * s) { if (s) while (*s) FData.push_back(static_cast<char>(*s++)); }
 
   int Length() const { return static_cast<int>(FData.size()); }
   bool IsEmpty() const { return FData.empty(); }
