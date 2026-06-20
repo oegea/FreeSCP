@@ -92,6 +92,7 @@ public:
   virtual int __fastcall AddObject(const UnicodeString & S, TObject * AObject) = 0;
   void __fastcall AddStrings(TStrings * Strings);
   virtual void __fastcall Insert(int Index, const UnicodeString & S) = 0;
+  virtual void __fastcall InsertObject(int Index, const UnicodeString & S, TObject * AObject) { Insert(Index, S); PutObject(Index, AObject); }
   virtual void __fastcall Delete(int Index) = 0;
   virtual void __fastcall Clear() = 0;
   virtual int __fastcall IndexOf(const UnicodeString & S);
@@ -239,7 +240,21 @@ public:
 class EStreamError : public Exception { public: using Exception::Exception; };
 class EListError : public Exception { public: using Exception::Exception; };
 class EStringListError : public Exception { public: using Exception::Exception; };
+class EIntError : public Exception { public: using Exception::Exception; };
+class EMathError : public Exception { public: using Exception::Exception; };
+class EVariantError : public Exception { public: using Exception::Exception; };
+class EDivByZero : public EIntError { public: using EIntError::EIntError; };
+class ERangeError : public EIntError { public: using EIntError::EIntError; };
+class EInvalidOperation : public Exception { public: using Exception::Exception; };
+class EFilerError : public Exception { public: using Exception::Exception; };
+class EExternalException : public Exception { public: using Exception::Exception; };
+class ENotImplemented : public Exception { public: using Exception::Exception; };
 class EArgumentException : public Exception { public: using Exception::Exception; };
+class EArgumentOutOfRangeException : public Exception { public: using Exception::Exception; };
+class EAssertionFailed : public Exception { public: using Exception::Exception; };
+class EAbstractError : public Exception { public: using Exception::Exception; };
+class EInvalidCast : public Exception { public: using Exception::Exception; };
+class EInvalidArgument : public Exception { public: using Exception::Exception; };
 class EReadError  : public EStreamError { public: using EStreamError::EStreamError; };
 class EWriteError : public EStreamError { public: using EStreamError::EStreamError; };
 class EFCreateError : public EStreamError { public: using EStreamError::EStreamError; };

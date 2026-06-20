@@ -384,3 +384,16 @@ void  __fastcall Randomize() {}
 int   __fastcall Random(int Range) { return Range > 0 ? 0 : 0; }
 UnicodeString __fastcall StripHotkey(const UnicodeString & S)
 { UnicodeString r; for (int i = 1; i <= S.Length(); ++i) if (S[i] != L'&') r += UnicodeString(S[i], 1); return r; }
+
+#include <chrono>
+DWORD __fastcall GetTickCount()
+{ using namespace std::chrono; static auto t0 = steady_clock::now();
+  return (DWORD)duration_cast<milliseconds>(steady_clock::now() - t0).count(); }
+int   __fastcall CompareValue(int A, int B) { return (A < B) ? -1 : (A > B ? 1 : 0); }
+__int64 __fastcall CompareValue(__int64 A, __int64 B) { return (A < B) ? -1 : (A > B ? 1 : 0); }
+double __fastcall CompareValue(double A, double B) { return (A < B) ? -1 : (A > B ? 1 : 0); }
+int   random(int Range) { return Range > 0 ? 0 : 0; }
+DWORD __fastcall SHGetFileInfo(const wchar_t *, DWORD, TSHFileInfoW *, UINT, UINT) { return 0; }
+
+void  __fastcall Sleep(DWORD ms) { struct timespec ts{ms/1000, (long)(ms%1000)*1000000L}; nanosleep(&ts, nullptr); }
+DWORD __fastcall SleepEx(DWORD ms, BOOL) { Sleep(ms); return 0; }

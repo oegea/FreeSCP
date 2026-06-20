@@ -36,6 +36,8 @@ public:
   void Delete(int index, int count)
   { if (index >= 1 && index <= Length() && count > 0) FData.erase(static_cast<size_t>(index - 1), static_cast<size_t>(count)); }
   char * Unique() { return &FData[0]; }
+  AnsiStringBase SubString(int start, int count) const { if (start<1){count+=start-1;start=1;} if (count<=0||start>Length()) return AnsiStringBase(); return AnsiStringBase(FData.substr(start-1,count)); }
+  AnsiStringBase SubString(int start) const { return SubString(start, Length()-start+1); }
   AnsiStringBase & operator=(const char * s) { FData = s ? s : ""; return *this; }
   AnsiStringBase & operator=(const wchar_t * s) { FData.clear(); if (s) while (*s) FData.push_back((char)(*s++)); return *this; }
   AnsiStringBase & operator+=(char c) { FData.push_back(c); return *this; }

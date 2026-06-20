@@ -102,6 +102,15 @@ const Word fmShareDenyWrite = 0x0020;
 
 //--- code page ---
 #define CP_ACP 0
+#ifndef TEXT
+#define TEXT(x) L ## x
+#endif
+#define SHGFI_SYSICONINDEX 0x4000
+#define SHGFI_USEFILEATTRIBUTES 0x10
+#define SHGFI_SMALLICON 0x1
+#define SHGFI_ICON 0x100
+#define SHGFI_TYPENAME 0x400
+#define SHGFI_DISPLAYNAME 0x200
 
 //--- time zone ids ---
 #define TIME_ZONE_ID_UNKNOWN  0
@@ -140,6 +149,10 @@ struct TIME_ZONE_INFORMATION
   wchar_t DaylightName[32] = {0}; SYSTEMTIME DaylightDate{}; LONG DaylightBias = 0;
 };
 typedef TIME_ZONE_INFORMATION * LPTIME_ZONE_INFORMATION;
+struct CERT_CONTEXT { const unsigned char * pbCertEncoded = nullptr; DWORD cbCertEncoded = 0; void * pCertInfo = nullptr; };
+typedef CERT_CONTEXT * PCCERT_CONTEXT;
+struct TSHFileInfoW { HANDLE hIcon = nullptr; int iIcon = 0; DWORD dwAttributes = 0; wchar_t szDisplayName[MAX_PATH] = {0}; wchar_t szTypeName[80] = {0}; };
+typedef TSHFileInfoW SHFILEINFOW; typedef TSHFileInfoW SHFILEINFO;
 
 //--- structured exception handling: neutralized on clang (no Win SEH) ---
 // __try { ... } __except(filter) { ... }  ->  a plain block; the handler is dropped.

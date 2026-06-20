@@ -54,6 +54,10 @@ set(CORE_PORTED_NAMES
   Option.cpp
   Usage.cpp
   FileMasks.cpp
+  Bookmarks.cpp
+  FileInfo.cpp
+  CopyParam.cpp
+  FileOperationProgress.cpp
 )
 set(CORE_GEN_SOURCES "")
 foreach(name ${CORE_PORTED_NAMES})

@@ -16,6 +16,7 @@
 
 #include <string>
 #include <cstddef>
+#include <cstdlib>
 #include "winscp/AnsiStrings.h"
 
 class UnicodeString
@@ -81,6 +82,9 @@ public:
   wchar_t * Unique() { return reinterpret_cast<wchar_t *>(&FData[0]); }
   wchar_t * c_str_mutable() { return reinterpret_cast<wchar_t *>(&FData[0]); }
   static UnicodeString StringOfChar(wchar_t Ch, int Count) { return UnicodeString(static_cast<char16_t>(Ch), Count); }
+  int ToInt() const { std::string n; for (char16_t c : FData) n.push_back((char)c); return (int)std::strtol(n.c_str(),nullptr,10); }
+  int ToIntDef(int d) const { if (FData.empty()) return d; std::string n; for (char16_t c : FData) n.push_back((char)c); char*e=nullptr; long v=std::strtol(n.c_str(),&e,10); return *e?d:(int)v; }
+  double ToDouble() const { std::string n; for (char16_t c : FData) n.push_back((char)c); return std::strtod(n.c_str(),nullptr); }
 
   // In-place edits (Delphi 1-based).
   void Delete(int index, int count)
