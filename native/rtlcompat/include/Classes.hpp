@@ -12,6 +12,7 @@
 #include "winscp/DelphiSet.h"
 #include "System.Types.hpp"
 #include "SysUtils.hpp"   // Exception (base of stream errors)
+#include <vector>
 
 // Delphi method pointer (code+data); TMulticastEvent in Common.h reinterprets through it.
 struct TMethod
@@ -48,40 +49,100 @@ public:
 
 enum TListNotification { lnAdded, lnExtracted, lnDeleted };
 
+// TList — list of untyped pointers (System.Classes). Delphi 0-based indexing.
 class TList : public TObject
 {
 public:
-  int __fastcall GetCount();
-  void * __fastcall Get(int Index);
-  void __fastcall Add(void * Item);
-  void __fastcall Clear();
+  int __fastcall GetCount() { return static_cast<int>(FItems.size()); }
+  void __fastcall SetCount(int NewCount) { FItems.resize(static_cast<size_t>(NewCount)); }
+  __declspec(property(get=GetCount, put=SetCount)) int Count;
+
+  void * __fastcall Get(int Index) { return FItems[static_cast<size_t>(Index)]; }
+  void __fastcall Put(int Index, void * Item) { FItems[static_cast<size_t>(Index)] = Item; }
+  __declspec(property(get=Get, put=Put)) void * Items[];
+
+  virtual int __fastcall Add(void * Item);
+  void __fastcall Insert(int Index, void * Item);
+  virtual void __fastcall Delete(int Index);
+  int __fastcall IndexOf(void * Item);
+  int __fastcall Remove(void * Item);
+  virtual void __fastcall Clear();
+  void __fastcall Move(int CurIndex, int NewIndex);
+  void __fastcall Sort(int (* Compare)(void *, void *));
+
 protected:
-  virtual void __fastcall Notify(void * Ptr, TListNotification Action);
+  virtual void __fastcall Notify(void * Ptr, TListNotification Action) { (void)Ptr; (void)Action; }
+  std::vector<void *> FItems;
 };
 
 class TStream;
 
+// TStrings — abstract string list with Objects/name=value support (System.Classes).
 class TStrings : public TPersistent
 {
 public:
+  virtual ~TStrings() {}
   virtual int __fastcall GetCount() = 0;
+  __declspec(property(get=GetCount)) int Count;
+
   virtual UnicodeString __fastcall Get(int Index) = 0;
-  virtual void __fastcall Clear() = 0;
+  virtual void __fastcall Put(int Index, const UnicodeString & S) = 0;
+  __declspec(property(get=Get, put=Put)) UnicodeString Strings[];
+
+  virtual TObject * __fastcall GetObject(int Index) = 0;
+  virtual void __fastcall PutObject(int Index, TObject * AObject) = 0;
+  __declspec(property(get=GetObject, put=PutObject)) TObject * Objects[];
+
   virtual int __fastcall Add(const UnicodeString & S);
+  virtual int __fastcall AddObject(const UnicodeString & S, TObject * AObject) = 0;
   void __fastcall AddStrings(TStrings * Strings);
+  virtual void __fastcall Insert(int Index, const UnicodeString & S) = 0;
+  virtual void __fastcall Delete(int Index) = 0;
+  virtual void __fastcall Clear() = 0;
+  virtual int __fastcall IndexOf(const UnicodeString & S);
+  int __fastcall IndexOfName(const UnicodeString & Name);
+
   UnicodeString __fastcall GetText();
   void __fastcall SetText(const UnicodeString & Text);
+  __declspec(property(get=GetText, put=SetText)) UnicodeString Text;
+
+  UnicodeString __fastcall GetCommaText();
+  void __fastcall SetCommaText(const UnicodeString & Value);
+  __declspec(property(get=GetCommaText, put=SetCommaText)) UnicodeString CommaText;
+
+  UnicodeString __fastcall GetName(int Index);
+  UnicodeString __fastcall GetValue(const UnicodeString & Name);
+  void __fastcall SetValue(const UnicodeString & Name, const UnicodeString & Value);
+  __declspec(property(get=GetName)) UnicodeString Names[];
+  __declspec(property(get=GetValue, put=SetValue)) UnicodeString Values[];
+
+  wchar_t Delimiter = L',';
+  wchar_t QuoteChar = L'"';
 };
 
+// TStringList — concrete TStrings backed by a vector.
 class TStringList : public TStrings
 {
 public:
   virtual int __fastcall GetCount();
   virtual UnicodeString __fastcall Get(int Index);
+  virtual void __fastcall Put(int Index, const UnicodeString & S);
+  virtual TObject * __fastcall GetObject(int Index);
+  virtual void __fastcall PutObject(int Index, TObject * AObject);
+  virtual int __fastcall AddObject(const UnicodeString & S, TObject * AObject);
+  virtual void __fastcall Insert(int Index, const UnicodeString & S);
+  virtual void __fastcall Delete(int Index);
   virtual void __fastcall Clear();
+  virtual int __fastcall IndexOf(const UnicodeString & S);
+  void __fastcall Sort();
+
   bool Sorted = false;
   bool CaseSensitive = false;
   System::Types::TDuplicates Duplicates = System::Types::dupIgnore;
+
+private:
+  struct TItem { UnicodeString FString; TObject * FObject; };
+  std::vector<TItem> FList;
 };
 
 // Delphi TSeekOrigin + legacy integer constants (engine uses soFromBeginning/soCurrent/soEnd).

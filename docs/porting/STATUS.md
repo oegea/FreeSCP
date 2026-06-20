@@ -66,8 +66,7 @@ ctor) — implement in rtlcompat on demand, leaf-first.
   SysStrFuncs.cpp (IntToStr/StrToInt/Trim/UpperCase/SameText/...).
 - ✅ UnicodeString fleshed out: Trim/Upper/LowerCase, Delete/Insert, LastDelimiter,
   IsDelimiter, Compare/CompareIC, SetLength, numeric+ANSI ctors. AnsiString Pos/Delete.
-- ✅ .cpp body build pipeline (shadow .cpp in geninclude). `Global.cpp` + `FileBuffer.cpp`
-  compile and link into libwinscpcore.a. 3/34 .cpp currently compile standalone.
+- ✅ .cpp body build pipeline (shadow .cpp in geninclude). `Global.cpp`, `FileBuffer.cpp`, `NamedObjs.cpp` compile into libwinscpcore.a.
 - Added include for source/resource (TextsCore.h); StrUtils.hpp stubs.
 
 ### Immediate next (containers)

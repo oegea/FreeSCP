@@ -47,4 +47,8 @@ typedef wchar_t        Char;
 typedef std::intptr_t  NativeInt;
 typedef std::uintptr_t NativeUInt;
 
+// Delphi boolean constants (capitalized).
+static const bool True = true;
+static const bool False = false;
+
 #endif

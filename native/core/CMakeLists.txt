@@ -46,6 +46,7 @@ target_compile_options(winscpcore_flags INTERFACE -fms-extensions -Wno-unknown-p
 set(CORE_PORTED_NAMES
   Global.cpp
   FileBuffer.cpp
+  NamedObjs.cpp
 )
 set(CORE_GEN_SOURCES "")
 foreach(name ${CORE_PORTED_NAMES})
