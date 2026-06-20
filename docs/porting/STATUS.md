@@ -2,9 +2,10 @@
 
 Update this whenever a target starts/stops building. Verify by actually building.
 
-_Last updated: 2026-06-20 — Phase 0 complete._
+_Last updated: 2026-06-20 — Phase 1 header surface done; Phase 1.5 (.cpp bodies) underway._
 
-## Current phase: 0 ✅ complete → starting 1 (RTL compatibility layer)
+## Current phase: 1.5 — compiling engine .cpp bodies (RTL bodies on demand)
+Phase 0 ✅ (foundation). Phase 1 ✅ (35/36 headers parse). Now: compile .cpp into libwinscpcore.
 
 ## Buildable native targets
 | Target | Status | Notes |
@@ -69,12 +70,14 @@ ctor) — implement in rtlcompat on demand, leaf-first.
 - ✅ .cpp body build pipeline (shadow .cpp in geninclude). `Global.cpp`, `FileBuffer.cpp`, `NamedObjs.cpp` compile into libwinscpcore.a.
 - Added include for source/resource (TextsCore.h); StrUtils.hpp stubs.
 
-### Immediate next (containers)
-.cpp bodies need the full Delphi container API — flesh out in rtlcompat:
-`TList`/`TObjectList` (Count, Items[], Add→int, Insert, Delete, IndexOf, Sort, operator[]),
-`TStringList` (Strings[], Values, Add, Sort, IndexOf, CommaText, LoadFromFile),
-plus `True`/`False` constants. Then `Common.cpp` (utility hub) and leaf data models
-(RemoteFiles/FileMasks/CopyParam). This is the bulk of remaining Phase 1.
+- ✅ Delphi containers implemented (TList/TObjectList/TStrings/TStringList + True/False).
+  NamedObjs.cpp compiles → 3 engine bodies in libwinscpcore.a (Global, FileBuffer, NamedObjs).
+
+### Immediate next
+`Common.cpp` (utility hub — needs Format/FmtLoadStr, date/time, path helpers) then leaf data
+models (RemoteFiles/FileMasks/CopyParam/Option). Each adds a few RTL bodies; the helper
+`for f in /tmp/gi/*.cpp; do clang++ -fsyntax-only ...` survey tracks how many of the 34 .cpp
+compile. Goal: all .cpp compile, then resolve link (Phase 2 platform adapters fill externs).
 
 ## Next up (Phase 1 → 2/3): compile .cpp bodies
 1. Compile engine **.cpp bodies** leaf-first (FileMasks/CopyParam/RemoteFiles), implementing
