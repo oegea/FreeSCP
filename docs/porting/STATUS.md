@@ -38,26 +38,24 @@ cmake --build build && ctest --test-dir build
   headers into `build/geninclude/core` (searched before source/core). Field targets (`Fxxx`)
   get generated accessors; methods used directly; indexed + RO/WO handled.
 - ✅ `Common.h` (gateway header) parses; `Global.cpp` compiles into libwinscpcore.a.
-- ✅ Header-parse regression guard (`winscpcore_parsecheck`): **27/36** core headers parse
-  clean standalone — Global, Common, NamedObjs, Http, Option, Security, KeyGen, Exceptions,
-  FileInfo, RemoteFiles, Cryptography, FileBuffer, FileMasks, HierarchicalStorage, Usage, Configuration.
-- RTL added since: TVarRec/PResStringRec + std exception classes; numeric UnicodeString
-  ctors; streams (TMemoryStream/TFileStream...); DelphiSet `Set<>`; `System::DynamicArray`
-  (TBytes); stubs Masks.hpp/Registry.hpp/SysInit.hpp/TCustomIniFile; Global.h clang macros
-  mirrored in rtldefs.
-- Remaining 21 headers (need more types): Bookmarks, Configuration, CopyParam, CoreMain,
-  FileOperationProgress, FileSystems, FtpFileSystem, Interface, NeonIntf*, PuttyIntf*,
-  PuttyTools, Queue, S3FileSystem, ScpFileSystem, Script, SecureShell, SessionData,
-  SessionInfo, SftpFileSystem, Terminal, WebDAVFileSystem.
-  (* NeonIntf/PuttyIntf need real vendored lib headers — Phase 3/4.)
+- ✅ Header-parse regression guard (`winscpcore_parsecheck`): **35/36** core headers parse
+  in the real CMake build. Only `PuttyIntf.h` is excluded — it needs the PuTTY backend
+  (putty.h assumes the Windows platform layer), which is Phase 3.
+- winscpcore_flags adds vendored include dirs (neon/src, expat/lib, libs3/inc) so WebDAV/S3
+  headers resolve.
+- RTL surface now covers: full string family + numeric/ANSI ctors; TVarRec/PResStringRec +
+  std exceptions + Variant; streams; DelphiSet `Set<>`; `System::DynamicArray` (TBytes);
+  TNotifyEvent/TThreadFunc/TShiftState; System:: & Classes:: aliases; Win typedefs
+  (UINT_PTR/WPARAM/LPARAM/INFINITE/VS_FIXEDFILEINFO/TShortCut); stubs Masks/Registry/
+  SysInit/Xml.XMLIntf/TCustomIniFile.
 
-## Next up (Phase 1, the grind)
-1. Grow rtlcompat to make the remaining 29 headers parse (Exceptions.h next — foundational:
-   needs TVarRec/ARRAYOFCONST, PResStringRec, more Exception ctors). Add each to
-   CORE_PARSE_HEADERS as it passes.
-2. Then compile leaf .cpp bodies (FileMasks/CopyParam/RemoteFiles) — implement RTL method
-   bodies (UnicodeString Format/Trim/IntToStr, TStringList, TObject) on demand.
-3. Phase 2 platform adapters once config/threading/socket headers are reached.
+## Next up (Phase 1 → 2/3): compile .cpp bodies
+1. Compile engine **.cpp bodies** leaf-first (FileMasks/CopyParam/RemoteFiles), implementing
+   RTL method bodies on demand: UnicodeString Format/Trim/IntToStr/case ops, TStringList,
+   TStream IO, TDateTime math.
+2. Phase 2 platform adapters as config/threading/socket bodies demand them (registry→file
+   storage, Winsock→BSD sockets, HANDLE→std::thread, FILETIME→chrono, FindFirst→std::fs).
+3. Phase 3: PuTTY unix backend → unblocks PuttyIntf + SecureShell/Sftp/Scp runtime.
 
 ## Legend
 ✅ done · 🟡 in progress · ⬜ todo · 🔴 blocked

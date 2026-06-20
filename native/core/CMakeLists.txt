@@ -28,9 +28,14 @@ endforeach()
 add_custom_target(winscpcore_genheaders DEPENDS ${GEN_HEADERS})
 
 # Shared flags for anything compiling engine sources/headers.
+set(LIBS_DIR ${CMAKE_SOURCE_DIR}/../libs)
 add_library(winscpcore_flags INTERFACE)
 target_link_libraries(winscpcore_flags INTERFACE rtlcompat)
-target_include_directories(winscpcore_flags INTERFACE ${GEN_DIR} ${CORE_DIR})
+target_include_directories(winscpcore_flags INTERFACE
+  ${GEN_DIR} ${CORE_DIR}
+  ${LIBS_DIR}/neon/src      # WebDAV (NeonIntf, WebDAVFileSystem)
+  ${LIBS_DIR}/expat/lib     # XML (pulled in via neon)
+  ${LIBS_DIR}/libs3/inc)    # S3
 target_compile_options(winscpcore_flags INTERFACE -fms-extensions -Wno-unknown-pragmas)
 
 # --- step 2: ported engine objects ---
@@ -43,14 +48,15 @@ target_link_libraries(winscpcore PUBLIC winscpcore_flags)
 
 # --- header-parse regression guard: each listed header must compile standalone ---
 # (proves the RTL surface + __property codegen keep covering them as rtlcompat grows)
-set(CORE_PARSE_HEADERS
-  Global.h Common.h NamedObjs.h Http.h Option.h Security.h KeyGen.h
-  Exceptions.h FileInfo.h RemoteFiles.h
-  Cryptography.h FileBuffer.h FileMasks.h HierarchicalStorage.h Usage.h
-  Configuration.h CopyParam.h Bookmarks.h FileOperationProgress.h SessionData.h
-  PuttyTools.h CoreMain.h FileSystems.h Interface.h SessionInfo.h S3FileSystem.h
-  ScpFileSystem.h
-)
+# Guard = every core header EXCEPT those that still need the putty backend (Phase 3:
+# putty.h assumes the Windows platform layer). 35/36 currently.
+set(CORE_PARSE_HEADERS "")
+foreach(h ${CORE_HEADERS})
+  get_filename_component(name ${h} NAME)
+  if(NOT name STREQUAL "PuttyIntf.h")
+    list(APPEND CORE_PARSE_HEADERS ${name})
+  endif()
+endforeach()
 # Headers are written assuming Common.h is already included (as in every engine .cpp), so the
 # guard mirrors that — include Common.h first (except for Common.h itself).
 set(PARSE_STUBS "")

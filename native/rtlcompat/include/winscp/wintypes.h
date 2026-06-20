@@ -21,6 +21,17 @@ typedef unsigned char   BYTE;
 typedef unsigned short  Word;
 typedef unsigned long   LCID;
 typedef DWORD           REGSAM;
+typedef std::uintptr_t  UINT_PTR;
+typedef std::intptr_t   INT_PTR;
+typedef std::intptr_t   LONG_PTR;
+typedef std::uintptr_t  ULONG_PTR;
+typedef UINT_PTR        WPARAM;
+typedef LONG_PTR        LPARAM;
+typedef LONG_PTR        LRESULT;
+
+#ifndef INFINITE
+#define INFINITE 0xFFFFFFFF
+#endif
 
 struct FILETIME   { DWORD dwLowDateTime; DWORD dwHighDateTime; };
 struct SYSTEMTIME { Word wYear, wMonth, wDayOfWeek, wDay, wHour, wMinute, wSecond, wMilliseconds; };

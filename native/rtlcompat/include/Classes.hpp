@@ -125,7 +125,8 @@ public:
   UnicodeString __fastcall DataString();
 };
 
-// The engine often qualifies these as Classes::TStrings etc. (their Embarcadero unit).
+// The engine qualifies these as Classes::TStrings or System::TObject (their Embarcadero
+// units). Expose both spellings.
 namespace Classes {
   using ::TObject;
   using ::TPersistent;
@@ -135,6 +136,16 @@ namespace Classes {
   using ::TStream;
   using ::TMethod;
   using ::TListNotification;
+}
+namespace System {
+  using ::TObject;
+  using ::TPersistent;
+  using ::TList;
+  using ::TStrings;
+  using ::TStringList;
+  using ::TStream;
+  using ::TMethod;
+  using ::TNotifyEvent;
 }
 
 #endif

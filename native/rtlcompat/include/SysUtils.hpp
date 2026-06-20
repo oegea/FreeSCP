@@ -86,6 +86,16 @@ struct TLibModule
   TLibModule * Next = nullptr;
 };
 
+// System::Variant (OLE variant). Minimal stub; real conversions added when a .cpp needs them.
+class Variant
+{
+public:
+  Variant() = default;
+  Variant(int) {}
+  Variant(const UnicodeString &) {}
+  UnicodeString __fastcall ToString() const { return UnicodeString(); }
+};
+
 extern const UnicodeString EmptyStr;
 
 #endif
