@@ -6,36 +6,44 @@ Read it fully, then read **`docs/porting/LEARNINGS.md`** (porting-class bugs & d
 read BEFORE debugging anything, it will save you hours), `docs/porting/RESUME.md`,
 `docs/porting/STATUS.md`, `docs/porting/UPSTREAM-PATCHES.md`, and `CLAUDE.md`.
 
-## TL;DR — where we are
+## TL;DR — where we are (2026-06-21)
 
-**The ported engine connects to a real SFTP server, authenticates, and lists directories — from
-both a headless harness AND the Qt GUI.** This is a huge milestone: the entire SFTP engine
-(~76k LOC C++ welded to the Embarcadero C++Builder RTL) compiles, links, and runs natively on
-macOS arm64 via an RTL-compat layer + platform adapters + PuTTY unix backend. No Wine.
+**FOUR protocols work end-to-end, natively, via a WinSCP-faithful Qt GUI: SFTP, SCP, WebDAV, S3.**
+The entire engine (~76k LOC welded to the Embarcadero RTL) compiles/links/runs on macOS arm64 via
+an RTL-compat layer + platform adapters; PuTTY (SSH), neon+expat (WebDAV) and libs3 (S3) all build
+natively. No Wine. Per protocol: connect / list / navigate / upload / download / mkdir / rename /
+delete / chmod (S3 currently connect+list+transfer; ops vary by protocol). The GUI is a WinSCP
+Commander: Login dialog + Site Manager, dual panes (Back/Forward/Up/Home address bars,
+Name/Size/Changed/Rights/Owner columns), bottom F-key bar (F2/F4/F5/F6/F7/F8/F9/F10), Properties
+(rwx) dialog, context menus, wired menu bar, transfer progress, session log, sync browsing.
 
 Run it right now:
 ```sh
 cd native && cmake -B build -DCMAKE_PREFIX_PATH=$(brew --prefix qt)
 cmake --build build && ctest --test-dir build          # all green
-# Test SFTP server (Docker): host localhost port 2222 user winscp pass winscp123
-docker start winscp-test-sshd    # already created; or see "Test server" below to recreate
-# Headless end-to-end SFTP (this WORKS — connects, auths, lists /config):
-./native/build/harness/winscp-harness 127.0.0.1 2222 winscp winscp123
-# GUI (Connect toolbar button -> right panel becomes remote SFTP browser):
-open native/build/ui-qt/winscp-qt.app
+open build/ui-qt/winscp-qt.app                          # Login dialog -> browse/transfer
+```
+Test servers (Docker): SFTP/SCP `localhost:2222` (winscp/winscp123), WebDAV `localhost:8086`
+(bytemark/webdav), S3 `localhost:9100` (MinIO minioadmin/minioadmin123). The Login dialog's
+protocol picker defaults the port to the matching test server.
+
+Headless harness (engine without GUI) — env toggles: `WINSCP_SCP` / `WINSCP_DAV` / `WINSCP_S3`
+select protocol; `WINSCP_XFER` / `WINSCP_OPS` run transfer / file-op self-tests:
+```sh
+./native/build/harness/winscp-harness 127.0.0.1 2222 winscp winscp123          # SFTP
+WINSCP_S3=1 ./native/build/harness/winscp-harness 127.0.0.1 9100 minioadmin minioadmin123
 ```
 
-Expected harness output:
-```
-[harness] CONNECTED.
-[harness] /config : 8 entries
-  hello.txt  28
-  testdir    0
-  ...
-[harness] Done.
-```
+## >>> NEXT TASKS (in priority order) <<<
 
-## >>> THE #1 NEXT TASK: expose SCP as a protocol choice in the GUI; then Phase 4 (FTP/S3/WebDAV) <<<
+1. **S3 depth** — bucket/object nav + upload/download/ops runtime shake-out (connect+list proven).
+2. **WebDAV HTTPS/TLS** — cert path (ftpsImplicit); needs an https test server.
+3. **GUI toward full fidelity** — background transfer **queue pane**, preferences dialog, more of
+   the 48 WinSCP dialogs, drive/bookmark bar.
+4. **FTP backend** (FileZilla — hardest, deferred): un-guard the FTP branch in Terminal.cpp Open().
+5. **Linux** — the platform split is POSIX/`__APPLE__`-clean; should follow with little change.
+
+### (historical) earlier #1 tasks — all DONE
 
 Over SFTP: nav, upload/download (F5), mkdir/rename/delete, properties (chmod, F9) all WORK. SCP
 protocol RUNTIME also works now (connect + list, harness-validated with WINSCP_SCP=1 / fsSCPonly) —
