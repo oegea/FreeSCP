@@ -21,6 +21,9 @@
 #include <atomic>
 #include <mutex>
 #include <cwctype>
+#include <cctype>
+#include <pthread.h>
+#include <unistd.h>
 
 //=== Win32 scalar types ====================================================
 typedef unsigned char       BYTE;
@@ -126,6 +129,22 @@ inline int _istspace(wchar_t c) { return c == L' ' || c == L'\t' || c == L'\r' |
 inline int _ttoi(const wchar_t * s) { int v = 0, sign = 1; if (!s) return 0; while (_istspace(*s)) ++s; if (*s == L'-') { sign = -1; ++s; } else if (*s == L'+') ++s; while (_istdigit(*s)) v = v * 10 + (*s++ - L'0'); return v * sign; }
 inline long long _ttoi64(const wchar_t * s) { long long v = 0, sign = 1; if (!s) return 0; while (_istspace(*s)) ++s; if (*s == L'-') { sign = -1; ++s; } else if (*s == L'+') ++s; while (_istdigit(*s)) v = v * 10 + (*s++ - L'0'); return v * sign; }
 inline int strnicmp(const char * a, const char * b, size_t n) { return strncasecmp(a, b, n); }
+// TCHAR string fns (TCHAR == 2-byte wchar; the wcs* names resolve to WcsCompat shims).
+#define _tcslen   wcslen
+#define _tcscpy   wcscpy
+#define _tcsncpy  wcsncpy
+#define _tcscmp   wcscmp
+#define _tcsncmp  wcsncmp
+#define _tcschr   wcschr
+#define _tcsrchr  wcsrchr
+#define _tcsstr   wcsstr
+#define _tcsdup   wcsdup
+#define _snprintf snprintf
+#define _tcsicmp(a, b)  fz_tcsicmp(a, b)
+inline int fz_tcsicmp(const wchar_t * a, const wchar_t * b)
+{ for (; *a && *b; ++a, ++b) { wchar_t ca = (*a >= L'A' && *a <= L'Z') ? *a + 32 : *a, cb = (*b >= L'A' && *b <= L'Z') ? *b + 32 : *b; if (ca != cb) return ca - cb; } return *a - *b; }
+inline DWORD GetCurrentThreadId() { return (DWORD)(uintptr_t)pthread_self(); }
+inline DWORD GetCurrentProcessId() { return (DWORD)getpid(); }
 #ifndef CP_UTF8
   #define CP_UTF8 65001
   #define CP_ACP  0
@@ -401,5 +420,6 @@ public:
 };
 
 #include "afxconv.h"
+#include "winmsg.h"
 
 #endif // WINSCP_FZ_AFX_H

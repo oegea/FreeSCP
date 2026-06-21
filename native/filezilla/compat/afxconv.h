@@ -8,22 +8,23 @@
 
 #include <string>
 
-inline const wchar_t * fz_a2w(const char * a)
+// Return non-const (MFC's A2T/T2A yield writable LPTSTR/LPSTR; some FileZilla code assigns to char*).
+inline wchar_t * fz_a2w(const char * a)
 {
   static thread_local std::wstring pool[16];
   static thread_local int idx = 0;
   std::wstring & b = pool[idx = (idx + 1) & 15];
   b.clear(); if (a) while (*a) b.push_back((wchar_t)(unsigned char)*a++);
-  return b.c_str();
+  return &b[0];
 }
 
-inline const char * fz_w2a(const wchar_t * w)
+inline char * fz_w2a(const wchar_t * w)
 {
   static thread_local std::string pool[16];
   static thread_local int idx = 0;
   std::string & b = pool[idx = (idx + 1) & 15];
   b.clear(); if (w) while (*w) { b.push_back((char)(*w & 0xFF)); ++w; }
-  return b.c_str();
+  return &b[0];
 }
 
 #define USES_CONVERSION ((void)0)

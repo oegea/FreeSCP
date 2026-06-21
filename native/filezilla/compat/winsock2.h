@@ -33,6 +33,9 @@ typedef int SOCKET;
 
 typedef struct sockaddr      SOCKADDR;
 typedef struct sockaddr *    LPSOCKADDR;
+typedef struct in_addr       IN_ADDR;
+typedef struct in_addr *     LPIN_ADDR;
+typedef struct in6_addr      IN6_ADDR;
 typedef struct sockaddr_in   SOCKADDR_IN;
 typedef struct sockaddr_in6  SOCKADDR_IN6;
 typedef struct sockaddr_storage SOCKADDR_STORAGE;
@@ -61,6 +64,13 @@ typedef struct addrinfo      ADDRINFOT;
 #define WSAEAFNOSUPPORT  EAFNOSUPPORT
 #define WSAEADDRINUSE    EADDRINUSE
 #define WSAETIMEDOUT     ETIMEDOUT
+#define WSAEALREADY      EALREADY
+#define WSAEMFILE        EMFILE
+#define WSAENOBUFS       ENOBUFS
+#define WSAEHOSTUNREACH  EHOSTUNREACH
+#define WSAENETUNREACH   ENETUNREACH
+#define WSANOTINITIALISED (-100001)
+#define WSAHOST_NOT_FOUND (-100002)
 
 #define SD_RECEIVE  SHUT_RD
 #define SD_SEND     SHUT_WR
@@ -69,15 +79,28 @@ typedef struct addrinfo      ADDRINFOT;
 inline int  closesocket(SOCKET s) { return ::close(s); }
 inline int  WSAGetLastError() { return errno; }
 inline void WSASetLastError(int e) { errno = e; }
+#include <sys/ioctl.h>
 inline int  ioctlsocket(SOCKET s, long cmd, unsigned long * argp)
-{ // only FIONBIO (non-blocking) is used
-  int fl = ::fcntl(s, F_GETFL, 0); if (fl < 0) return SOCKET_ERROR;
-  if (argp && *argp) fl |= O_NONBLOCK; else fl &= ~O_NONBLOCK;
-  return ::fcntl(s, F_SETFL, fl) < 0 ? SOCKET_ERROR : 0;
+{
+  if (cmd == (long)FIONBIO)
+  {
+    int fl = ::fcntl(s, F_GETFL, 0); if (fl < 0) return SOCKET_ERROR;
+    if (argp && *argp) fl |= O_NONBLOCK; else fl &= ~O_NONBLOCK;
+    return ::fcntl(s, F_SETFL, fl) < 0 ? SOCKET_ERROR : 0;
+  }
+  return ::ioctl(s, cmd, argp) < 0 ? SOCKET_ERROR : 0;   // FIONREAD etc
 }
-#ifndef FIONBIO
-  #define FIONBIO 0x8004667e
-#endif
+inline int WSACancelAsyncRequest(HANDLE) { return 0; }
+
+// FileZilla passes `int*` for socklen args; POSIX wants socklen_t*. Provide int*-len overloads.
+inline SOCKET accept(SOCKET s, sockaddr * a, int * len)
+{ socklen_t l = len ? (socklen_t)*len : 0; SOCKET r = ::accept(s, a, len ? &l : nullptr); if (len) *len = (int)l; return r; }
+inline int getsockname(SOCKET s, sockaddr * a, int * len)
+{ socklen_t l = len ? (socklen_t)*len : 0; int r = ::getsockname(s, a, len ? &l : nullptr); if (len) *len = (int)l; return r; }
+inline int getpeername(SOCKET s, sockaddr * a, int * len)
+{ socklen_t l = len ? (socklen_t)*len : 0; int r = ::getpeername(s, a, len ? &l : nullptr); if (len) *len = (int)l; return r; }
+inline int getsockopt(SOCKET s, int lvl, int opt, void * val, int * len)
+{ socklen_t l = len ? (socklen_t)*len : 0; int r = ::getsockopt(s, lvl, opt, val, len ? &l : nullptr); if (len) *len = (int)l; return r; }
 
 // WSAStartup/Cleanup are no-ops on POSIX.
 typedef struct { WORD wVersion; WORD wHighVersion; char szDescription[257]; } WSADATA;
