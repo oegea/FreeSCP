@@ -293,3 +293,15 @@ GUI actions work on either panel. Qt GUI: toolbar + shortcuts F7 (new folder), F
 selection), Del (delete, with confirm); each dispatches remote-vs-local on the active panel.
 ctest green; winscp-qt builds + launches. NEXT: ChangeFileProperties (rights/timestamp) + a
 properties dialog; then -fshort-wchar on the putty libs (ABI safety) / SCP runtime.
+
+## Remote file properties (chmod) WORK — TTerminal ChangeFileProperties
+Changing unix permissions over the live SFTP session works (harness-validated: upload a
+winscp-owned file, ChangeFileProperties octal 600, server reflects 600). enginebridge gains
+remoteFileOctal (current octal from the live listing's TRemoteFile->Rights->Octal, for prefill)
+and remoteChmod (builds TRemoteProperties{Valid<<vpRights, Rights.Octal=...}). Qt GUI: F9
+Properties on the active remote panel -> octal input dialog prefilled with current perms.
+Debugging note: an early test "failed" only because the seed files were created via `docker exec`
+(root-owned) and the winscp SFTP user can't chmod root's files — the engine correctly sent
+SETSTAT(flags=0x4, perms=0600) and the server correctly returned permission-denied. Test against
+files the login user owns (e.g. uploaded ones). The wire path (AddProperties/AddCardinal, 4-byte)
+was correct throughout. NEXT: -fshort-wchar on the putty libs (ABI), then SCP runtime.

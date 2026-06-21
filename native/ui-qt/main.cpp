@@ -200,6 +200,7 @@ int main(int argc, char ** argv)
   auto * actMkdir = tb->addAction("F7 New Folder");
   auto * actRename = tb->addAction("F2 Rename");
   auto * actDelete = tb->addAction("Del Delete");
+  auto * actProps = tb->addAction("F9 Properties");
 
   // SFTP connect dialog -> right panel becomes the remote session.
   QObject::connect(actConnect, &QAction::triggered, [&] {
@@ -315,9 +316,29 @@ int main(int argc, char ** argv)
     if ((ok < sel.size()) && !err.empty()) msg += " — " + u8(err);
     window.statusBar()->showMessage(msg);
   };
+  auto doProps = [&] {
+    QStringList sel = active->selectedFiles();
+    if (sel.size() != 1) { window.statusBar()->showMessage("Select exactly one item for properties"); return; }
+    if (!active->isRemote())
+    { window.statusBar()->showMessage("Properties (chmod) currently supported on remote files only"); return; }
+    std::string cur = engine::remoteFileOctal(s8(sel.first()));
+    QString prefill = cur.empty() ? "644" : u8(cur).right(3);
+    bool okIn = false;
+    QString oct = QInputDialog::getText(&window, "Properties — " + sel.first(),
+                                        "Permissions (octal, e.g. 644):",
+                                        QLineEdit::Normal, prefill, &okIn);
+    if (!okIn || oct.isEmpty()) return;
+    std::string err; bool ok = engine::remoteChmod(s8(sel.first()), s8(oct), &err);
+    active->refresh();
+    window.statusBar()->showMessage(ok ? QString("Set %1 on %2").arg(oct).arg(sel.first())
+                                       : QString("chmod failed — %1").arg(u8(err)));
+  };
   QObject::connect(actMkdir, &QAction::triggered, doMkdir);
   QObject::connect(actRename, &QAction::triggered, doRename);
   QObject::connect(actDelete, &QAction::triggered, doDelete);
+  QObject::connect(actProps, &QAction::triggered, doProps);
+  auto * f9 = new QAction(&window); f9->setShortcut(Qt::Key_F9);
+  QObject::connect(f9, &QAction::triggered, doProps); window.addAction(f9);
   auto * f7 = new QAction(&window); f7->setShortcut(Qt::Key_F7);
   QObject::connect(f7, &QAction::triggered, doMkdir); window.addAction(f7);
   auto * f2 = new QAction(&window); f2->setShortcut(Qt::Key_F2);

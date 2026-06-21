@@ -34,14 +34,25 @@ Expected harness output:
 [harness] Done.
 ```
 
-## >>> THE #1 NEXT TASK: file properties (rights/timestamp) + then putty ABI / SCP <<<
+## >>> THE #1 NEXT TASK: -fshort-wchar on the putty libs (ABI), then SCP runtime <<<
 
-Remote nav, upload/download (F5), and mkdir/rename/delete now WORK (see STATUS.md). Remaining
-file op: ChangeFileProperties (TRemoteProperties: rights/owner/group/timestamp) + a Qt properties
-dialog. After that: build -fshort-wchar into the putty libs (ABI safety), then the SCP protocol
-runtime shake-out. Watch the two transfer-era hazards: (a) any TStrings passed to ProcessFiles
-must carry TRemoteFile* as each entry's Object; (b) never call libc wcs* on engine strings —
-route through WcsCompat.h.
+Remote nav, upload/download (F5), mkdir/rename/delete, AND properties (chmod, F9) now WORK
+(see STATUS.md). Next structural item: build -fshort-wchar into puttycore/puttyplatform/
+puttycrypto_vs (currently 4-byte wchar_t vs the engine's 2-byte — SFTP is char-based so it links
++ runs, but any UTF-16-crossing path is unsafe). Then SCP protocol runtime shake-out
+(ScpFileSystem compiles; needs the same runtime debugging SFTP got). Watch the two transfer-era
+hazards: (a) any TStrings passed to ProcessFiles must carry TRemoteFile* as each entry's Object;
+(b) never call libc wcs* on engine strings — route through WcsCompat.h.
+
+Possible smaller follow-ups: owner/group/timestamp in the properties path (chmod done; the engine
+ChangeFileProperties already supports vpOwner/vpGroup/vpModification — just needs UI + bridge);
+a real properties dialog (rights checkboxes) instead of the octal input box.
+
+## (DONE) remote file properties — chmod (F9) WORKS
+
+ChangeFileProperties over SFTP, harness-validated; Qt GUI F9 with octal prefill. enginebridge:
+remoteFileOctal + remoteChmod. (Early "failure" was just root-owned seed files; code was correct.)
+See STATUS.md.
 
 ## (DONE) remote file ops — mkdir / rename / delete WORK
 

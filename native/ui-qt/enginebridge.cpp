@@ -347,6 +347,31 @@ bool remoteRename(const std::string & oldNameUtf8, const std::string & newNameUt
   catch (...) { if (error) *error = "unknown error"; return false; }
 }
 
+std::string remoteFileOctal(const std::string & nameUtf8)
+{
+  if (!remoteConnected()) return std::string();
+  TRemoteFile * rf = FindInListing(FromU8(nameUtf8));
+  if ((rf == nullptr) || (rf->Rights == nullptr)) return std::string();
+  return ToU8(rf->Rights->Octal);
+}
+
+bool remoteChmod(const std::string & nameUtf8, const std::string & octalUtf8, std::string * error)
+{
+  if (!remoteConnected()) { if (error) *error = "not connected"; return false; }
+  try
+  {
+    TRemoteFile * rf = FindInListing(FromU8(nameUtf8));
+    if (rf == nullptr) { if (error) *error = "file not in current listing"; return false; }
+    TRemoteProperties props;
+    props.Valid = TValidProperties() << vpRights;
+    props.Rights.Octal = FromU8(octalUtf8);
+    g_terminal->ChangeFileProperties(rf->FullFileName, rf, &props);
+    return true;
+  }
+  catch (Exception & E) { if (error) *error = ExceptionToU8(E); return false; }
+  catch (...) { if (error) *error = "unknown error"; return false; }
+}
+
 void disconnectSftp()
 {
   if (g_terminal)
