@@ -42,6 +42,7 @@
 #include <QMenu>
 #include <QTimer>
 #include <QSettings>
+#include <QProgressDialog>
 #include <functional>
 
 #include "enginebridge.h"
@@ -548,12 +549,22 @@ int main(int argc, char ** argv)
     if (files.isEmpty()) { window.statusBar()->showMessage("No files selected"); return; }
     if (active->isRemote() && dst->isRemote())
     { QMessageBox::information(&window, "Copy", "Remote-to-remote copy is not supported yet."); return; }
-    QApplication::setOverrideCursor(Qt::WaitCursor);
-    window.statusBar()->showMessage(QString("Transferring %1 file(s)\xE2\x80\xA6").arg(files.size()));
-    QApplication::processEvents();
+    // WinSCP-style transfer progress (per-file bar fed by the engine OnProgress sink).
+    QProgressDialog prog(&window);
+    prog.setWindowTitle(active->isRemote() ? "Download" : (dst->isRemote() ? "Upload" : "Copy"));
+    prog.setMinimumDuration(0);
+    prog.setRange(0, 100);
+    prog.setMinimumWidth(420);
+    engine::setProgressSink([&](const std::string & file, int pct) {
+      prog.setLabelText(u8(file));
+      prog.setValue(pct);
+      QApplication::processEvents();
+    });
     int ok = 0; std::string lastErr;
     for (const QString & f : files)
     {
+      prog.setLabelText(f);
+      QApplication::processEvents();
       std::string src = engine::joinPath(s8(active->path()), s8(f));
       bool r;
       if (!active->isRemote() && !dst->isRemote())
@@ -564,8 +575,9 @@ int main(int argc, char ** argv)
         r = engine::downloadFromRemote(src, s8(dst->path()), &lastErr);
       if (r) ++ok; else log("Copy failed: " + f + " — " + u8(lastErr));
     }
+    engine::setProgressSink(nullptr);
+    prog.close();
     dst->refresh();
-    QApplication::restoreOverrideCursor();
     window.statusBar()->showMessage(QString("Copied %1/%2 file(s) to %3").arg(ok).arg(files.size()).arg(dst->path()));
   };
   auto doMkdir = [&] {

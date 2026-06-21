@@ -39,6 +39,7 @@ std::unique_ptr<TTerminal> g_terminal;
 std::unique_ptr<TSessionData> g_sessionData;
 UnicodeString g_password;
 bool g_engineInited = false;
+std::function<void(const std::string &, int)> g_progressCb;
 
 void EnsureEngineInited()
 {
@@ -195,6 +196,9 @@ ConnectResult connectSftp(const std::string & host, int port,
     g_terminal->OnQueryUser =
       [](TObject *, const UnicodeString &, TStrings *, unsigned int Answers, const TQueryParams *, unsigned int & Answer, TQueryType, void *)
       { Answer = (Answers & qaYes) ? qaYes : ((Answers & qaOK) ? qaOK : Answers); };   // auto-accept host key
+    g_terminal->OnProgress =
+      [](TFileOperationProgressType & P)
+      { if (g_progressCb) g_progressCb(ToU8(P.FileName), P.TransferProgress()); };
 
     g_terminal->Open();
     r.ok = true;
@@ -212,6 +216,8 @@ ConnectResult connectSftp(const std::string & host, int port,
   catch (...) { r.error = "unknown error"; g_terminal.reset(); }
   return r;
 }
+
+void setProgressSink(const std::function<void(const std::string &, int)> & cb) { g_progressCb = cb; }
 
 bool remoteConnected() { return g_terminal && g_terminal->Active; }
 std::string remoteCurrentDir() { return remoteConnected() ? ToU8(g_terminal->CurrentDirectory) : std::string(); }

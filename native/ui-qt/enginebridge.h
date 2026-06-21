@@ -16,6 +16,7 @@
 #include <string>
 #include <vector>
 #include <cstdint>
+#include <functional>
 
 namespace engine {
 
@@ -70,6 +71,11 @@ ConnectResult connectSftp(const std::string & host, int port,
                           Protocol protocol = Protocol::Sftp);
 bool remoteConnected();
 std::string remoteCurrentDir();
+
+// Register a transfer-progress sink: called during upload/download with (current file, percent
+// 0-100 for that file). Pass an empty std::function to clear. Fired on the calling thread (the
+// blocking transfer), so a Qt UI should processEvents() inside it.
+void setProgressSink(const std::function<void(const std::string &, int)> & cb);
 // List the remote directory (empty path = current/home). Sorted dirs-first; includes "..".
 std::vector<DirEntry> listRemoteDir(const std::string & utf8Path);
 
