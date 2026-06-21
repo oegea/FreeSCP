@@ -505,8 +505,13 @@ public:
   // Per-panel status: selection / totals (WinSCP shows selected of total).
   QString statusText() const
   {
-    int sel = (int)selectedItems().size();
-    if (sel > 0) return QString("%1 of %2 item(s) selected").arg(sel).arg(FFiles + FDirs);
+    QStringList sel = selectedItems();
+    if (!sel.isEmpty())
+    {
+      qint64 bytes = 0; for (const QString & n : sel) bytes += sizeOf(n);
+      return QString("%1 of %2 selected  \xE2\x80\x94  %3")
+        .arg(sel.size()).arg(FFiles + FDirs).arg(u8(engine::formatSize(bytes)));
+    }
     return QString("%1 director%2, %3 file(s)").arg(FDirs).arg(FDirs == 1 ? "y" : "ies").arg(FFiles);
   }
 
