@@ -635,3 +635,17 @@ flag (Ftps=ftpsImplicit for WebDAV/S3); the GUI Login dialog gained an Encryptio
 (No encryption / TLS-SSL) shown for WebDAV/S3. Plain WebDAV/S3 regression clean.
 HTTPS test server: `docker run -p 8443:8443 -v data -v cert -v key rclone/rclone serve webdav
 /data --addr :8443 --cert /cert.pem --key /key.pem --user winscp --pass winscp123`.
+
+## Phase 7 GUI round 3 — queue dock, sorting, TLS, prefs, polish (all 4 protocols GUI-verified)
+GUI is now a well-rounded WinSCP file manager, every protocol exercised through the actual GUI
+process (SFTP/WebDAV download + S3 connect rendered live via WINSCP_AUTOCONNECT/AUTOXFER):
+- **Transfer queue** dock (Copy + Move feed it; live queued->active->NN%->done/failed; Ctrl+Q).
+- **Column sorting** (click header, arrow indicator, dirs-first within key).
+- **WebDAV/S3 over TLS** (Login Encryption combo; ftpsImplicit).
+- **Tab** switches panels; **synchronized browsing**; navigation history (Back/Forward).
+- **Show hidden files** toggle + **Preferences** dialog (persisted in QSettings); window geometry +
+  splitter persisted.
+- Native toolbar icons; directory operations (recursive); F3/F4 open/edit.
+Build reproducible from scratch; ctest green; Windows tree untouched. FTP backend is the remaining
+protocol (deferred to last). Other future work: true background (threaded) queue, Linux build,
+remaining WinSCP dialogs.
