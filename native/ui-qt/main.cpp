@@ -46,6 +46,7 @@
 #include <QDesktopServices>
 #include <QUrl>
 #include <QDir>
+#include <QStyle>
 #include <functional>
 
 #include "enginebridge.h"
@@ -494,16 +495,18 @@ int main(int argc, char ** argv)
   window.setWindowTitle("WinSCP");
   window.resize(1100, 720);
 
-  // Main toolbar.
+  // Main toolbar (native icons, WinSCP-style text-beside-icon).
   auto * tb = window.addToolBar("Main");
   tb->setMovable(false);
-  auto * actConnect = tb->addAction("\xF0\x9F\x94\x8C Login");
+  tb->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+  auto ic = [&](QStyle::StandardPixmap sp) { return window.style()->standardIcon(sp); };
+  auto * actConnect = tb->addAction(ic(QStyle::SP_DialogOpenButton), "Login");
   tb->addSeparator();
-  auto * actHome = tb->addAction("\xF0\x9F\x8F\xA0 Home");
-  auto * actRefresh = tb->addAction("\xE2\x9F\xB3 Refresh");
-  auto * actDisconnect = tb->addAction("\xE2\x9C\x96 Disconnect"); actDisconnect->setEnabled(false);
+  auto * actHome = tb->addAction(ic(QStyle::SP_DirHomeIcon), "Home");
+  auto * actRefresh = tb->addAction(ic(QStyle::SP_BrowserReload), "Refresh");
+  auto * actDisconnect = tb->addAction(ic(QStyle::SP_DialogCloseButton), "Disconnect"); actDisconnect->setEnabled(false);
   tb->addSeparator();
-  auto * actSync = tb->addAction("\xE2\x87\x84 Sync browsing"); actSync->setCheckable(true);
+  auto * actSync = tb->addAction(ic(QStyle::SP_FileDialogContentsView), "Sync browsing"); actSync->setCheckable(true);
 
   // Panels.
   auto * splitter = new QSplitter(Qt::Horizontal);
