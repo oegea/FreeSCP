@@ -52,6 +52,8 @@
 #include <QDesktopServices>
 #include <QUrl>
 #include <QDir>
+#include <QFile>
+#include <QFont>
 #include <QStyle>
 #include <algorithm>
 #include <functional>
@@ -976,6 +978,55 @@ int main(int argc, char ** argv)
     QDesktopServices::openUrl(QUrl::fromLocalFile(localPath));
     window.statusBar()->showMessage("Opened " + f);
   };
+  // Internal editor (F4): download a remote file to temp, edit in a built-in text editor; Save writes
+  // it back (re-uploads for remote). Local files are edited in place.
+  auto doEdit = [&] {
+    if (active->isRemote() && busy()) return;
+    QStringList sel = active->selectedFiles();
+    if (sel.size() != 1) { window.statusBar()->showMessage("Select one file to edit"); return; }
+    QString f = sel.first();
+    bool remote = active->isRemote();
+    QString remoteDir = active->path();
+    QString localPath;
+    if (remote)
+    {
+      QString tmp = QDir::tempPath() + "/winscp-edit"; QDir().mkpath(tmp);
+      std::string err;
+      if (!engine::downloadFromRemote(engine::joinPath(s8(remoteDir), s8(f)), s8(tmp), &err))
+      { QMessageBox::warning(&window, "Edit", "Could not download: " + u8(err)); return; }
+      localPath = tmp + "/" + f;
+    }
+    else localPath = active->path() + "/" + f;
+
+    QFile file(localPath);
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) { QMessageBox::warning(&window, "Edit", "Cannot open file"); return; }
+    QString text = QString::fromUtf8(file.readAll()); file.close();
+
+    auto * ed = new QMainWindow(&window); ed->setAttribute(Qt::WA_DeleteOnClose);
+    ed->setWindowTitle(f + (remote ? "  \xE2\x80\x94  " + remoteDir + " (remote)" : ""));
+    ed->resize(720, 560);
+    auto * te = new QPlainTextEdit; te->setPlainText(text);
+    te->setLineWrapMode(QPlainTextEdit::NoWrap);
+    te->setFont(QFont("Menlo", 12));
+    ed->setCentralWidget(te);
+    auto * tb = ed->addToolBar("Edit");
+    auto saveFn = [te, localPath, remote, remoteDir, f, &window, &left, &right]() {
+      QFile out(localPath);
+      if (!out.open(QIODevice::WriteOnly | QIODevice::Text)) { QMessageBox::warning(&window, "Save", "Cannot write file"); return; }
+      out.write(te->toPlainText().toUtf8()); out.close();
+      if (remote)
+      {
+        std::string err;
+        if (!engine::uploadToRemote(s8(localPath), s8(remoteDir), &err))
+          QMessageBox::warning(&window, "Save", "Upload failed: " + u8(err));
+        else { window.statusBar()->showMessage("Saved + uploaded " + f); if (right->isRemote()) right->refresh(); }
+      }
+      else { window.statusBar()->showMessage("Saved " + f); left->refresh(); }
+    };
+    auto * actSave = tb->addAction("\xF0\x9F\x92\xBE Save"); actSave->setShortcut(Qt::CTRL | Qt::Key_S);
+    QObject::connect(actSave, &QAction::triggered, ed, saveFn);
+    ed->show();
+  };
   auto doQuit = [&] { window.close(); };
 
   // Synchronize directories (local panel <-> remote panel) via the engine's TSynchronizeChecklist.
@@ -1137,7 +1188,7 @@ int main(int argc, char ** argv)
     return b;
   };
   addFKey("F2 Rename", doRename);
-  addFKey("F4 Edit", doOpen);
+  addFKey("F4 Edit", doEdit);
   addFKey("F5 Copy", doCopy);
   addFKey("F6 Move", doMove);
   addFKey("F7 Create Directory", doMkdir);
@@ -1157,7 +1208,7 @@ int main(int argc, char ** argv)
   };
   shortcut(Qt::Key_F2, doRename);
   shortcut(Qt::Key_F3, doOpen);
-  shortcut(Qt::Key_F4, doOpen);
+  shortcut(Qt::Key_F4, doEdit);
   shortcut(Qt::Key_F5, doCopy);
   left->onFileOpen = doOpen; right->onFileOpen = doOpen;
   shortcut(Qt::Key_F6, doMove);
