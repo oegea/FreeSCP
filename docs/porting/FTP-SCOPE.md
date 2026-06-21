@@ -106,3 +106,13 @@ the transfer-complete isn't signalled to the engine. Next: chase CTransferSocket
 finalization/flush or a missing completion event from the data-socket OnClose into FtpFileSystem.
 Same likely applies to remote ops (mkdir/rename/delete) which also wait on completion. The MDTM also
 sends a suspicious timestamp ("MDTM 655351130000000 xfer-up.txt") worth checking.
+
+## Download finding refined: it's the completion-reply sync, not the data
+Deeper trace shows download bytes ARE read and handed to CTransferSocket::WriteData (-> m_pFile->Write
+for a normal file download, or CopyParam->OnTransferOut for streaming). The local file is created but
+shows 0 bytes ONLY because the harness is killed before close/flush — because CopyToLocal never
+returns. After RETR the data socket reads the file (recv n=14) and the control socket gets the 226
+(recv n=24), but the transfer-COMPLETION reply from the worker thread back to the engine
+(FtpFileSystem, blocked in CopyToLocal) doesn't unblock it. So the remaining work is the FZAPI
+reply/notify sync (FileZilla worker -> engine: PostMessage(FZ_MSG...) / HandleReply / the
+WaitForReply path), not the socket/data layer. Same mechanism likely gates remote ops completion.
