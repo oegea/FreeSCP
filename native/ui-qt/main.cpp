@@ -53,6 +53,7 @@
 #include <QUrl>
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QFont>
 #include <QStyle>
 #include <algorithm>
@@ -312,6 +313,7 @@ public:
   std::function<void()> onLeaveDir;                 // user went up (for sync browsing)
   std::function<void()> onSwitchPanel;              // Tab pressed -> focus the other panel
   std::function<void(FilePanel *, const QStringList &)> onDropFiles;  // files dropped from another panel
+  std::function<void(FilePanel *, const QStringList &)> onDropExternal; // local files dropped from Finder
   static FilePanel * s_dragSource;                  // panel a drag originated from
 
   // Mirror operations (used by synchronized browsing; navigate directly, no callbacks -> no loop).
@@ -384,9 +386,17 @@ public:
     QObject::connect(homeBtn, &QToolButton::clicked, [this] { if (onHome) onHome(); });
     QObject::connect(FView->selectionModel(), &QItemSelectionModel::selectionChanged,
                      [this] { if (onStatusChanged) onStatusChanged(); });
-    FView->horizontalHeader()->setSectionsClickable(true);
-    QObject::connect(FView->horizontalHeader(), &QHeaderView::sectionClicked,
-                     [this](int col) { sortByColumn(col); });
+    // Columns + header set up ONCE here (not per-render) so they're user-resizable and widths persist.
+    FModel->setColumnCount(5);
+    FModel->setHorizontalHeaderLabels({ "Name", "Size", "Changed", "Rights", "Owner" });
+    auto * hh = FView->horizontalHeader();
+    hh->setSectionsClickable(true);
+    hh->setSectionsMovable(false);
+    hh->setStretchLastSection(true);                 // last column fills leftover space
+    for (int c = 0; c < 5; ++c) hh->setSectionResizeMode(c, QHeaderView::Interactive);  // all resizable
+    FView->setColumnWidth(0, 240); FView->setColumnWidth(1, 90);
+    FView->setColumnWidth(2, 150); FView->setColumnWidth(3, 95);
+    QObject::connect(hh, &QHeaderView::sectionClicked, [this](int col) { sortByColumn(col); });
   }
 
   QString path() const { return FPath; }
@@ -456,12 +466,14 @@ public:
 
   void renderEntries()
   {
-    FModel->clear();
-    const char * heads[5] = { "Name", "Size", "Changed", "Rights", "Owner" };
-    QStringList hl; for (int i = 0; i < 5; ++i) {
-      QString h = heads[i]; if (i == FSortCol) h += FSortAsc ? "  \xE2\x96\xB2" : "  \xE2\x96\xBC"; hl << h;
+    // Remove only the rows (NOT clear()) so the columns, header sections and the user's column
+    // widths survive a navigation. Sort arrow goes on the header text via setHeaderData.
+    if (FModel->rowCount() > 0) FModel->removeRows(0, FModel->rowCount());
+    static const char * heads[5] = { "Name", "Size", "Changed", "Rights", "Owner" };
+    for (int i = 0; i < 5; ++i) {
+      QString h = heads[i]; if (i == FSortCol) h += FSortAsc ? "  \xE2\x96\xB2" : "  \xE2\x96\xBC";
+      FModel->setHeaderData(i, Qt::Horizontal, h);
     }
-    FModel->setHorizontalHeaderLabels(hl);
     for (const auto & e : FEntries)
     {
       QList<QStandardItem *> row;
@@ -475,12 +487,6 @@ public:
       row << new QStandardItem(u8(e.owner));
       FModel->appendRow(row);
     }
-    auto * hh = FView->horizontalHeader();
-    hh->setStretchLastSection(false);
-    hh->setSectionResizeMode(0, QHeaderView::Stretch);
-    for (int c = 1; c <= 4; ++c) hh->setSectionResizeMode(c, QHeaderView::Interactive);
-    FView->setColumnWidth(1, 90); FView->setColumnWidth(2, 150);
-    FView->setColumnWidth(3, 95); FView->setColumnWidth(4, 120);
     if (FModel->rowCount() > 0) FView->selectRow(0);
   }
 
@@ -572,13 +578,21 @@ protected:
       else if (ev->type() == QEvent::DragEnter || ev->type() == QEvent::DragMove)
       {
         auto * de = static_cast<QDragMoveEvent *>(ev);
-        if (de->mimeData()->hasFormat(kFmt) && s_dragSource && s_dragSource != this) { de->acceptProposedAction(); return true; }
+        bool internal = de->mimeData()->hasFormat(kFmt) && s_dragSource && s_dragSource != this;
+        bool external = de->mimeData()->hasUrls();   // files from Finder/Nautilus
+        if (internal || external) { de->acceptProposedAction(); return true; }
       }
       else if (ev->type() == QEvent::Drop)
       {
         auto * de = static_cast<QDropEvent *>(ev);
         if (de->mimeData()->hasFormat(kFmt) && s_dragSource && s_dragSource != this)
         { FilePanel * src = s_dragSource; if (onDropFiles) onDropFiles(src, src->selectedItems()); de->acceptProposedAction(); return true; }
+        if (de->mimeData()->hasUrls())   // external (Finder) -> import the local files into this panel
+        {
+          QStringList paths;
+          for (const QUrl & u : de->mimeData()->urls()) if (u.isLocalFile()) paths << u.toLocalFile();
+          if (!paths.isEmpty() && onDropExternal) { onDropExternal(this, paths); de->acceptProposedAction(); return true; }
+        }
       }
     }
     return false;
@@ -717,6 +731,9 @@ int main(int argc, char ** argv)
   queueModel->setHorizontalHeaderLabels({ "Operation", "File", "Size", "Progress", "Speed", "Time left", "Status" });
   queueView->setModel(queueModel);
   queueView->verticalHeader()->setVisible(false);
+  queueView->verticalHeader()->setDefaultSectionSize(20);   // compact rows (match the panels)
+  queueView->setShowGrid(false);
+  queueView->setAlternatingRowColors(true);
   queueView->setEditTriggers(QAbstractItemView::NoEditTriggers);
   queueView->horizontalHeader()->setStretchLastSection(true);
   queueView->setColumnWidth(1, 200);
@@ -853,6 +870,49 @@ int main(int argc, char ** argv)
   // Drag files from one panel, drop on the other -> transfer (copy).
   left->onDropFiles  = [&](FilePanel * src, const QStringList & f) { startTransfer(src, left, f, false); };
   right->onDropFiles = [&](FilePanel * src, const QStringList & f) { startTransfer(src, right, f, false); };
+
+  // External drop (Finder/Nautilus) of local files -> upload (remote panel) or copy (local panel).
+  auto importFiles = [&](FilePanel * dest, const QStringList & absPaths) {
+    if (busy()) return;
+    const bool toRemote = dest->isRemote();
+    const std::string destDir = s8(dest->path());
+    queueDock->show();
+    std::vector<int> rows; std::vector<std::string> srcs, nm;
+    for (const QString & p : absPaths) {
+      QFileInfo fi(p); if (fi.isDir()) continue;          // (recursive dir import: future)
+      rows.push_back(queueAdd(toRemote ? "Upload" : "Copy", fi.fileName(), fi.size()));
+      srcs.push_back(s8(p)); nm.push_back(s8(fi.fileName()));
+    }
+    if (rows.empty()) { window.statusBar()->showMessage("Nothing to import (folders not yet supported)"); return; }
+    gTransferRunning = true; btnCancel->setEnabled(true);
+    auto cancel = std::make_shared<std::atomic<bool>>(false); *currentCancel = cancel;
+    auto curRow = std::make_shared<std::atomic<int>>(rows[0]);
+    engine::setProgressSink([&, cancel, curRow](const engine::TransferProgress & tp) -> bool {
+      int rowVal = curRow->load(), pct = tp.total > 0 ? (int)(tp.transferred * 100 / tp.total) : 0;
+      qint64 cps = tp.cps, eta = (cps > 0 && tp.total > tp.transferred) ? (tp.total - tp.transferred) / cps : 0;
+      QMetaObject::invokeMethod(&window, [&, rowVal, pct, cps, eta]{ queueCell(rowVal, 3, QString("%1%").arg(pct)); queueCell(rowVal, 4, fmtSpeed(cps)); queueCell(rowVal, 5, fmtEta(eta)); }, Qt::QueuedConnection);
+      return cancel->load();
+    });
+    std::thread([&, rows, srcs, nm, destDir, toRemote, dest, cancel, curRow]{
+      int ok = 0;
+      for (size_t i = 0; i < srcs.size(); ++i) {
+        if (cancel->load()) { QMetaObject::invokeMethod(&window, [&, r = rows[i]]{ queueStatus(r, "cancelled"); }, Qt::QueuedConnection); continue; }
+        int rowVal = rows[i]; curRow->store(rowVal);
+        QMetaObject::invokeMethod(&window, [&, rowVal]{ queueStatus(rowVal, "active"); }, Qt::QueuedConnection);
+        std::string err; bool r = toRemote ? engine::uploadToRemote(srcs[i], destDir, &err)
+                                            : engine::copyFile(srcs[i], engine::joinPath(destDir, nm[i]));
+        QString status = r ? "done" : ("failed" + (err.empty() ? QString() : (": " + u8(err))));
+        QMetaObject::invokeMethod(&window, [&, rowVal, status, r]{ queueStatus(rowVal, status); if (r) queueCell(rowVal, 3, "100%"); }, Qt::QueuedConnection);
+        if (r) ++ok;
+      }
+      int total = (int)srcs.size();
+      QMetaObject::invokeMethod(&window, [&, ok, total, dest]{
+        engine::setProgressSink(nullptr); gTransferRunning = false; btnCancel->setEnabled(false);
+        dest->refresh(); window.statusBar()->showMessage(QString("Imported %1/%2 item(s)").arg(ok).arg(total));
+      }, Qt::QueuedConnection);
+    }).detach();
+  };
+  left->onDropExternal = importFiles; right->onDropExternal = importFiles;
 
   //--- operations ---------------------------------------------------------
   auto doConnect = [&] {

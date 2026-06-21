@@ -212,6 +212,10 @@ ConnectResult connectSftp(const std::string & host, int port,
       default:               g_sessionData->FSProtocol = fsSFTPonly; break;
     }
     g_sessionData->FingerprintScan = false;
+    // Always read fresh listings: with the cache on, a panel refresh after an upload/op could show a
+    // stale directory (the uploaded file appeared missing). The GUI re-lists on every navigate anyway.
+    g_sessionData->CacheDirectories = false;
+    g_sessionData->CacheDirectoryChanges = false;
 
     g_terminal.reset(new TTerminal(g_sessionData.get(), Configuration));
     g_terminal->OnPromptUser =
@@ -366,6 +370,7 @@ int openParallelConnection(std::string * error)
       default:                       c->data->FSProtocol = fsSFTPonly; break;
     }
     c->data->FingerprintScan = false;
+    c->data->CacheDirectories = false; c->data->CacheDirectoryChanges = false;
     UnicodeString pw = FromU8(g_lastParams.password);
     ParConn * cp = c.get();
     c->term.reset(new TTerminal(c->data.get(), Configuration));
