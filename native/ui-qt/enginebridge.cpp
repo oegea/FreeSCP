@@ -550,6 +550,64 @@ bool remoteChmod(const std::string & nameUtf8, const std::string & octalUtf8, st
   catch (...) { if (error) *error = "unknown error"; return false; }
 }
 
+//=== directory synchronization =============================================
+namespace { TSynchronizeChecklist * g_checklist = nullptr; }
+
+std::vector<SyncItem> synchronizeCollect(const std::string & localDir, const std::string & remoteDir,
+                                         int mode, bool del, std::string * error)
+{
+  ENGINE_LOCK;
+  std::vector<SyncItem> out;
+  if (!remoteConnected()) { if (error) *error = "not connected"; return out; }
+  synchronizeRelease();
+  try
+  {
+    TTerminal::TSynchronizeMode m = (mode == 1) ? TTerminal::smLocal : (mode == 2) ? TTerminal::smBoth : TTerminal::smRemote;
+    int params = TTerminal::spNoConfirmation | TTerminal::spSubDirs;
+    if (del && mode != 2) params |= TTerminal::spDelete;
+    TCopyParamType cp; cp.Default();
+    g_checklist = g_terminal->SynchronizeCollect(FromU8(localDir), FromU8(remoteDir), m, &cp, params, nullptr, nullptr);
+    if (g_checklist != nullptr)
+      for (int i = 0; i < g_checklist->Count; i++)
+      {
+        const TSynchronizeChecklist::TItem * it = g_checklist->Item[i];
+        SyncItem si;
+        switch (it->Action)
+        {
+          case TSynchronizeChecklist::saUploadNew: case TSynchronizeChecklist::saUploadUpdate: si.action = "Upload"; break;
+          case TSynchronizeChecklist::saDownloadNew: case TSynchronizeChecklist::saDownloadUpdate: si.action = "Download"; break;
+          case TSynchronizeChecklist::saDeleteRemote: si.action = "Delete remote"; break;
+          case TSynchronizeChecklist::saDeleteLocal: si.action = "Delete local"; break;
+          default: si.action = "?"; break;
+        }
+        si.name = ToU8(it->GetFileName());
+        si.isDir = it->IsDirectory;
+        si.size = it->IsDirectory ? 0 : it->GetSize();
+        out.push_back(si);
+      }
+  }
+  catch (Exception & E) { if (error) *error = ExceptionToU8(E); synchronizeRelease(); }
+  catch (...) { if (error) *error = "unknown error"; synchronizeRelease(); }
+  return out;
+}
+
+bool synchronizeApply(std::string * error)
+{
+  ENGINE_LOCK;
+  if (g_checklist == nullptr) { if (error) *error = "nothing to synchronize"; return false; }
+  try
+  {
+    TCopyParamType cp; cp.Default();
+    g_terminal->SynchronizeApply(g_checklist, &cp, TTerminal::spNoConfirmation | TTerminal::spSubDirs,
+                                 nullptr, nullptr, nullptr, nullptr, nullptr);
+    return true;
+  }
+  catch (Exception & E) { if (error) *error = ExceptionToU8(E); return false; }
+  catch (...) { if (error) *error = "unknown error"; return false; }
+}
+
+void synchronizeRelease() { delete g_checklist; g_checklist = nullptr; }
+
 void disconnectSftp()
 {
   ENGINE_LOCK;

@@ -978,6 +978,58 @@ int main(int argc, char ** argv)
   };
   auto doQuit = [&] { window.close(); };
 
+  // Synchronize directories (local panel <-> remote panel) via the engine's TSynchronizeChecklist.
+  auto doSync = [&] {
+    FilePanel * lp = left->isRemote() ? right : left;
+    FilePanel * rp = left->isRemote() ? left : right;
+    if (!rp->isRemote()) { QMessageBox::information(&window, "Synchronize", "Connect a remote session first."); return; }
+    if (busy()) return;
+    QDialog dlg(&window); dlg.setWindowTitle("Synchronize"); dlg.resize(600, 420);
+    auto * v = new QVBoxLayout(&dlg);
+    auto * form = new QFormLayout;
+    form->addRow("Local:", new QLabel(lp->path()));
+    form->addRow("Remote:", new QLabel(rp->path()));
+    auto * dir = new QComboBox; dir->addItems({ "Local \xE2\x86\x92 Remote (upload)", "Remote \xE2\x86\x92 Local (download)", "Both directions" });
+    form->addRow("Direction:", dir);
+    auto * cbDel = new QCheckBox("Delete files missing on the source");
+    form->addRow("", cbDel);
+    v->addLayout(form);
+    auto * list = new QTableView; auto * lm = new QStandardItemModel(0, 3, &dlg);
+    lm->setHorizontalHeaderLabels({ "Action", "File", "Size" }); list->setModel(lm);
+    list->setEditTriggers(QAbstractItemView::NoEditTriggers); list->verticalHeader()->setVisible(false);
+    list->horizontalHeader()->setStretchLastSection(true); list->setColumnWidth(1, 320);
+    v->addWidget(list, 1);
+    auto * bb = new QDialogButtonBox; auto * bCompare = bb->addButton("Compare", QDialogButtonBox::ActionRole);
+    auto * bApply = bb->addButton("Synchronize", QDialogButtonBox::AcceptRole); bApply->setEnabled(false);
+    bb->addButton(QDialogButtonBox::Close);
+    v->addWidget(bb);
+    QObject::connect(bb, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+    QObject::connect(bCompare, &QPushButton::clicked, [&]{
+      lm->removeRows(0, lm->rowCount());
+      std::string err;
+      auto items = engine::synchronizeCollect(s8(lp->path()), s8(rp->path()), dir->currentIndex(), cbDel->isChecked(), &err);
+      if (!err.empty()) { QMessageBox::warning(&dlg, "Synchronize", u8(err)); return; }
+      for (const auto & it : items) {
+        QList<QStandardItem *> row;
+        row << new QStandardItem(u8(it.action)) << new QStandardItem(u8(it.name))
+            << new QStandardItem(it.isDir ? QString() : u8(engine::formatSize(it.size)));
+        lm->appendRow(row);
+      }
+      bApply->setEnabled(lm->rowCount() > 0);
+      dlg.setWindowTitle(QString("Synchronize \xE2\x80\x94 %1 change(s)").arg(lm->rowCount()));
+    });
+    QObject::connect(bApply, &QPushButton::clicked, [&]{
+      std::string err;
+      bool ok = engine::synchronizeApply(&err);
+      engine::synchronizeRelease();
+      if (!ok) QMessageBox::warning(&dlg, "Synchronize", u8(err));
+      dlg.accept();
+    });
+    dlg.exec();
+    engine::synchronizeRelease();
+    lp->refresh(); rp->refresh();
+  };
+
   // Right-click context menu on each panel (WinSCP-style).
   auto installContextMenu = [&](FilePanel * panel) {
     panel->view()->setContextMenuPolicy(Qt::CustomContextMenu);
@@ -1063,6 +1115,10 @@ int main(int argc, char ** argv)
       left->view()->setAlternatingRowColors(gAltColors); right->view()->setAlternatingRowColors(gAltColors);
       left->refresh(); right->refresh();
     });
+    auto * mCommands = window.menuBar()->addMenu("&Commands");
+    mCommands->addAction("&Synchronize\xE2\x80\xA6\tCtrl+S", doSync);
+    { auto * a = new QAction(&window); a->setShortcut(Qt::CTRL | Qt::Key_S);
+      QObject::connect(a, &QAction::triggered, doSync); window.addAction(a); }
     auto * mRemote = window.menuBar()->addMenu("&Remote");
     mRemote->addAction("&Refresh", [&]{ if (right->isRemote()) right->refresh(); });
     auto * mHelp = window.menuBar()->addMenu("&Help");

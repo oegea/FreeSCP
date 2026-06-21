@@ -280,18 +280,21 @@ int __fastcall FindFirst(const UnicodeString & Path, int /*Attr*/, TSearchRec & 
   UnicodeString dir = ExtractFilePath(Path);
   std::error_code ec;
   auto * st = new FindState();
-  for (auto & e : fs::directory_iterator(ToU8(dir.IsEmpty() ? UnicodeString(L".") : dir), ec))
+  std::string dirU8 = ToU8(dir.IsEmpty() ? UnicodeString(L".") : dir);
+  for (auto & e : fs::directory_iterator(dirU8, ec))
     st->entries.push_back(e);
-  if (ec) { delete st; return -1; }
+  if (ec) { delete st; return ERROR_FILE_NOT_FOUND; }   // Delphi returns an OS error code, not -1
   int h = g_nextHandle++; g_finds[h] = st; F.FindHandle = h;
   return FindNext(F);
 }
 int __fastcall FindNext(TSearchRec & F)
 {
+  // Returns ERROR_NO_MORE_FILES (not -1) at end-of-directory: the engine's FindCheck treats any other
+  // non-zero code as a fatal "Error listing directory" (this broke Synchronize's local enumeration).
   auto it = g_finds.find(F.FindHandle);
-  if (it == g_finds.end()) return -1;
+  if (it == g_finds.end()) return ERROR_NO_MORE_FILES;
   FindState * st = it->second;
-  if (st->pos >= st->entries.size()) return -1;
+  if (st->pos >= st->entries.size()) return ERROR_NO_MORE_FILES;
   Fill(F, st->entries[st->pos++]);
   return 0;
 }

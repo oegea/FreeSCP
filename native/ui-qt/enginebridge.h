@@ -117,6 +117,22 @@ bool uploadVia(int handle, const std::string & localPath, const std::string & re
 bool downloadVia(int handle, const std::string & remotePath, const std::string & localDir, std::string * error = nullptr);
 void closeParallelConnections();
 
+//--- directory synchronization (TSynchronizeChecklist) ---
+struct SyncItem
+{
+  std::string action;   // "Upload" | "Download" | "Delete remote" | "Delete local"
+  std::string name;     // relative file/dir name
+  std::int64_t size = 0;
+  bool isDir = false;
+};
+// Compare localDir vs remoteDir. mode: 0 = mirror local->remote, 1 = mirror remote->local, 2 = both.
+// `del` includes deletions of extra files on the target. Returns the change list and keeps an internal
+// checklist for synchronizeApply(). On failure returns empty + sets error.
+std::vector<SyncItem> synchronizeCollect(const std::string & localDir, const std::string & remoteDir,
+                                         int mode, bool del, std::string * error = nullptr);
+bool synchronizeApply(std::string * error = nullptr);    // execute the collected checklist
+void synchronizeRelease();                                // free the checklist
+
 } // namespace engine
 
 #endif
