@@ -908,11 +908,11 @@ int main(int argc, char ** argv)
     queueDock->show();
     std::vector<int> rows; std::vector<std::string> srcs, nm;
     for (const QString & p : absPaths) {
-      QFileInfo fi(p); if (fi.isDir()) continue;          // (recursive dir import: future)
-      rows.push_back(queueAdd(toRemote ? "Upload" : "Copy", fi.fileName(), fi.size()));
+      QFileInfo fi(p);                                    // files AND folders (engine recurses dirs)
+      rows.push_back(queueAdd(toRemote ? "Upload" : "Copy", fi.fileName(), fi.isDir() ? 0 : fi.size()));
       srcs.push_back(s8(p)); nm.push_back(s8(fi.fileName()));
     }
-    if (rows.empty()) { window.statusBar()->showMessage("Nothing to import (folders not yet supported)"); return; }
+    if (rows.empty()) return;
     gTransferRunning = true; btnCancel->setEnabled(true);
     auto cancel = std::make_shared<std::atomic<bool>>(false); *currentCancel = cancel;
     auto curRow = std::make_shared<std::atomic<int>>(rows[0]);
