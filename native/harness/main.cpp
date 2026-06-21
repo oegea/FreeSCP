@@ -9,7 +9,9 @@
 #include "Configuration.h"
 #include "SessionData.h"
 #include "Terminal.h"
+#include "CopyParam.h"
 #include "Interface.h"
+#include <memory>
 #include "RemoteFiles.h"
 #include "Exceptions.h"
 #include <cstdio>
@@ -71,8 +73,10 @@ int main(int argc, char ** argv)
         Result = true;
       };
     Terminal->OnQueryUser =
-      [](TObject *, const UnicodeString & Query, TStrings *, unsigned int Answers, const TQueryParams *, unsigned int & Answer, TQueryType, void *)
-      { out(UnicodeString(L"[query] ") + Query); Answer = (Answers & qaYes) ? qaYes : ((Answers & qaOK) ? qaOK : Answers); };
+      [](TObject *, const UnicodeString & Query, TStrings * More, unsigned int Answers, const TQueryParams *, unsigned int & Answer, TQueryType, void *)
+      { out(UnicodeString(L"[query] ") + Query);
+        if (More != nullptr) for (int i = 0; i < More->Count; i++) out(UnicodeString(L"   | ") + More->Strings[i]);
+        Answer = (Answers & qaYes) ? qaYes : ((Answers & qaOK) ? qaOK : Answers); };
     Terminal->OnShowExtendedException =
       [](TTerminal *, Exception * E, void *) { out(UnicodeString(L"[exception] ") + (E ? UnicodeString(E->Message) : UnicodeString())); };
 
@@ -86,6 +90,26 @@ int main(int argc, char ** argv)
     if (Files != nullptr)
       for (int i = 0; i < Files->Count; i++)
       { TRemoteFile * F = Files->Files[i]; out(FORMAT(L"  %s\t%s", (F->FileName, UnicodeString((__int64)F->Size)))); }
+
+    // Optional transfer self-test (set WINSCP_XFER=1) — exercises CopyToRemote/CopyToLocal on
+    // the current protocol (SFTP, or SCP via WINSCP_SCP). Round-trips /tmp/xfer-up.txt.
+    if (::getenv("WINSCP_XFER") != nullptr)
+    {
+      FILE * f = fopen("/tmp/xfer-up.txt", "w"); fputs("scp xfer test\n", f); fclose(f);
+      std::unique_ptr<TStrings> up(new TStringList()); up->Add(L"/tmp/xfer-up.txt");
+      TCopyParamType cp; cp.Default();
+      bool uok = Terminal->CopyToRemote(up.get(), L"/config/", &cp, cpNoConfirmation, NULL);
+      out(FORMAT(L"[harness] SCP/SFTP UPLOAD ok=%d", ((int)uok)));
+
+      Terminal->ReadCurrentDirectory(); Terminal->ReadDirectory(false);
+      TRemoteFile * rf = NULL;
+      for (int i = 0; i < Terminal->Files->Count; i++)
+        if (Terminal->Files->Files[i]->FileName == UnicodeString(L"xfer-up.txt")) { rf = Terminal->Files->Files[i]; break; }
+      std::unique_ptr<TStrings> dn(new TStringList());
+      if (rf) dn->AddObject(rf->FullFileName, rf);
+      bool dok = rf && Terminal->CopyToLocal(dn.get(), L"/tmp/dl/", &cp, cpNoConfirmation, NULL);
+      out(FORMAT(L"[harness] SCP/SFTP DOWNLOAD ok=%d (rf=%d)", ((int)dok, (int)(rf!=NULL))));
+    }
 
     Terminal->Close();
     out(L"[harness] Done.");

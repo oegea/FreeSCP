@@ -7,8 +7,25 @@
 
 #include <stddef.h>
 #include <stdlib.h>
+#include <stdarg.h>
+#include <stdio.h>
+#include <string>
 
 extern "C" {
+
+// See WcsCompat.h: numeric-only swscanf over 2-byte wchar_t. The format and input here are
+// ASCII (digits, spaces, %ld/%*d), so a byte-narrowing conversion is exact; forward to vsscanf.
+int winscp_swscanf(const wchar_t * s, const wchar_t * fmt, ...)
+{
+  std::string ns, nf;
+  for (const wchar_t * p = s; *p; ++p) ns.push_back(static_cast<char>(*p));
+  for (const wchar_t * p = fmt; *p; ++p) nf.push_back(static_cast<char>(*p));
+  va_list ap;
+  va_start(ap, fmt);
+  int r = ::vsscanf(ns.c_str(), nf.c_str(), ap);
+  va_end(ap);
+  return r;
+}
 
 size_t winscp_wcslen(const wchar_t * s)
 {

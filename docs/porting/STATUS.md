@@ -342,3 +342,23 @@ Phase 4 (FTP/S3/WebDAV) and Phase 7 (Qt dialogs).
 The Connect dialog gained a Protocol dropdown (SFTP default, SCP). enginebridge::connectSftp now
 takes an engine::Protocol and sets FSProtocol = fsSFTPonly / fsSCPonly accordingly. Both engine
 paths are runtime-proven (harness); the GUI now lets the user pick. winscp-qt builds + launches.
+
+## SCP upload + download WORK — two more porting-class fixes (field-property lvalue, swscanf)
+SCP file transfer now round-trips correctly (harness WINSCP_SCP=1 WINSCP_XFER=1: upload /tmp file ->
+server with mode 0644, download back byte-identical). SFTP transfers unaffected (regression-checked).
+Two root causes, both rtlcompat/genprops (no source/ edit):
+1. **genprops field-backed property lvalue.** A `__property T P = { read=FFld, write=FFld }` was
+   codegen'd with a by-VALUE getter (`__pg_P() const { return (T)FFld; }`). So `obj->P.member = x`
+   mutated a throwaway copy — e.g. TCopyParamType::Default's `Rights.Number = rfDefault` was silently
+   lost, and SCP sent file mode **0000** (upload created unreadable files; download then failed
+   "Permission denied"). In Borland, `read=Field` is a direct lvalue. Fix: for pure field-backed
+   props (read==write==same field, non-indexed) genprops now emits a non-const reference getter
+   (`T & __pg_P() { return FFld; }`) plus a const by-value getter, so `obj->P.member = x` mutates the
+   field. This is a CLASS fix — any `fieldProperty.member = x` across the engine was silently a no-op
+   before. Full engine recompiled clean; ctest green; SFTP regression clean.
+2. **swscanf under -fshort-wchar.** SCP's T (timestamp) control-record parse used libc `swscanf`,
+   which reads 4-byte wchar_t and failed on our 2-byte strings -> "SCP protocol error: Illegal time
+   format". Added a numeric-only `winscp_swscanf` to WcsCompat (ASCII wide->narrow, vsscanf); it's
+   the only swscanf in the engine. (swprintf: none.)
+Harness gained an optional transfer self-test (WINSCP_XFER=1) and now prints query MoreMessages.
+NEXT: Phase 4 (FTP/S3/WebDAV) or Phase 7 (Qt dialogs).

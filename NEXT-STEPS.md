@@ -47,11 +47,12 @@ enginebridge::connectSftp (engine side proven for both); exercise the file ops o
 Watch the two transfer-era hazards: (a) any TStrings passed to ProcessFiles must carry TRemoteFile*
 as each entry's Object; (b) never call libc wcs* on engine strings — route through WcsCompat.h.
 
-## (DONE) SCP protocol runtime — connect + list WORKS
+## (DONE) SCP protocol runtime — connect + list + transfer WORK
 
-ScpFileSystem connects/lists over a shell channel (harness WINSCP_SCP=1). Fixed a latent
-TStrings::Assign no-op (was crashing SCP's OutputCopy->Assign(FOutput)); affected ~13 engine
-call sites. See STATUS.md.
+ScpFileSystem connects/lists/transfers over a shell channel (harness WINSCP_SCP=1, transfer
+self-test WINSCP_XFER=1). Fixes: TStrings::Assign no-op (list crash); genprops field-backed
+property lvalue (SCP sent mode 0000 — a CLASS bug: any `fieldProp.member=x` was a no-op);
+winscp_swscanf 2-byte shim (SCP timestamp record). See STATUS.md.
 
 Possible smaller follow-ups: owner/group/timestamp in the properties path (chmod done; the engine
 ChangeFileProperties already supports vpOwner/vpGroup/vpModification — just needs UI + bridge);

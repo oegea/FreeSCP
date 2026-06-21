@@ -36,6 +36,11 @@ int       winscp_wcsncmp(const wchar_t * a, const wchar_t * b, size_t n);
 wchar_t * winscp_wcscpy(wchar_t * dst, const wchar_t * src);
 wchar_t * winscp_wcsncpy(wchar_t * dst, const wchar_t * src, size_t n);
 wchar_t * winscp_wcsdup(const wchar_t * s);
+// 2-byte-wchar swscanf: libc's swscanf reads the format/input as 4-byte wchar_t and fails on
+// our UTF-16 strings (e.g. SCP's "Illegal time format" parsing the T control record). This shim
+// converts the (ASCII) format + input to narrow and forwards to vsscanf. NUMERIC conversions
+// only — %s/%ls would write the wrong width; the sole engine call site parses integers.
+int winscp_swscanf(const wchar_t * s, const wchar_t * fmt, ...);
 #ifdef __cplusplus
 }
 #endif
@@ -50,5 +55,6 @@ wchar_t * winscp_wcsdup(const wchar_t * s);
 #define wcscpy  winscp_wcscpy
 #define wcsncpy winscp_wcsncpy
 #define wcsdup  winscp_wcsdup
+#define swscanf winscp_swscanf
 
 #endif

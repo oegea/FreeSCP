@@ -106,13 +106,23 @@ def convert(match):
         # Accessor is const so the property is readable on const objects. Field reads are
         # const-ok; method getters (often non-const) are reached by casting away constness of
         # *this without naming the class. `index=N` passes the fixed value.
-        if is_field(read):
-            expr = read
+        if is_field(read) and (write == read) and not indexed:
+            # Pure field-backed property (read==write==same field): in Borland `read=Field`
+            # gives a direct lvalue, so `obj->Prop.member = x` mutates the field. A by-value
+            # getter would mutate a throwaway copy (e.g. TCopyParamType::Default's
+            # `Rights.Number = rfDefault` silently lost -> SCP sent mode 0000). Expose the
+            # field as an alias: non-const overload returns a reference (mutable), const
+            # overload returns by value. (The put accessor below still handles `Prop = v`.)
+            accessors.append('%s & __fastcall %s() { return %s; }' % (typ, get_fn, read))
+            accessors.append('%s __fastcall %s() const { return %s; }' % (typ, get_fn, read))
         else:
-            call = '%s(%s)' % (read, index) if index else (read + '()')
-            expr = '%s->%s' % (UNCONST, call)
-        accessors.append('%s __fastcall %s() const { return (%s)(%s); }'
-                         % (typ, get_fn, typ, expr))
+            if is_field(read):
+                expr = read
+            else:
+                call = '%s(%s)' % (read, index) if index else (read + '()')
+                expr = '%s->%s' % (UNCONST, call)
+            accessors.append('%s __fastcall %s() const { return (%s)(%s); }'
+                             % (typ, get_fn, typ, expr))
     if write is not None:
         put_fn = '__ps_%s' % name
         if is_field(write):
