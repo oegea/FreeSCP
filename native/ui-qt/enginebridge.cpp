@@ -42,6 +42,10 @@ UnicodeString g_password;
 bool g_engineInited = false;
 std::function<bool(const engine::TransferProgress &)> g_progressCb;
 
+// Last successful connect params, so we can open additional (parallel) connections to the same server.
+struct ConnParams { std::string host; int port = 0; std::string user, password; engine::Protocol protocol = engine::Protocol::Sftp; bool tls = false; bool valid = false; };
+ConnParams g_lastParams;
+
 // Serializes ALL engine access. The engine + single TTerminal are not thread-safe; the GUI runs
 // transfers on a worker thread, so every public entry point takes this (recursive: some call each
 // other, e.g. upload -> remoteConnected). Defensive — the GUI also gates remote UI actions while a
@@ -233,6 +237,7 @@ ConnectResult connectSftp(const std::string & host, int port,
     g_terminal->Open();
     r.ok = true;
     r.currentDir = ToU8(g_terminal->CurrentDirectory);
+    g_lastParams = ConnParams{ host, port, user, password, protocol, tls, true };  // for parallel connections
   }
   catch (Exception & E)
   {
@@ -320,6 +325,118 @@ std::string ExceptionToU8(Exception & E)
   return std::string(UTF8String(msg).c_str());
 }
 } // namespace
+
+//=== parallel-connection pool (experimental; for queue parallelism) ========
+namespace {
+struct ParConn
+{
+  std::unique_ptr<TSessionData> data;
+  std::unique_ptr<TTerminal> term;
+  std::recursive_mutex mtx;            // serializes THIS connection only (parallelism across conns)
+  std::function<bool(const engine::TransferProgress &)> sink;
+};
+std::vector<std::unique_ptr<ParConn>> g_pool;
+std::mutex g_poolMtx;
+}
+
+// FTP's single-connection state machine doesn't run reliably in parallel instances; gate it out.
+bool parallelSupported() { return g_lastParams.valid && g_lastParams.protocol != engine::Protocol::Ftp; }
+
+int openParallelConnection(std::string * error)
+{
+  std::lock_guard<std::mutex> pk(g_poolMtx);
+  if (!g_lastParams.valid) { if (error) *error = "no primary connection"; return 0; }
+  try
+  {
+    EnsureEngineInited();
+    auto c = std::make_unique<ParConn>();
+    c->data.reset(new TSessionData(L""));
+    c->data->Default();
+    c->data->HostName = FromU8(g_lastParams.host);
+    c->data->PortNumber = g_lastParams.port;
+    c->data->UserName = FromU8(g_lastParams.user);
+    c->data->Password = FromU8(g_lastParams.password);
+    switch (g_lastParams.protocol)
+    {
+      case engine::Protocol::Scp:    c->data->FSProtocol = fsSCPonly; break;
+      case engine::Protocol::WebDav: c->data->FSProtocol = fsWebDAV; c->data->Ftps = g_lastParams.tls ? ftpsImplicit : ftpsNone; break;
+      case engine::Protocol::S3:     c->data->FSProtocol = fsS3; c->data->Ftps = g_lastParams.tls ? ftpsImplicit : ftpsNone;
+                                     c->data->S3UrlStyle = s3usPath; c->data->S3DefaultRegion = L"us-east-1"; break;
+      case engine::Protocol::Ftp:    c->data->FSProtocol = fsFTP; c->data->Ftps = g_lastParams.tls ? ftpsImplicit : ftpsNone; break;
+      default:                       c->data->FSProtocol = fsSFTPonly; break;
+    }
+    c->data->FingerprintScan = false;
+    UnicodeString pw = FromU8(g_lastParams.password);
+    ParConn * cp = c.get();
+    c->term.reset(new TTerminal(c->data.get(), Configuration));
+    c->term->OnPromptUser = [pw](TTerminal *, TPromptKind, UnicodeString, UnicodeString, TStrings *, TStrings * Results, bool & Result, void *)
+      { if (Results) for (int i = 0; i < Results->Count; i++) Results->Strings[i] = pw; Result = true; };
+    c->term->OnQueryUser = [](TObject *, const UnicodeString &, TStrings *, unsigned int Answers, const TQueryParams *, unsigned int & Answer, TQueryType, void *)
+      { Answer = (Answers & qaYes) ? qaYes : ((Answers & qaOK) ? qaOK : Answers); };
+    c->term->OnProgress = [cp](TFileOperationProgressType & P)
+      { if (cp->sink) { engine::TransferProgress tp; tp.file = ToU8(P.FileName); tp.transferred = P.TransferredSize; tp.total = P.TransferSize; tp.cps = (std::int64_t)P.CPS(); if (cp->sink(tp)) P.SetCancel(csCancel); } };
+    c->term->Open();
+    g_pool.push_back(std::move(c));
+    return (int)g_pool.size();   // handle = 1-based index
+  }
+  catch (Exception & E) { if (error) *error = ExceptionToU8(E); return 0; }
+  catch (...) { if (error) *error = "unknown error"; return 0; }
+}
+
+static ParConn * poolGet(int handle)
+{ return (handle >= 1 && handle <= (int)g_pool.size()) ? g_pool[handle - 1].get() : nullptr; }
+
+void setProgressSinkVia(int handle, const std::function<bool(const engine::TransferProgress &)> & cb)
+{ ParConn * c = poolGet(handle); if (c) c->sink = cb; }
+
+bool uploadVia(int handle, const std::string & localPathUtf8, const std::string & remoteDirUtf8, std::string * error)
+{
+  ParConn * c = poolGet(handle);
+  if (!c || !c->term || !c->term->Active) { if (error) *error = "parallel connection invalid"; return false; }
+  std::lock_guard<std::recursive_mutex> lk(c->mtx);
+  try
+  {
+    std::unique_ptr<TStrings> files(new TStringList());
+    files->Add(FromU8(localPathUtf8));
+    TCopyParamType cp; cp.Default();
+    return c->term->CopyToRemote(files.get(), UnixIncludeTrailingBackslash(FromU8(remoteDirUtf8)), &cp, cpNoConfirmation, nullptr);
+  }
+  catch (Exception & E) { if (error) *error = ExceptionToU8(E); return false; }
+  catch (...) { if (error) *error = "unknown error"; return false; }
+}
+
+bool downloadVia(int handle, const std::string & remotePathUtf8, const std::string & localDirUtf8, std::string * error)
+{
+  ParConn * c = poolGet(handle);
+  if (!c || !c->term || !c->term->Active) { if (error) *error = "parallel connection invalid"; return false; }
+  std::lock_guard<std::recursive_mutex> lk(c->mtx);
+  try
+  {
+    UnicodeString remote = FromU8(remotePathUtf8);
+    UnicodeString dir = UnixExtractFilePath(remote);
+    c->term->ChangeDirectory(dir);
+    c->term->ReadCurrentDirectory();
+    c->term->ReadDirectory(false);
+    TRemoteFile * rf = nullptr;
+    UnicodeString fn = UnixExtractFileName(remote);
+    for (int i = 0; i < c->term->Files->Count; i++)
+      if (c->term->Files->Files[i]->FileName == fn) rf = c->term->Files->Files[i];
+    if (!rf) { if (error) *error = "file not found on parallel connection"; return false; }
+    std::unique_ptr<TStrings> files(new TStringList());
+    files->AddObject(rf->FullFileName, rf);
+    TCopyParamType cp; cp.Default();
+    return c->term->CopyToLocal(files.get(), IncludeTrailingBackslash(FromU8(localDirUtf8)), &cp, cpNoConfirmation, nullptr);
+  }
+  catch (Exception & E) { if (error) *error = ExceptionToU8(E); return false; }
+  catch (...) { if (error) *error = "unknown error"; return false; }
+}
+
+void closeParallelConnections()
+{
+  std::lock_guard<std::mutex> pk(g_poolMtx);
+  for (auto & c : g_pool) { try { if (c->term && c->term->Active) c->term->Close(); } catch (...) {} }
+  g_pool.clear();
+}
 
 bool uploadToRemote(const std::string & localPathUtf8, const std::string & remoteDirUtf8,
                     std::string * error)

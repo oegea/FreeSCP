@@ -108,6 +108,15 @@ bool remoteChmod(const std::string & nameUtf8, const std::string & octalUtf8, st
 
 void disconnectSftp();
 
+//--- parallel-transfer connection pool (extra connections to the same server) ---
+// Open an additional connection to the primary's server. Returns a handle (>=1) or 0 on failure.
+bool parallelSupported();   // false for FTP (its backend can't run concurrent connections reliably)
+int openParallelConnection(std::string * error = nullptr);
+void setProgressSinkVia(int handle, const std::function<bool(const TransferProgress &)> & cb);
+bool uploadVia(int handle, const std::string & localPath, const std::string & remoteDir, std::string * error = nullptr);
+bool downloadVia(int handle, const std::string & remotePath, const std::string & localDir, std::string * error = nullptr);
+void closeParallelConnections();
+
 } // namespace engine
 
 #endif

@@ -714,40 +714,70 @@ int main(int argc, char ** argv)
     btnCancel->setEnabled(true);
     auto cancel = std::make_shared<std::atomic<bool>>(false);
     *currentCancel = cancel;
-    auto curRow = std::make_shared<std::atomic<int>>(rows.empty() ? -1 : rows[0]);
-    engine::setProgressSink([&, curRow, cancel](const engine::TransferProgress & tp) -> bool {
-      int rowVal = curRow->load();
+
+    // Parallelism: a plain remote copy of >1 files uses up to 2 extra connections (each its own
+    // worker). Moves, local copies and single files stay serial. Falls back to serial if the pool
+    // can't open. Per-worker progress -> that worker's current queue row.
+    const bool wantParallel = (srcRemote != dstRemote) && !isMove && names.size() > 1 && engine::parallelSupported();
+    std::vector<int> handles;
+    if (wantParallel)
+    {
+      int want = (int)std::min<size_t>(2, names.size());
+      for (int k = 0; k < want; ++k) { int h = engine::openParallelConnection(nullptr); if (h > 0) handles.push_back(h); }
+      if (handles.size() < 2) { engine::closeParallelConnections(); handles.clear(); }  // need >=2 to be worth it
+    }
+    const int nWorkers = handles.empty() ? 1 : (int)handles.size();
+
+    auto markActive = [&, rows](int rowVal) { QMetaObject::invokeMethod(&window, [&, rowVal]{ queueStatus(rowVal, "active"); }, Qt::QueuedConnection); };
+    auto markDone = [&](int rowVal, const QString & status, bool okRow) {
+      QMetaObject::invokeMethod(&window, [&, rowVal, status, okRow]{
+        queueStatus(rowVal, status); if (okRow) { queueCell(rowVal, 3, "100%"); queueCell(rowVal, 4, QString()); queueCell(rowVal, 5, QString()); }
+      }, Qt::QueuedConnection);
+    };
+    auto progressFor = [&, cancel](int rowVal, const engine::TransferProgress & tp) -> bool {
       int pct = tp.total > 0 ? (int)(tp.transferred * 100 / tp.total) : 0;
       qint64 cps = tp.cps; qint64 eta = (cps > 0 && tp.total > tp.transferred) ? (tp.total - tp.transferred) / cps : 0;
       QMetaObject::invokeMethod(&window, [&, rowVal, pct, cps, eta]{
         queueCell(rowVal, 3, QString("%1%").arg(pct)); queueCell(rowVal, 4, fmtSpeed(cps)); queueCell(rowVal, 5, fmtEta(eta));
       }, Qt::QueuedConnection);
       return cancel->load();
-    });
-    std::thread([&, rows, names, srcDir, dstDir, srcRemote, dstRemote, isMove, from, to, curRow, cancel]{
-      int ok = 0;
-      for (size_t i = 0; i < names.size(); ++i)
-      {
-        if (cancel->load()) { QMetaObject::invokeMethod(&window, [&, r = rows[i]]{ queueStatus(r, "cancelled"); }, Qt::QueuedConnection); continue; }
-        int rowVal = rows[i]; curRow->store(rowVal);
-        QMetaObject::invokeMethod(&window, [&, rowVal]{ queueStatus(rowVal, "active"); }, Qt::QueuedConnection);
-        std::string src = engine::joinPath(srcDir, names[i]);
-        std::string err; bool r;
-        if (!srcRemote && !dstRemote) r = engine::copyFile(src, engine::joinPath(dstDir, names[i]));
-        else if (!srcRemote && dstRemote) r = engine::uploadToRemote(src, dstDir, &err);
-        else r = engine::downloadFromRemote(src, dstDir, &err);
-        if (r && isMove)
-          r = srcRemote ? engine::remoteDelete(names[i], &err) : engine::localDelete(srcDir, names[i], &err);
-        bool cancelled = cancel->load();
-        QString status = cancelled ? "cancelled" : (r ? "done" : ("failed" + (err.empty() ? QString() : (": " + u8(err)))));
-        QMetaObject::invokeMethod(&window, [&, rowVal, status, r]{
-          queueStatus(rowVal, status); if (r) { queueCell(rowVal, 3, "100%"); queueCell(rowVal, 4, QString()); queueCell(rowVal, 5, QString()); }
-        }, Qt::QueuedConnection);
-        if (r && !cancelled) ++ok;
-      }
-      int total = (int)names.size();
+    };
+
+    auto nextIdx = std::make_shared<std::atomic<size_t>>(0);
+    auto okCount = std::make_shared<std::atomic<int>>(0);
+
+    // Coordinator thread: spawn workers, join, then marshal completion (keeps the UI thread free).
+    std::thread([&, rows, names, srcDir, dstDir, srcRemote, dstRemote, isMove, from, to, cancel, handles, nWorkers, nextIdx, okCount, markActive, markDone, progressFor]{
+      auto worker = [&](int handle) {   // handle 0 = primary (serial), >=1 = pool connection
+        auto curRow = std::make_shared<std::atomic<int>>(-1);
+        if (handle == 0) engine::setProgressSink([&, curRow](const engine::TransferProgress & tp){ return progressFor(curRow->load(), tp); });
+        else engine::setProgressSinkVia(handle, [&, curRow](const engine::TransferProgress & tp){ return progressFor(curRow->load(), tp); });
+        for (;;)
+        {
+          size_t i = nextIdx->fetch_add(1);
+          if (i >= names.size()) break;
+          int rowVal = rows[i];
+          if (cancel->load()) { markDone(rowVal, "cancelled", false); continue; }
+          curRow->store(rowVal); markActive(rowVal);
+          std::string src = engine::joinPath(srcDir, names[i]);
+          std::string err; bool r;
+          if (!srcRemote && !dstRemote) r = engine::copyFile(src, engine::joinPath(dstDir, names[i]));
+          else if (handle != 0) r = srcRemote ? engine::downloadVia(handle, src, dstDir, &err) : engine::uploadVia(handle, src, dstDir, &err);
+          else r = srcRemote ? engine::downloadFromRemote(src, dstDir, &err) : engine::uploadToRemote(src, dstDir, &err);
+          if (r && isMove) r = srcRemote ? engine::remoteDelete(names[i], &err) : engine::localDelete(srcDir, names[i], &err);
+          bool cancelled = cancel->load();
+          markDone(rowVal, cancelled ? "cancelled" : (r ? "done" : ("failed" + (err.empty() ? QString() : (": " + u8(err))))), r && !cancelled);
+          if (r && !cancelled) okCount->fetch_add(1);
+        }
+      };
+      std::vector<std::thread> ts;
+      if (handles.empty()) worker(0);
+      else { for (int h : handles) ts.emplace_back([&, h]{ worker(h); }); for (auto & t : ts) t.join(); }
+
+      int ok = okCount->load(), total = (int)names.size();
       QMetaObject::invokeMethod(&window, [&, ok, total, isMove, from, to]{
         engine::setProgressSink(nullptr);
+        engine::closeParallelConnections();
         gTransferRunning = false;
         btnCancel->setEnabled(false);
         to->refresh(); if (isMove) from->refresh();
