@@ -55,6 +55,8 @@
 static QString u8(const std::string & s) { return QString::fromUtf8(s.c_str()); }
 static std::string s8(const QString & s) { return s.toUtf8().constData(); }
 
+static bool gShowHidden = true;   // WinSCP "Show hidden files" toggle (dotfiles)
+
 //===========================================================================
 // Login dialog — faithful to WinSCP: a sites tree on the left, a "Session" form on the right
 // (File protocol, Host name + Port, User name, Password), Tools/Manage + Login/Close buttons.
@@ -397,6 +399,10 @@ public:
     FPath = path;
     FPathEdit->setText(path);
     FEntries = FRemote ? engine::listRemoteDir(s8(path)) : engine::listLocalDir(s8(path));
+    if (!gShowHidden)
+      FEntries.erase(std::remove_if(FEntries.begin(), FEntries.end(),
+        [](const engine::DirEntry & e) { return !e.isParent && !e.name.empty() && e.name[0] == '.'; }),
+        FEntries.end());
     FDirs = 0; FFiles = 0;
     for (const auto & e : FEntries) { if (e.isParent) continue; if (e.isDir) ++FDirs; else ++FFiles; }
     sortEntries();
@@ -848,6 +854,9 @@ int main(int argc, char ** argv)
     auto * mOptions = window.menuBar()->addMenu("&Options");
     mOptions->addAction("Session &log\tCtrl+L", [&]{ logDock->setVisible(!logDock->isVisible()); });
     mOptions->addAction("Transfer &queue\tCtrl+Q", [&]{ queueDock->setVisible(!queueDock->isVisible()); });
+    { auto * a = mOptions->addAction("Show &hidden files"); a->setCheckable(true); a->setChecked(gShowHidden);
+      a->setShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_H));
+      QObject::connect(a, &QAction::toggled, [&](bool on){ gShowHidden = on; left->refresh(); right->refresh(); }); }
     auto * mRemote = window.menuBar()->addMenu("&Remote");
     mRemote->addAction("&Refresh", [&]{ if (right->isRemote()) right->refresh(); });
     auto * mHelp = window.menuBar()->addMenu("&Help");
