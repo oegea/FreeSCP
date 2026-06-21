@@ -34,15 +34,17 @@ Expected harness output:
 [harness] Done.
 ```
 
-## >>> THE #1 NEXT TASK: -fshort-wchar on the putty libs (ABI), then SCP runtime <<<
+## >>> THE #1 NEXT TASK: SCP protocol runtime shake-out <<<
 
-Remote nav, upload/download (F5), mkdir/rename/delete, AND properties (chmod, F9) now WORK
-(see STATUS.md). Next structural item: build -fshort-wchar into puttycore/puttyplatform/
-puttycrypto_vs (currently 4-byte wchar_t vs the engine's 2-byte — SFTP is char-based so it links
-+ runs, but any UTF-16-crossing path is unsafe). Then SCP protocol runtime shake-out
-(ScpFileSystem compiles; needs the same runtime debugging SFTP got). Watch the two transfer-era
-hazards: (a) any TStrings passed to ProcessFiles must carry TRemoteFile* as each entry's Object;
-(b) never call libc wcs* on engine strings — route through WcsCompat.h.
+Remote nav, upload/download (F5), mkdir/rename/delete, AND properties (chmod, F9) now WORK over
+SFTP (see STATUS.md). The putty-libs -fshort-wchar item is DEFERRED (investigated: clang poisons
+wcs* under -fshort-wchar and putty's wide-string utils need them; off the SFTP path; keeping putty
+4-byte — see STATUS.md "Investigated: -fshort-wchar on the putty libs"). Next: SCP protocol runtime
+(ScpFileSystem.cpp compiles; needs the same runtime debugging SFTP got — connect with
+FSProtocol=fsSCPonly via the harness, fix what breaks). Then Phase 4 (FTP/S3/WebDAV — unguard
+Terminal.cpp Open() branches) and Phase 7 (rebuild the 48 VCL dialogs in Qt). Watch the two
+transfer-era hazards: (a) any TStrings passed to ProcessFiles must carry TRemoteFile* as each
+entry's Object; (b) never call libc wcs* on engine strings — route through WcsCompat.h.
 
 Possible smaller follow-ups: owner/group/timestamp in the properties path (chmod done; the engine
 ChangeFileProperties already supports vpOwner/vpGroup/vpModification — just needs UI + bridge);

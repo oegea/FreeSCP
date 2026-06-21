@@ -12,8 +12,16 @@
 // rtlcompat's own sources are NOT force-included, so WcsCompat.cpp defines the winscp_* targets
 // without the macros interfering.
 
+// In C++ (the engine), including <wchar.h> first keeps the system declarations pristine and is
+// harmless. In C (putty) under -fshort-wchar, clang POISONS the wcs* identifiers as soon as
+// <wchar.h> is seen (to stop exactly the 4-byte/2-byte mismatch we are correcting), so our
+// #define of those names would trip "attempt to use a poisoned identifier". There we include
+// only <stddef.h>, which still provides wchar_t and size_t, and never pull <wchar.h>.
+#ifdef __cplusplus
 #include <wchar.h>
+#else
 #include <stddef.h>
+#endif
 
 #ifdef __cplusplus
 extern "C" {

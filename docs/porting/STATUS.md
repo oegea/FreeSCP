@@ -305,3 +305,21 @@ Debugging note: an early test "failed" only because the seed files were created 
 SETSTAT(flags=0x4, perms=0600) and the server correctly returned permission-denied. Test against
 files the login user owns (e.g. uploaded ones). The wire path (AddProperties/AddCardinal, 4-byte)
 was correct throughout. NEXT: -fshort-wchar on the putty libs (ABI), then SCP runtime.
+
+## Investigated: -fshort-wchar on the putty libs — DEFERRED (clang poisons wcs*, off the SFTP path)
+Attempted to build puttycore/puttyplatform/puttycrypto_vs with -fshort-wchar (2-byte wchar_t) to
+match the engine. Blocked by design: under -fshort-wchar clang POISONS the libc wcs* identifiers
+(`#pragma`-style) as soon as <wchar.h> is included in C, precisely to prevent the 4-byte/2-byte ABI
+mix. PuTTY's wide-string utilities (utils/burnwcs.c, dupwcs.c, dup_{mb_to_wc,wc_to_mb}.c, the
+utf8<->wide converters, stripctrl.c, settings.c) `#include <wchar.h>` and call wcslen/wcscpy, so they
+fail to compile under -fshort-wchar; a macro-redirect doesn't survive because the later <wchar.h>
+poison pragma clobbers our macro. Compiling them 4-byte while the rest is 2-byte would make putty
+internally inconsistent. The only clean route is editing ~9 upstream putty files to use 2-byte-safe
+replacements — high churn on vendored code for ZERO functional payoff: those utils are terminal/
+charset/display helpers that are NOT on the SFTP path, which is char/UTF-8 based. Every SFTP feature
+(connect, auth, host-key, listing, nav, upload/download, mkdir/rename/delete, chmod) works correctly
+with the current 4-byte putty, i.e. no wide string is corrupted crossing PuttyIntf in practice.
+Decision: keep putty at 4-byte wchar_t. Revisit only if a concrete UTF-16-crossing putty path
+(e.g. GSSAPI principal names, certain key-file paths) is ever exercised. The wcs* class-bug on the
+ENGINE side is already handled by WcsCompat.h (-include via winscpcore_flags). Made WcsCompat.h
+include <stddef.h> instead of <wchar.h> in C mode (future-proof; avoids the poison if ever used in C).
