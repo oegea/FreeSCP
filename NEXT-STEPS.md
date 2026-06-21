@@ -2,8 +2,9 @@
 
 You are continuing a port of **WinSCP** (Windows-only SFTP/SCP/FTP file manager) to **native
 macOS** (then Linux), keeping the full GUI in **Qt 6**. This file is the authoritative handoff.
-Read it fully, then read `docs/porting/RESUME.md`, `docs/porting/STATUS.md`,
-`docs/porting/UPSTREAM-PATCHES.md`, and `CLAUDE.md`.
+Read it fully, then read **`docs/porting/LEARNINGS.md`** (porting-class bugs & debug techniques —
+read BEFORE debugging anything, it will save you hours), `docs/porting/RESUME.md`,
+`docs/porting/STATUS.md`, `docs/porting/UPSTREAM-PATCHES.md`, and `CLAUDE.md`.
 
 ## TL;DR — where we are
 
