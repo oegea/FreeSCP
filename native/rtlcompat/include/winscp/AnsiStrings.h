@@ -26,8 +26,9 @@ public:
 
   int Length() const { return static_cast<int>(FData.size()); }
   bool IsEmpty() const { return FData.empty(); }
-  const char * c_str() const { return FData.c_str(); }
-  char * c_str() { return &FData[0]; }
+  // Embarcadero AnsiString::c_str() returns a non-const char* even on a const string (engine
+  // code assigns it to C struct char* fields, e.g. ne_uri.path = Path.c_str()).
+  char * c_str() const { return const_cast<char *>(FData.c_str()); }
   char operator[](int index) const { return FData[static_cast<size_t>(index - 1)]; }
   char & operator[](int index) { return FData[static_cast<size_t>(index - 1)]; }
   void SetLength(int len) { FData.resize(static_cast<size_t>(len)); }
@@ -91,5 +92,10 @@ class UTF8String : public AnsiStringBase
   UTF8String(const AnsiStringBase & o) : AnsiStringBase(o.raw()) {}
   UTF8String(const UnicodeString & s);                             // UTF-16 -> UTF-8
 };
+
+// Left-hand C-literal concatenation (e.g. WebDAV's `L"?" + Query` where Query is a UTF8String);
+// the member operator+ only fires when the left operand is already an AnsiStringBase.
+inline AnsiStringBase operator+(const wchar_t * l, const AnsiStringBase & r) { return AnsiStringBase(l) + r; }
+inline AnsiStringBase operator+(const char * l, const AnsiStringBase & r) { return AnsiStringBase(l) + r; }
 
 #endif

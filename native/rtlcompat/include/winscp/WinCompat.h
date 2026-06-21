@@ -140,6 +140,15 @@ const Word fmShareDenyWrite = 0x0020;
 #define OPEN_EXISTING 3
 #define OPEN_ALWAYS 4
 
+//--- SetFilePointer move method / _open_osfhandle flags (POSIX has no O_BINARY -> 0) ---
+#define FILE_BEGIN   0
+#define FILE_CURRENT 1
+#define FILE_END     2
+#define INVALID_SET_FILE_POINTER ((DWORD)-1)
+#ifndef O_BINARY
+#define O_BINARY 0
+#endif
+
 //--- virtual memory query (VirtualQuery / MEMORY_BASIC_INFORMATION) ---
 #define MEM_COMMIT  0x1000
 #define MEM_RESERVE 0x2000

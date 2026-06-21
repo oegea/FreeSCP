@@ -45,6 +45,13 @@ public:
   UnicodeString(const wchar_t * s) { if (s) while (*s) FData.push_back(static_cast<char16_t>(*s++)); }
   // C++Builder UnicodeString accepts narrow (ANSI) literals/strings too.
   UnicodeString(const char * s) { if (s) while (*s) FData.push_back(static_cast<char16_t>(static_cast<unsigned char>(*s++))); }
+  // From a UTF-32 literal (engine uses e.g. U"\U0001F512" for a WebDAV lock glyph). Encode each
+  // code point to UTF-16, emitting a surrogate pair for astral planes (> U+FFFF).
+  UnicodeString(const char32_t * s)
+  { if (s) for (; *s; ++s) { char32_t c = *s;
+      if (c <= 0xFFFF) FData.push_back(static_cast<char16_t>(c));
+      else { c -= 0x10000; FData.push_back(static_cast<char16_t>(0xD800 + (c >> 10)));
+             FData.push_back(static_cast<char16_t>(0xDC00 + (c & 0x3FF))); } } }
   // From the byte-string family (latin1 widening; UTF-8 decode for UTF8String is a TODO).
   UnicodeString(const AnsiStringBase & s)
   { for (char c : s.raw()) FData.push_back(static_cast<char16_t>(static_cast<unsigned char>(c))); }

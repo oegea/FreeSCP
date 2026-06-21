@@ -57,6 +57,7 @@ The WinSCP neon fork conflates "WINSCP integration" with "Windows". We build neo
 etc), so the WINSCP branches that were written for Windows must be `_WIN32`-guarded. All are
 `#ifdef`-guarded so the upstream Windows build is byte-identical.
 
+- `libs/neon/src/ne_defs.h` — under `NE_LFS` (WebDAVFileSystem.cpp defines it) `off64_t` was only typedef'd for _MSC_VER/__BORLANDC__; added `#if !defined(_WIN32) && !defined(__BORLANDC__) typedef off_t off64_t;` (off_t is 64-bit on LP64).
 - `libs/neon/src/config.h` — the whole config is `#ifdef WIN32`. Added an `#else` (non-Windows)
   branch that `#include "neon_config_unix.h"` (captured autotools output, lives in `native/neon/`).
   Without this, non-Windows builds get an empty config (no NE_FMT_*, no HAVE_*).

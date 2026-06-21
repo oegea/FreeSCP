@@ -456,3 +456,21 @@ a def-guard), neon `off64_t` in ne_defs.h (NE_LFS path; define off64_t or force 
 `_close`/`O_BINARY`/`FILE_BEGIN` (rtlcompat winapi stubs), a `FormatDateTime(fmt, dt, FormatSettings)`
 overload, and a const-qualifier assign (Uri.path). **S3FileSystem.cpp** also needs a System.JSON shim.
 Then link (libs3 for S3) + un-guard Terminal.cpp Open() + runtime-debug vs a WebDAV server.
+
+### Phase 4 — WebDAVFileSystem.cpp compiles + links (3/4 WebDAV/S3 TUs in the build)
+WebDAVFileSystem.cpp now joins NeonIntf+Http in winscpcore_neon (compiles AND links into harness/qt
+with libneon+libexpat). Fixes this round:
+- rtlcompat: `_open_osfhandle`/`_close`/`SetFilePointer` + `O_BINARY`/`FILE_BEGIN`/`FILE_CURRENT`/
+  `FILE_END` (WebDAV upload/download fd path, over our fd-packed-HANDLE); `AnsiStringBase::c_str()
+  const` now returns `char*` (Embarcadero fidelity — `ne_uri.path = Path.c_str()`); free
+  `operator+(const wchar_t*/char*, AnsiStringBase)`; `UnicodeString(const char32_t*)` ctor (UTF-32
+  literal `U"\U0001F512"` -> UTF-16 surrogates); a 3-arg `FormatDateTime(fmt, dt, TFormatSettings)`
+  overload (NOTE: still ISO-format, not the Delphi picture — HTTP-date header wrong until a real
+  picture formatter; TODO).
+- genprops: slot-rule guard skipping `T…Event` type tokens (an unnamed event-type PARAM in a method
+  definition, e.g. WebDAV's CalculateFilesChecksum override, was being wrapped as a closure).
+- neon: `libs/neon/src/ne_defs.h` off64_t typedef for non-Windows under NE_LFS (UPSTREAM-PATCHES).
+Full build + ctest green; SFTP/SCP regression clean. REMAINING: S3FileSystem.cpp (needs a
+System.JSON shim + libs3 built) — then un-guard Terminal.cpp Open() WebDAV branch + runtime-debug
+against a WebDAV server (FormatDateTime picture + the upload fd path are the likely first runtime
+issues).

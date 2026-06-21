@@ -74,6 +74,7 @@ int __fastcall MilliSecondOfTheMinute(const TDateTime & DT);
 int __fastcall MilliSecondOfTheSecond(const TDateTime & DT);
 __int64 __fastcall MilliSecondOfTheYear(const TDateTime & DT);
 UnicodeString __fastcall FormatDateTime(const UnicodeString & Fmt, const TDateTime & DT);
+UnicodeString __fastcall FormatDateTime(const UnicodeString & Fmt, const TDateTime & DT, const TFormatSettings & FS);
 UnicodeString __fastcall DateTimeToStr(const TDateTime & DT);
 UnicodeString __fastcall DateToStr(const TDateTime & DT);
 UnicodeString __fastcall TimeToStr(const TDateTime & DT);
@@ -213,6 +214,11 @@ int   __fastcall lstrcmpi(const wchar_t * a, const wchar_t * b);
 const wchar_t * __fastcall PathSkipRoot(const wchar_t * Path);
 bool __fastcall FileGetSymLinkTarget(const UnicodeString & FileName, UnicodeString & Target);
 HANDLE __fastcall CreateFile(const wchar_t *, DWORD, DWORD, void *, DWORD, DWORD, HANDLE);
+// CRT/Win32 file helpers over our fd-packed-in-HANDLE convention (see CreateFile/FileSeek).
+// WebDAVFileSystem uses _open_osfhandle/_close + SetFilePointer for its upload/download fd path.
+int    __fastcall _open_osfhandle(intptr_t Handle, int Flags);
+int    __fastcall _close(int FD);
+DWORD  __fastcall SetFilePointer(HANDLE h, long DistLow, long * DistHigh, DWORD MoveMethod);
 HANDLE __fastcall CreateToolhelp32Snapshot(DWORD, DWORD);
 HANDLE __fastcall OpenProcess(DWORD, BOOL, DWORD);
 BOOL  __fastcall Process32First(HANDLE, PROCESSENTRY32 *);

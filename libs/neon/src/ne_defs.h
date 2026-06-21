@@ -41,6 +41,9 @@ typedef __int64 off64_t;
 # ifdef __BORLANDC__
 typedef __int64 off64_t;
 # endif
+# if !defined(_WIN32) && !defined(__BORLANDC__)
+typedef off_t off64_t;  /* native port: off_t is already 64-bit on LP64 (macOS/Linux) */
+# endif
 typedef off64_t ne_off_t;
 #else
 typedef off_t ne_off_t;

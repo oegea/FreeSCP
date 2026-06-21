@@ -120,9 +120,7 @@ target_sources(winscpcore PRIVATE $<TARGET_OBJECTS:winscpcore_ssh>)
 set(CORE_NEON_NAMES
   NeonIntf.cpp
   Http.cpp
-  # WebDAVFileSystem.cpp  # Phase 4 next: ~6 compile gaps (UTF-32 literal, genprops
-  # CalculateFilesChecksum-definition mangling, off64_t, _close/O_BINARY/FILE_BEGIN,
-  # FormatDateTime overload, const-qualifier) — inventory in STATUS.md.
+  WebDAVFileSystem.cpp
   # S3FileSystem.cpp     # needs System.JSON shim (see STATUS.md)
 )
 set(CORE_NEON_GEN_SOURCES "")

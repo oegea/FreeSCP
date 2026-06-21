@@ -119,6 +119,11 @@ __int64 __fastcall MilliSecondOfTheYear(const TDateTime & DT) { Word y,m,d; Deco
 UnicodeString __fastcall FormatDateTime(const UnicodeString &, const TDateTime & DT)
 { Word y,m,d,h,mi,s,ms; DecodeDate(DT,y,m,d); DecodeTime(DT,h,mi,s,ms);
   return Format(L"%.4d-%.2d-%.2d %.2d:%.2d:%.2d", ARRAYOFCONST(((int)y,(int)m,(int)d,(int)h,(int)mi,(int)s))); }
+// 3-arg overload (with TFormatSettings). NOTE: like the 2-arg, this does not yet interpret the
+// Delphi format picture (ddd/mmm/etc) — it returns the ISO form. WebDAV's HTTP-date header
+// ("ddd, d mmm yyyy hh:nn:ss 'GMT'") will be wrong until a real picture formatter lands. TODO.
+UnicodeString __fastcall FormatDateTime(const UnicodeString & Fmt, const TDateTime & DT, const TFormatSettings &)
+{ return FormatDateTime(Fmt, DT); }
 UnicodeString __fastcall FormatFloat(const UnicodeString &, double Value) { return Format(L"%g", ARRAYOFCONST((Value))); }
 TDateTime __fastcall SystemTimeToDateTime(const SYSTEMTIME & ST)
 { return EncodeDate(ST.wYear, ST.wMonth, ST.wDay) + EncodeTime(ST.wHour, ST.wMinute, ST.wSecond, ST.wMilliseconds); }
@@ -450,6 +455,19 @@ HANDLE __fastcall CreateFile(const wchar_t * FileName, DWORD Access, DWORD /*Sha
   int fd = ::open(ToU8(UnicodeString(FileName)).c_str(), flags, 0644);
   if (fd < 0) { SetLastError((DWORD)errno); return INVALID_HANDLE_VALUE; }
   return reinterpret_cast<HANDLE>((intptr_t)fd);   // fd packed in a HANDLE (see FileSeek/TSafeHandleStream)
+}
+// Our HANDLE already IS the fd (packed via intptr_t), so _open_osfhandle just unpacks it.
+int __fastcall _open_osfhandle(intptr_t Handle, int /*Flags*/) { return static_cast<int>(Handle); }
+int __fastcall _close(int FD) { return ::close(FD); }
+DWORD __fastcall SetFilePointer(HANDLE h, long DistLow, long * DistHigh, DWORD MoveMethod)
+{
+  int whence = (MoveMethod == FILE_CURRENT) ? SEEK_CUR : (MoveMethod == FILE_END) ? SEEK_END : SEEK_SET;
+  off_t off = DistLow;
+  if (DistHigh != nullptr) off |= (static_cast<off_t>(*DistHigh) << 32);
+  off_t r = ::lseek(static_cast<int>(reinterpret_cast<intptr_t>(h)), off, whence);
+  if (r < 0) { SetLastError((DWORD)errno); return INVALID_SET_FILE_POINTER; }
+  if (DistHigh != nullptr) *DistHigh = static_cast<long>(r >> 32);
+  return static_cast<DWORD>(r & 0xFFFFFFFF);
 }
 HANDLE __fastcall CreateToolhelp32Snapshot(DWORD, DWORD) { return INVALID_HANDLE_VALUE; }
 HANDLE __fastcall OpenProcess(DWORD, BOOL, DWORD) { return nullptr; }

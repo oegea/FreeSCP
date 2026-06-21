@@ -396,6 +396,11 @@ def _make_slot_rule(fn, pre_args, bare_ok=True, require_comma=False):
         # OutputEvent param) — only explicit-receiver method refs (recv->M / recv.M) are wrapped.
         if bare in _BIND_SKIP or re.match(r'F[A-Z]', bare) or bare.startswith('On'):
             return m.group(0)
+        # A Delphi event TYPE name in the slot is an unnamed parameter of a method DEFINITION
+        # (e.g. WebDAV's `CalculateFilesChecksum(..., TCalculatedChecksumEvent, ...)`), not a
+        # method reference to wrap. Heuristic: `T…Event` is a type, never a callable member.
+        if re.match(r'T[A-Z]\w*Event$', bare):
+            return m.group(0)
         if is_bare and not bare_ok:
             return m.group(0)
         pre = ''.join(m.group('a%d' % i) + ', ' for i in range(pre_args))
