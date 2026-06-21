@@ -34,13 +34,20 @@ Expected harness output:
 [harness] Done.
 ```
 
-## >>> THE #1 NEXT TASK: remaining remote file ops (mkdir/delete/rename/properties) <<<
+## >>> THE #1 NEXT TASK: file properties (rights/timestamp) + then putty ABI / SCP <<<
 
-Remote nav AND remote upload/download (F5) now WORK (see STATUS.md). Next: wire the remaining
-file operations via TTerminal — CreateDirectory, DeleteFile(s), RenameFile/MoveFile,
-ChangeFileProperties (rights/timestamp) — into enginebridge + the Qt GUI. Watch for the same two
-hazards that bit transfers: (a) any TStrings passed to ProcessFiles must carry TRemoteFile* as
-each entry's Object; (b) never call libc wcs* on engine strings — route through WcsCompat.h.
+Remote nav, upload/download (F5), and mkdir/rename/delete now WORK (see STATUS.md). Remaining
+file op: ChangeFileProperties (TRemoteProperties: rights/owner/group/timestamp) + a Qt properties
+dialog. After that: build -fshort-wchar into the putty libs (ABI safety), then the SCP protocol
+runtime shake-out. Watch the two transfer-era hazards: (a) any TStrings passed to ProcessFiles
+must carry TRemoteFile* as each entry's Object; (b) never call libc wcs* on engine strings —
+route through WcsCompat.h.
+
+## (DONE) remote file ops — mkdir / rename / delete WORK
+
+Engine ops harness-validated; Qt GUI wired (F7 new folder, F2 rename, Del delete; remote-vs-local
+dispatch on the active panel). enginebridge: remoteMakeDir/Rename/Delete + local* equivalents.
+See STATUS.md.
 
 ## (DONE) remote upload/download (F5) — WORKS
 

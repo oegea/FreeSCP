@@ -282,3 +282,14 @@ Two root-cause fixes (rtlcompat only, no source/ edits):
    the engine uses to 2-byte-correct implementations in rtlcompat. **Audit class: any libc wide-string
    function on engine strings is unsafe under -fshort-wchar — route new ones through WcsCompat.**
 ctest green. NEXT: remaining file ops (mkdir/delete/rename/properties) via TTerminal.
+
+## Remote file ops WORK — mkdir / rename / delete (engine + Qt GUI)
+TTerminal CreateDirectory / RenameFile / DeleteFile run over the live SFTP session. Harness-validated
+(create /config/optest_dir -> rename -> delete, server ends clean). enginebridge gains
+remoteMakeDir/remoteRename/remoteDelete (rename/delete look the entry up in the live listing via a
+shared FindInListing helper; CreateDirectory gets a default TRemoteProperties, which it asserts
+non-null). Local equivalents localMakeDir/localDelete/localRename (std::filesystem) added too, so the
+GUI actions work on either panel. Qt GUI: toolbar + shortcuts F7 (new folder), F2 (rename, single
+selection), Del (delete, with confirm); each dispatches remote-vs-local on the active panel.
+ctest green; winscp-qt builds + launches. NEXT: ChangeFileProperties (rights/timestamp) + a
+properties dialog; then -fshort-wchar on the putty libs (ABI safety) / SCP runtime.

@@ -44,6 +44,12 @@ std::string formatSize(std::int64_t bytes);
 // Copy a local file (real file operation via the platform layer). Returns true on success.
 bool copyFile(const std::string & srcUtf8, const std::string & dstUtf8);
 
+// Local file operations (std::filesystem). `dir` is the directory; `name`/`old`/`new` are entries.
+bool localMakeDir(const std::string & dirUtf8, const std::string & nameUtf8, std::string * error = nullptr);
+bool localDelete(const std::string & dirUtf8, const std::string & nameUtf8, std::string * error = nullptr);
+bool localRename(const std::string & dirUtf8, const std::string & oldUtf8, const std::string & newUtf8,
+                 std::string * error = nullptr);
+
 //--- remote SFTP session (a single active session; mirrors the local panel) ---
 struct ConnectResult
 {
@@ -67,6 +73,13 @@ bool uploadToRemote(const std::string & localPathUtf8, const std::string & remot
                     std::string * error = nullptr);
 bool downloadFromRemote(const std::string & remotePathUtf8, const std::string & localDirUtf8,
                         std::string * error = nullptr);
+
+// Remote file operations on the live SFTP session (TTerminal). `name` is the entry name in the
+// current remote directory (rename/delete look it up in the live listing). Return true on success.
+bool remoteMakeDir(const std::string & nameUtf8, std::string * error = nullptr);
+bool remoteDelete(const std::string & nameUtf8, std::string * error = nullptr);
+bool remoteRename(const std::string & oldNameUtf8, const std::string & newNameUtf8,
+                  std::string * error = nullptr);
 
 void disconnectSftp();
 

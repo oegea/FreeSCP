@@ -19,6 +19,7 @@
 #include <QAction>
 #include <QKeyEvent>
 #include <QMessageBox>
+#include <QInputDialog>
 #include <QString>
 #include <QDialog>
 #include <QFormLayout>
@@ -195,6 +196,10 @@ int main(int argc, char ** argv)
   tb->addSeparator();
   auto * actConnect = tb->addAction("🔌 Connect…");
   auto * actCopy = tb->addAction("F5 Copy →");
+  tb->addSeparator();
+  auto * actMkdir = tb->addAction("F7 New Folder");
+  auto * actRename = tb->addAction("F2 Rename");
+  auto * actDelete = tb->addAction("Del Delete");
 
   // SFTP connect dialog -> right panel becomes the remote session.
   QObject::connect(actConnect, &QAction::triggered, [&] {
@@ -266,6 +271,59 @@ int main(int argc, char ** argv)
   QObject::connect(actCopy, &QAction::triggered, doCopy);
   auto * f5 = new QAction(&window); f5->setShortcut(Qt::Key_F5);
   QObject::connect(f5, &QAction::triggered, doCopy); window.addAction(f5);
+
+  auto doMkdir = [&] {
+    bool okIn = false;
+    QString name = QInputDialog::getText(&window, "New Folder", "Folder name:",
+                                         QLineEdit::Normal, "", &okIn);
+    if (!okIn || name.isEmpty()) return;
+    std::string err; bool ok = active->isRemote()
+      ? engine::remoteMakeDir(s8(name), &err)
+      : engine::localMakeDir(s8(active->path()), s8(name), &err);
+    active->refresh();
+    window.statusBar()->showMessage(ok ? QString("Created %1").arg(name)
+                                       : QString("New folder failed — %1").arg(u8(err)));
+  };
+  auto doRename = [&] {
+    QStringList sel = active->selectedFiles();
+    if (sel.size() != 1) { window.statusBar()->showMessage("Select exactly one item to rename"); return; }
+    bool okIn = false;
+    QString nn = QInputDialog::getText(&window, "Rename", "New name:",
+                                       QLineEdit::Normal, sel.first(), &okIn);
+    if (!okIn || nn.isEmpty() || nn == sel.first()) return;
+    std::string err; bool ok = active->isRemote()
+      ? engine::remoteRename(s8(sel.first()), s8(nn), &err)
+      : engine::localRename(s8(active->path()), s8(sel.first()), s8(nn), &err);
+    active->refresh();
+    window.statusBar()->showMessage(ok ? QString("Renamed to %1").arg(nn)
+                                       : QString("Rename failed — %1").arg(u8(err)));
+  };
+  auto doDelete = [&] {
+    QStringList sel = active->selectedFiles();
+    if (sel.isEmpty()) { window.statusBar()->showMessage("No files selected"); return; }
+    if (QMessageBox::question(&window, "Delete",
+          QString("Delete %1 item(s)?").arg(sel.size())) != QMessageBox::Yes) return;
+    int ok = 0; std::string err;
+    for (const QString & f : sel)
+    {
+      bool r = active->isRemote() ? engine::remoteDelete(s8(f), &err)
+                                  : engine::localDelete(s8(active->path()), s8(f), &err);
+      if (r) ++ok;
+    }
+    active->refresh();
+    QString msg = QString("Deleted %1/%2 item(s)").arg(ok).arg(sel.size());
+    if ((ok < sel.size()) && !err.empty()) msg += " — " + u8(err);
+    window.statusBar()->showMessage(msg);
+  };
+  QObject::connect(actMkdir, &QAction::triggered, doMkdir);
+  QObject::connect(actRename, &QAction::triggered, doRename);
+  QObject::connect(actDelete, &QAction::triggered, doDelete);
+  auto * f7 = new QAction(&window); f7->setShortcut(Qt::Key_F7);
+  QObject::connect(f7, &QAction::triggered, doMkdir); window.addAction(f7);
+  auto * f2 = new QAction(&window); f2->setShortcut(Qt::Key_F2);
+  QObject::connect(f2, &QAction::triggered, doRename); window.addAction(f2);
+  auto * del = new QAction(&window); del->setShortcut(QKeySequence::Delete);
+  QObject::connect(del, &QAction::triggered, doDelete); window.addAction(del);
 
   left->setActive(true);
   left->navigate(u8(engine::homeDir()));

@@ -95,6 +95,32 @@ bool copyFile(const std::string & srcUtf8, const std::string & dstUtf8)
   return !ec;
 }
 
+bool localMakeDir(const std::string & dirUtf8, const std::string & nameUtf8, std::string * error)
+{
+  std::error_code ec;
+  bool ok = std::filesystem::create_directory(std::filesystem::path(dirUtf8) / nameUtf8, ec);
+  if (!ok && error) *error = ec ? ec.message() : "already exists";
+  return ok;
+}
+
+bool localDelete(const std::string & dirUtf8, const std::string & nameUtf8, std::string * error)
+{
+  std::error_code ec;
+  std::filesystem::remove_all(std::filesystem::path(dirUtf8) / nameUtf8, ec);
+  if (ec && error) *error = ec.message();
+  return !ec;
+}
+
+bool localRename(const std::string & dirUtf8, const std::string & oldUtf8, const std::string & newUtf8,
+                 std::string * error)
+{
+  std::error_code ec;
+  std::filesystem::rename(std::filesystem::path(dirUtf8) / oldUtf8,
+                          std::filesystem::path(dirUtf8) / newUtf8, ec);
+  if (ec && error) *error = ec.message();
+  return !ec;
+}
+
 std::vector<DirEntry> listLocalDir(const std::string & utf8Path)
 {
   std::vector<DirEntry> result;
@@ -220,6 +246,15 @@ std::vector<DirEntry> listRemoteDir(const std::string & utf8Path)
 }
 
 namespace {
+// Find an entry by name in the current remote listing (the panel the user is browsing).
+TRemoteFile * FindInListing(const UnicodeString & name)
+{
+  TRemoteFileList * Files = g_terminal ? g_terminal->Files : nullptr;
+  if (Files != nullptr)
+    for (int i = 0; i < Files->Count; i++)
+      if (Files->Files[i]->FileName == name) return Files->Files[i];
+  return nullptr;
+}
 // Flatten an engine exception (incl. ExtException MoreMessages chain) to a UTF-8 string.
 std::string ExceptionToU8(Exception & E)
 {
@@ -257,12 +292,7 @@ bool downloadFromRemote(const std::string & remotePathUtf8, const std::string & 
     // CopyToLocal requires each entry's Object to be the TRemoteFile* (ProcessFiles reads
     // FileList->Objects[Index]); a bare string list yields a NULL File and crashes. Find the
     // file in the current listing (the panel the user is browsing) and attach it.
-    UnicodeString name = UnixExtractFileName(FromU8(remotePathUtf8));
-    TRemoteFile * rf = nullptr;
-    TRemoteFileList * Files = g_terminal->Files;
-    if (Files != nullptr)
-      for (int i = 0; i < Files->Count; i++)
-        if (Files->Files[i]->FileName == name) { rf = Files->Files[i]; break; }
+    TRemoteFile * rf = FindInListing(UnixExtractFileName(FromU8(remotePathUtf8)));
     if (rf == nullptr) { if (error) *error = "file not in current listing"; return false; }
 
     std::unique_ptr<TStrings> files(new TStringList());
@@ -270,6 +300,48 @@ bool downloadFromRemote(const std::string & remotePathUtf8, const std::string & 
     TCopyParamType cp; cp.Default();
     UnicodeString target = IncludeTrailingBackslash(FromU8(localDirUtf8));
     return g_terminal->CopyToLocal(files.get(), target, &cp, cpNoConfirmation, nullptr);
+  }
+  catch (Exception & E) { if (error) *error = ExceptionToU8(E); return false; }
+  catch (...) { if (error) *error = "unknown error"; return false; }
+}
+
+bool remoteMakeDir(const std::string & nameUtf8, std::string * error)
+{
+  if (!remoteConnected()) { if (error) *error = "not connected"; return false; }
+  try
+  {
+    UnicodeString dir = UnixIncludeTrailingBackslash(g_terminal->CurrentDirectory) + FromU8(nameUtf8);
+    TRemoteProperties props;   // CreateDirectory asserts non-null; empty Valid = no extra props
+    g_terminal->CreateDirectory(dir, &props);
+    return true;
+  }
+  catch (Exception & E) { if (error) *error = ExceptionToU8(E); return false; }
+  catch (...) { if (error) *error = "unknown error"; return false; }
+}
+
+bool remoteDelete(const std::string & nameUtf8, std::string * error)
+{
+  if (!remoteConnected()) { if (error) *error = "not connected"; return false; }
+  try
+  {
+    TRemoteFile * rf = FindInListing(FromU8(nameUtf8));
+    if (rf == nullptr) { if (error) *error = "file not in current listing"; return false; }
+    g_terminal->DeleteFile(rf->FullFileName, rf, nullptr);
+    return true;
+  }
+  catch (Exception & E) { if (error) *error = ExceptionToU8(E); return false; }
+  catch (...) { if (error) *error = "unknown error"; return false; }
+}
+
+bool remoteRename(const std::string & oldNameUtf8, const std::string & newNameUtf8, std::string * error)
+{
+  if (!remoteConnected()) { if (error) *error = "not connected"; return false; }
+  try
+  {
+    TRemoteFile * rf = FindInListing(FromU8(oldNameUtf8));
+    if (rf == nullptr) { if (error) *error = "file not in current listing"; return false; }
+    g_terminal->RenameFile(rf, FromU8(newNameUtf8));
+    return true;
   }
   catch (Exception & E) { if (error) *error = ExceptionToU8(E); return false; }
   catch (...) { if (error) *error = "unknown error"; return false; }
