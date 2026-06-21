@@ -203,6 +203,8 @@ ConnectResult connectSftp(const std::string & host, int port,
       case Protocol::S3:     g_sessionData->FSProtocol = fsS3;
                              g_sessionData->Ftps = tls ? ftpsImplicit : ftpsNone;
                              g_sessionData->S3UrlStyle = s3usPath; g_sessionData->S3DefaultRegion = L"us-east-1"; break;
+      case Protocol::Ftp:    g_sessionData->FSProtocol = fsFTP;
+                             g_sessionData->Ftps = tls ? ftpsImplicit : ftpsNone; break;
       default:               g_sessionData->FSProtocol = fsSFTPonly; break;
     }
     g_sessionData->FingerprintScan = false;

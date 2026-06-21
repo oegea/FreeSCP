@@ -210,11 +210,9 @@ static LoginParams showLoginDialog(QWidget * parent)
   switch (proto->currentIndex())
   {
     case 1: p.protocol = engine::Protocol::Scp; break;
+    case 2: p.protocol = engine::Protocol::Ftp; break;   // FileZilla backend (Phase 8)
     case 3: p.protocol = engine::Protocol::WebDav; break;
     case 4: p.protocol = engine::Protocol::S3; break;
-    case 2: // FTP — not supported yet
-      QMessageBox::information(parent, "WinSCP", "FTP is not supported in this build yet.");
-      return p;
     default: p.protocol = engine::Protocol::Sftp; break;
   }
   p.ok = true;
@@ -730,7 +728,8 @@ int main(int argc, char ** argv)
     }
     const char * pn = lp.protocol == engine::Protocol::Scp ? "SCP"
                     : lp.protocol == engine::Protocol::WebDav ? "WebDAV"
-                    : lp.protocol == engine::Protocol::S3 ? "S3" : "SFTP";
+                    : lp.protocol == engine::Protocol::S3 ? "S3"
+                    : lp.protocol == engine::Protocol::Ftp ? "FTP" : "SFTP";
     right->setRemote(QString("%1@%2 \xE2\x80\x94 %3").arg(lp.user).arg(lp.host).arg(pn));
     remoteHome = u8(r.currentDir);
     right->navigate(u8(r.currentDir));
@@ -974,7 +973,7 @@ int main(int argc, char ** argv)
       if (!ac.isEmpty()) {
         QStringList p = ac.split(':');
         engine::Protocol pr = p[4]=="scp"?engine::Protocol::Scp : p[4]=="dav"?engine::Protocol::WebDav
-                            : p[4]=="s3"?engine::Protocol::S3 : engine::Protocol::Sftp;
+                            : p[4]=="s3"?engine::Protocol::S3 : p[4]=="ftp"?engine::Protocol::Ftp : engine::Protocol::Sftp;
         auto r = engine::connectSftp(s8(p[0]), p[1].toInt(), s8(p[2]), s8(p[3]), pr);
         if (r.ok) { right->setRemote(QString("%1@%2").arg(p[2]).arg(p[0])); remoteHome = u8(r.currentDir); right->navigate(u8(r.currentDir));
           // exercise the BACKGROUND transfer queue end-to-end (multi-file, on the worker thread)
