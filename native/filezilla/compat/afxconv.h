@@ -1,0 +1,41 @@
+//---------------------------------------------------------------------------
+// afxconv.h — MFC ANSI<->TCHAR conversion macros (USES_CONVERSION / A2T / T2A / ...).
+// TCHAR == wchar_t (2-byte) in this build. MFC allocates per-call via alloca; we use a small
+// rotating pool of thread_local buffers so several conversions in one expression don't clobber.
+//---------------------------------------------------------------------------
+#ifndef WINSCP_FZ_AFXCONV_H
+#define WINSCP_FZ_AFXCONV_H
+
+#include <string>
+
+inline const wchar_t * fz_a2w(const char * a)
+{
+  static thread_local std::wstring pool[16];
+  static thread_local int idx = 0;
+  std::wstring & b = pool[idx = (idx + 1) & 15];
+  b.clear(); if (a) while (*a) b.push_back((wchar_t)(unsigned char)*a++);
+  return b.c_str();
+}
+
+inline const char * fz_w2a(const wchar_t * w)
+{
+  static thread_local std::string pool[16];
+  static thread_local int idx = 0;
+  std::string & b = pool[idx = (idx + 1) & 15];
+  b.clear(); if (w) while (*w) { b.push_back((char)(*w & 0xFF)); ++w; }
+  return b.c_str();
+}
+
+#define USES_CONVERSION ((void)0)
+#define A2W(a)   fz_a2w(a)
+#define A2T(a)   fz_a2w(a)
+#define A2CT(a)  fz_a2w(a)
+#define W2A(w)   fz_w2a(w)
+#define T2A(t)   fz_w2a(t)
+#define T2CA(t)  fz_w2a(t)
+#define T2W(t)   (t)
+#define T2CW(t)  (t)
+#define W2T(w)   (w)
+#define T2OLE(t) (t)
+
+#endif

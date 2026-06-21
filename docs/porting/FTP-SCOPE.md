@@ -53,3 +53,24 @@ becomes a self-pipe + fd-set loop. This is the bulk of the effort.
 ## Test server (for later)
 `docker run -d --name winscp-test-ftp -p 21:21 -p 21000-21010:21000-21010 -e FTP_USER=winscp
 -e FTP_PASS=winscp123 delfer/alpine-ftp-server`
+
+## Progress: MFC shim built (native/filezilla/compat/)
+Built the afx shim layer so FileZilla's `<afx.h>` chain resolves natively:
+- `afx.h` — win scalar types, ASSERT/DebugAssert no-ops, InterlockedIncrement/Decrement (std::atomic),
+  CObject, **CString** (2-byte-wchar, std::wstring-backed; the ~25 methods FileZilla uses: GetLength/
+  Left/Mid/Right/Find/ReverseFind/Trim*/Replace/Compare*/Format/GetBuffer/...), CFile/CFileException/
+  CFileStatus (POSIX FILE*), CTime/CTimeSpan, WPARAM/LPARAM/LRESULT.
+- `afxconv.h` — USES_CONVERSION / A2T / T2A / T2CA / ... via a rotating thread_local buffer pool.
+- `afx_format.cpp` — CString::FormatV (custom; libc vswprintf breaks under -fshort-wchar).
+- `wtypes.h`, `oleauto.h` (empty — no OLE used), `TextsFileZilla.h` (IDS_* enum; LoadStr empty).
+
+Verified: afx types COEXIST with rtlcompat (Global.h pulls the engine RTL) — no type-redefinition
+clashes (identical typedefs). Remaining blockers, in order, found by compiling structures.cpp:
+1. **genprops integration** — FileZilla TUs include engine headers with `__property` (FileBuffer.h),
+   so they must compile against the genprops-processed `geninclude/core` (like engine TUs): run
+   genprops on the filezilla .cpp too, include geninclude/core ahead of source/core.
+2. **winsock2 shim** (the deep part) — `AsyncSocketEx.h` uses Win socket structs (`in6_addr.s6_bytes`,
+   SOCKADDR/SOCKADDR_IN6, WSADATA, SOCKET, closesocket, ioctlsocket, WSAGetLastError, FD_* events).
+   Provide `native/filezilla/compat/winsock2.h` mapping to BSD sockets + a Windows-layout in6_addr
+   (`s6_bytes` union member). Then port `CAsyncSocketEx` (WSAAsyncSelect + helper-window message pump)
+   to a select()/poll() event loop dispatching OnReceive/OnSend/OnConnect/OnClose.
