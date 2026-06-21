@@ -284,6 +284,7 @@ public:
   std::function<void()> onFileOpen;   // file (not dir) activated
   std::function<void(const QString &)> onEnterDir;  // user entered a subdir (for sync browsing)
   std::function<void()> onLeaveDir;                 // user went up (for sync browsing)
+  std::function<void()> onSwitchPanel;              // Tab pressed -> focus the other panel
 
   // Mirror operations (used by synchronized browsing; navigate directly, no callbacks -> no loop).
   void enterSubdir(const QString & name)
@@ -453,6 +454,7 @@ protected:
     {
       auto * ke = static_cast<QKeyEvent *>(ev);
       if (ke->key() == Qt::Key_Backspace) { goUp(); return true; }
+      if (ke->key() == Qt::Key_Tab) { if (onSwitchPanel) onSwitchPanel(); return true; }
       if (ke->key() == Qt::Key_Return || ke->key() == Qt::Key_Enter)
       { activate(FView->currentIndex().row()); return true; }
     }
@@ -552,6 +554,8 @@ int main(int argc, char ** argv)
   left->onLeaveDir  = [&] { if (actSync->isChecked()) right->upOne(); };
   right->onEnterDir = [&](const QString & n) { if (actSync->isChecked()) left->enterSubdir(n); };
   right->onLeaveDir = [&] { if (actSync->isChecked()) left->upOne(); };
+  left->onSwitchPanel  = [&] { right->view()->setFocus(); };
+  right->onSwitchPanel = [&] { left->view()->setFocus(); };
 
   // Session log dock (see what the engine does — invaluable for testing).
   auto * logDock = new QDockWidget("Session log", &window);

@@ -620,3 +620,9 @@ S3FileSystem::ParsePath does `BucketName = Path.SubString(0, P-1)`, so "testbuck
 "testbucke" -> MinIO "specified bucket does not exist". Fixed SubString to Delphi semantics
 (start<1 -> 1, count unchanged). CLASS fix (any SubString(0/negative, n) across the engine).
 All four protocols now do connect/list/transfer; ctest green; regression clean.
+
+## S3 ops checked; Tab-switch added
+S3 file ops: mkdir (create bucket) and delete (remove bucket) WORK at root; rename returns
+"Operation not supported" — correct S3 behavior (no bucket-rename API), not a bug. Object-level
+inside buckets uses copy+delete. So S3 is functionally complete for connect/list/transfer + the
+ops S3 actually supports. GUI: Tab now switches the active panel (Norton/WinSCP classic).
