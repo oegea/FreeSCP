@@ -26,6 +26,8 @@ struct DirEntry
   bool isDir = false;
   bool isParent = false;  // the ".." entry
   std::string modified;   // formatted timestamp (empty for "..")
+  std::string rights;     // remote: unix rights string (e.g. "rwxr-xr-x"); empty for local
+  std::string owner;      // remote: owner[/group]; empty for local
 };
 
 // Engine version/banner (proves winscpcore is linked and callable).

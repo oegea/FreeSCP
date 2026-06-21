@@ -241,6 +241,13 @@ std::vector<DirEntry> listRemoteDir(const std::string & utf8Path)
         e.isParent = (n == UnicodeString(L".."));
         e.size = F->Size;
         e.modified = e.isParent ? std::string() : ToU8(F->ModificationStr);
+        if (!e.isParent)
+        {
+          e.rights = ToU8(F->RightsStr);   // e.g. "rwxr-xr-x"
+          UnicodeString owner = F->Owner.DisplayText;
+          UnicodeString group = F->Group.DisplayText;
+          e.owner = ToU8(group.IsEmpty() ? owner : (owner + UnicodeString(L"/") + group));
+        }
         result.push_back(e);
       }
   }

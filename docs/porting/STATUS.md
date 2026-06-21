@@ -564,3 +564,19 @@ return NULL when empty (Embarcadero fidelity). GUI: Protocol dropdown gains S3 (
 us-east-1 + ftpsNone). All four protocols (SFTP/SCP/WebDAV/S3) connect+list; ctest green; full build
 + GUI launch OK. NEXT for S3: bucket/object nav + upload/download/ops runtime; then FTP (FileZilla).
 Test server: `docker run -p 9100:9000 -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin123 minio/minio server /data`.
+
+## Phase 7 START — WinSCP-faithful GUI skeleton (Login dialog + Commander)
+The Qt GUI now mirrors WinSCP's Commander interface so the working protocols can be exercised by
+eye/hand: an iconic **Login dialog** on startup (sites tree + "Session" group: File protocol combo
+[SFTP/SCP/FTP/WebDAV/Amazon S3], Host name + Port number, User name, Password, Tools/Manage +
+Login/Close); the **dual-pane Commander** with per-panel title bars (Local / user@host — PROTOCOL),
+address bars (path + Up/Refresh), the **Name | Size | Changed | Rights | Owner** columns (Name
+stretches, others fixed; Rights/Owner populated for remote via DirEntry.rights/owner from
+TRemoteFile RightsStr/Owner.DisplayText), per-panel status ("N directories, M files" / "K selected"),
+and the classic bottom **function-key bar** (F2 Rename / F5 Copy / F6 Move / F7 Create Directory /
+F8 Delete / F9 Properties / F10 Quit). Plus a Disconnect action, a toggleable Session log dock
+(Ctrl+L; shows connect steps/errors), and protocol-aware default ports (SFTP/SCP 2222, WebDAV 8086,
+S3 9100 — the local test servers). Engine wiring unchanged (connect/copy/mkdir/rename/delete/chmod
+through enginebridge). winscp-qt builds + launches; verified by an offscreen render (WINSCP_SHOT=path).
+NEXT GUI: real transfer progress + queue pane, context menus, drive/bookmark bar, faithful Properties
+dialog (rights checkboxes), wire the menu bar actions; FTP backend later.
