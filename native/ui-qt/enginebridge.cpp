@@ -18,6 +18,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <memory>
+#include <mutex>
 
 void __fastcall PuttyInitialize();   // one-time PuTTY init (sk_init + appname)
 void __fastcall NeonInitialize();    // ne_sock_init (WebDAV/HTTP)
@@ -40,6 +41,13 @@ std::unique_ptr<TSessionData> g_sessionData;
 UnicodeString g_password;
 bool g_engineInited = false;
 std::function<void(const std::string &, int)> g_progressCb;
+
+// Serializes ALL engine access. The engine + single TTerminal are not thread-safe; the GUI runs
+// transfers on a worker thread, so every public entry point takes this (recursive: some call each
+// other, e.g. upload -> remoteConnected). Defensive — the GUI also gates remote UI actions while a
+// transfer batch runs, but this guarantees no concurrent engine use even if a gate is missed.
+std::recursive_mutex g_engineMutex;
+#define ENGINE_LOCK std::lock_guard<std::recursive_mutex> _elk(g_engineMutex)
 
 void EnsureEngineInited()
 {
@@ -173,6 +181,7 @@ ConnectResult connectSftp(const std::string & host, int port,
                           const std::string & user, const std::string & password,
                           Protocol protocol, bool tls)
 {
+  ENGINE_LOCK;
   ConnectResult r;
   try
   {
@@ -228,11 +237,12 @@ ConnectResult connectSftp(const std::string & host, int port,
 
 void setProgressSink(const std::function<void(const std::string &, int)> & cb) { g_progressCb = cb; }
 
-bool remoteConnected() { return g_terminal && g_terminal->Active; }
-std::string remoteCurrentDir() { return remoteConnected() ? ToU8(g_terminal->CurrentDirectory) : std::string(); }
+bool remoteConnected() { ENGINE_LOCK; return g_terminal && g_terminal->Active; }
+std::string remoteCurrentDir() { ENGINE_LOCK; return remoteConnected() ? ToU8(g_terminal->CurrentDirectory) : std::string(); }
 
 std::vector<DirEntry> listRemoteDir(const std::string & utf8Path)
 {
+  ENGINE_LOCK;
   std::vector<DirEntry> result;
   if (!remoteConnected()) return result;
   try
@@ -302,6 +312,7 @@ std::string ExceptionToU8(Exception & E)
 bool uploadToRemote(const std::string & localPathUtf8, const std::string & remoteDirUtf8,
                     std::string * error)
 {
+  ENGINE_LOCK;
   if (!remoteConnected()) { if (error) *error = "not connected"; return false; }
   try
   {
@@ -318,6 +329,7 @@ bool uploadToRemote(const std::string & localPathUtf8, const std::string & remot
 bool downloadFromRemote(const std::string & remotePathUtf8, const std::string & localDirUtf8,
                         std::string * error)
 {
+  ENGINE_LOCK;
   if (!remoteConnected()) { if (error) *error = "not connected"; return false; }
   try
   {
@@ -339,6 +351,7 @@ bool downloadFromRemote(const std::string & remotePathUtf8, const std::string & 
 
 bool remoteMakeDir(const std::string & nameUtf8, std::string * error)
 {
+  ENGINE_LOCK;
   if (!remoteConnected()) { if (error) *error = "not connected"; return false; }
   try
   {
@@ -353,6 +366,7 @@ bool remoteMakeDir(const std::string & nameUtf8, std::string * error)
 
 bool remoteDelete(const std::string & nameUtf8, std::string * error)
 {
+  ENGINE_LOCK;
   if (!remoteConnected()) { if (error) *error = "not connected"; return false; }
   try
   {
@@ -367,6 +381,7 @@ bool remoteDelete(const std::string & nameUtf8, std::string * error)
 
 bool remoteRename(const std::string & oldNameUtf8, const std::string & newNameUtf8, std::string * error)
 {
+  ENGINE_LOCK;
   if (!remoteConnected()) { if (error) *error = "not connected"; return false; }
   try
   {
@@ -381,6 +396,7 @@ bool remoteRename(const std::string & oldNameUtf8, const std::string & newNameUt
 
 std::string remoteFileOctal(const std::string & nameUtf8)
 {
+  ENGINE_LOCK;
   if (!remoteConnected()) return std::string();
   TRemoteFile * rf = FindInListing(FromU8(nameUtf8));
   if ((rf == nullptr) || (rf->Rights == nullptr)) return std::string();
@@ -389,6 +405,7 @@ std::string remoteFileOctal(const std::string & nameUtf8)
 
 bool remoteChmod(const std::string & nameUtf8, const std::string & octalUtf8, std::string * error)
 {
+  ENGINE_LOCK;
   if (!remoteConnected()) { if (error) *error = "not connected"; return false; }
   try
   {
@@ -406,6 +423,7 @@ bool remoteChmod(const std::string & nameUtf8, const std::string & octalUtf8, st
 
 void disconnectSftp()
 {
+  ENGINE_LOCK;
   if (g_terminal)
   {
     try { if (g_terminal->Active) g_terminal->Close(); } catch (...) {}

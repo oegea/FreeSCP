@@ -660,3 +660,15 @@ which GNU ld/lld don't understand — now `if(APPLE) -force_load else --whole-ar
 Remaining for an actual Linux build: build the vendored libs (neon/expat/libs3 already CMake; putty
 already portable) on Linux, install Qt6/OpenSSL, and shake out any link-order issues GNU ld is
 pickier about than ld64. MACOSX_BUNDLE degrades to a normal executable on Linux (harmless).
+
+## Background transfer queue (threaded) — multi-file transfers no longer freeze the UI
+F5 Copy / F6 Move now run the batch on a worker std::thread; the queue dock updates live (progress
+marshaled to the UI thread via QMetaObject::invokeMethod) and the UI stays responsive (local
+browsing works during a transfer). Engine safety: it's single-connection/non-thread-safe, so (a)
+every bridge entry point now takes a recursive engine mutex (g_engineMutex), and (b) remote UI
+actions (connect/disconnect/remote-nav/remote-ops) are gated by gTransferRunning for the batch's
+duration. Verified in the GUI process: a 3-file background download (hello/owned/xfer-up ->
+/tmp/dlq) completes "done" with "Transferred 3/3", no crash, files byte-present. ctest green;
+harness (single-threaded) unaffected by the mutex. Note: still ONE connection -> transfers are
+serial and remote browsing is blocked mid-batch (WinSCP uses a 2nd connection for true parallelism;
+that's a future enhancement).

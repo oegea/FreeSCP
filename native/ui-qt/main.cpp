@@ -49,6 +49,8 @@
 #include <QStyle>
 #include <algorithm>
 #include <functional>
+#include <thread>
+#include <atomic>
 
 #include "enginebridge.h"
 
@@ -57,6 +59,7 @@ static std::string s8(const QString & s) { return s.toUtf8().constData(); }
 
 static bool gShowHidden = true;     // WinSCP "Show hidden files" toggle (dotfiles)
 static bool gConfirmDelete = true;  // confirm before deleting
+static std::atomic<bool> gTransferRunning{false};  // a background transfer batch is in flight
 
 //===========================================================================
 // Login dialog — faithful to WinSCP: a sites tree on the left, a "Session" form on the right
@@ -392,6 +395,7 @@ public:
 
   void navigate(const QString & path)
   {
+    if (FRemote && gTransferRunning.load()) return;   // engine busy with a transfer batch
     if (!FNav)   // record history (truncate any forward entries)
     {
       while (FHistory.size() > FHistIdx + 1) FHistory.removeLast();
@@ -653,8 +657,63 @@ int main(int argc, char ** argv)
     if (r >= 0 && r < queueModel->rowCount()) queueModel->item(r, 3)->setText(status);
   };
 
+  auto busy = [&]() -> bool {
+    if (gTransferRunning.load()) { window.statusBar()->showMessage("Transfer in progress\xE2\x80\xA6 please wait"); return true; }
+    return false;
+  };
+
+  // Background transfer: runs the batch on a worker thread so the UI never freezes; the queue dock
+  // updates live (progress marshaled to the UI thread). The engine is single-connection/non-thread-
+  // safe, so engine access is serialized by the bridge mutex AND remote UI actions are gated
+  // (gTransferRunning) for the duration — local browsing stays fully responsive.
+  auto startTransfer = [&](FilePanel * from, FilePanel * to, QStringList files, bool isMove) {
+    if (files.isEmpty()) { window.statusBar()->showMessage("No files selected"); return; }
+    if (from->isRemote() && to->isRemote())
+    { QMessageBox::information(&window, "Transfer", "Remote-to-remote is not supported yet."); return; }
+    if (busy()) return;
+    const bool srcRemote = from->isRemote(), dstRemote = to->isRemote();
+    const std::string srcDir = s8(from->path()), dstDir = s8(to->path());
+    const QString op = srcRemote ? "Download" : (dstRemote ? "Upload" : "Copy");
+    queueDock->show();
+    std::vector<int> rows; std::vector<std::string> names;
+    for (const QString & f : files) { rows.push_back(queueAdd(isMove ? "Move" : op, f, to->path())); names.push_back(s8(f)); }
+    gTransferRunning = true;
+    auto curIdx = std::make_shared<std::atomic<int>>(0);
+    engine::setProgressSink([&, rows, curIdx](const std::string &, int pct) {
+      int i = curIdx->load(); int rowVal = (i >= 0 && i < (int)rows.size()) ? rows[i] : -1;
+      QMetaObject::invokeMethod(&window, [&, rowVal, pct]{ queueSet(rowVal, QString("%1%").arg(pct)); }, Qt::QueuedConnection);
+    });
+    std::thread([&, rows, names, srcDir, dstDir, srcRemote, dstRemote, isMove, from, to, curIdx]{
+      int ok = 0;
+      for (size_t i = 0; i < names.size(); ++i)
+      {
+        curIdx->store((int)i);
+        int rowVal = rows[i];
+        QMetaObject::invokeMethod(&window, [&, rowVal]{ queueSet(rowVal, "active"); }, Qt::QueuedConnection);
+        std::string src = engine::joinPath(srcDir, names[i]);
+        std::string err; bool r;
+        if (!srcRemote && !dstRemote) r = engine::copyFile(src, engine::joinPath(dstDir, names[i]));
+        else if (!srcRemote && dstRemote) r = engine::uploadToRemote(src, dstDir, &err);
+        else r = engine::downloadFromRemote(src, dstDir, &err);
+        if (r && isMove)
+          r = srcRemote ? engine::remoteDelete(names[i], &err) : engine::localDelete(srcDir, names[i], &err);
+        bool done = r; QString status = done ? "done" : ("failed" + (err.empty() ? QString() : (": " + u8(err))));
+        QMetaObject::invokeMethod(&window, [&, rowVal, status]{ queueSet(rowVal, status); }, Qt::QueuedConnection);
+        if (done) ++ok;
+      }
+      int total = (int)names.size();
+      QMetaObject::invokeMethod(&window, [&, ok, total, isMove, from, to]{
+        engine::setProgressSink(nullptr);
+        gTransferRunning = false;
+        to->refresh(); if (isMove) from->refresh();
+        window.statusBar()->showMessage(QString("Transferred %1/%2 item(s)").arg(ok).arg(total));
+      }, Qt::QueuedConnection);
+    }).detach();
+  };
+
   //--- operations ---------------------------------------------------------
   auto doConnect = [&] {
+    if (busy()) return;
     LoginParams lp = showLoginDialog(&window);
     if (!lp.ok) return;
     window.statusBar()->showMessage("Connecting\xE2\x80\xA6");
@@ -681,6 +740,7 @@ int main(int argc, char ** argv)
     log("Connected. Remote directory: " + u8(r.currentDir));
   };
   auto doDisconnect = [&] {
+    if (busy()) return;
     engine::disconnectSftp();
     right->setLocal();
     right->navigate(u8(engine::homeDir()));
@@ -692,35 +752,7 @@ int main(int argc, char ** argv)
 
   auto doCopy = [&] {
     FilePanel * dst = (active == left) ? right : left;
-    QStringList files = active->selectedItems();
-    if (files.isEmpty()) { window.statusBar()->showMessage("No files selected"); return; }
-    if (active->isRemote() && dst->isRemote())
-    { QMessageBox::information(&window, "Copy", "Remote-to-remote copy is not supported yet."); return; }
-    const QString op = active->isRemote() ? "Download" : (dst->isRemote() ? "Upload" : "Copy");
-    queueDock->show();
-    int curRow = -1;
-    engine::setProgressSink([&](const std::string &, int pct) {
-      queueSet(curRow, QString("%1%").arg(pct)); QApplication::processEvents();
-    });
-    int ok = 0; std::string lastErr;
-    for (const QString & f : files)
-    {
-      curRow = queueAdd(op, f, dst->path());
-      queueSet(curRow, "active"); QApplication::processEvents();
-      std::string src = engine::joinPath(s8(active->path()), s8(f));
-      bool r;
-      if (!active->isRemote() && !dst->isRemote())
-        r = engine::copyFile(src, engine::joinPath(s8(dst->path()), s8(f)));
-      else if (!active->isRemote() && dst->isRemote())
-        r = engine::uploadToRemote(src, s8(dst->path()), &lastErr);
-      else
-        r = engine::downloadFromRemote(src, s8(dst->path()), &lastErr);
-      queueSet(curRow, r ? "done" : ("failed: " + u8(lastErr)));
-      if (r) ++ok; else log("Copy failed: " + f + " — " + u8(lastErr));
-    }
-    engine::setProgressSink(nullptr);
-    dst->refresh();
-    window.statusBar()->showMessage(QString("Copied %1/%2 file(s) to %3").arg(ok).arg(files.size()).arg(dst->path()));
+    startTransfer(active, dst, active->selectedItems(), false);
   };
   auto doMove = [&] {
     FilePanel * dst = (active == left) ? right : left;
@@ -728,37 +760,13 @@ int main(int argc, char ** argv)
     if (files.isEmpty()) { window.statusBar()->showMessage("No files selected"); return; }
     if (active->isRemote() && dst->isRemote())
     { QMessageBox::information(&window, "Move", "Remote-to-remote move is not supported yet."); return; }
+    if (busy()) return;
     if (QMessageBox::question(&window, "Move",
           QString("Move %1 item(s) to %2?").arg(files.size()).arg(dst->path())) != QMessageBox::Yes) return;
-    queueDock->show();
-    int curRow = -1;
-    engine::setProgressSink([&](const std::string &, int pct) {
-      queueSet(curRow, QString("%1%").arg(pct)); QApplication::processEvents();
-    });
-    int ok = 0; std::string err;
-    for (const QString & f : files)
-    {
-      curRow = queueAdd("Move", f, dst->path());
-      queueSet(curRow, "active"); QApplication::processEvents();
-      std::string src = engine::joinPath(s8(active->path()), s8(f));
-      bool copied;
-      if (!active->isRemote() && !dst->isRemote())
-        copied = engine::copyFile(src, engine::joinPath(s8(dst->path()), s8(f)));
-      else if (!active->isRemote() && dst->isRemote())
-        copied = engine::uploadToRemote(src, s8(dst->path()), &err);
-      else
-        copied = engine::downloadFromRemote(src, s8(dst->path()), &err);
-      if (!copied) { queueSet(curRow, "failed: " + u8(err)); log("Move (copy step) failed: " + f + " — " + u8(err)); continue; }
-      bool del = active->isRemote() ? engine::remoteDelete(s8(f), &err)
-                                    : engine::localDelete(s8(active->path()), s8(f), &err);
-      queueSet(curRow, del ? "done" : ("copied; delete failed: " + u8(err)));
-      if (del) ++ok; else log("Move (delete step) failed: " + f + " — " + u8(err));
-    }
-    engine::setProgressSink(nullptr);
-    active->refresh(); dst->refresh();
-    window.statusBar()->showMessage(QString("Moved %1/%2 item(s) to %3").arg(ok).arg(files.size()).arg(dst->path()));
+    startTransfer(active, dst, files, true);
   };
   auto doMkdir = [&] {
+    if (busy()) return;
     bool okIn = false;
     QString name = QInputDialog::getText(&window, "Create folder", "New folder name:", QLineEdit::Normal, "", &okIn);
     if (!okIn || name.isEmpty()) return;
@@ -769,6 +777,7 @@ int main(int argc, char ** argv)
     window.statusBar()->showMessage(ok ? "Created " + name : "Create folder failed — " + u8(err));
   };
   auto doRename = [&] {
+    if (busy()) return;
     QStringList sel = active->selectedItems();
     if (sel.size() != 1) { window.statusBar()->showMessage("Select exactly one item to rename"); return; }
     bool okIn = false;
@@ -781,6 +790,7 @@ int main(int argc, char ** argv)
     window.statusBar()->showMessage(ok ? "Renamed to " + nn : "Rename failed — " + u8(err));
   };
   auto doDelete = [&] {
+    if (busy()) return;
     QStringList sel = active->selectedItems();
     if (sel.isEmpty()) { window.statusBar()->showMessage("No files selected"); return; }
     if (gConfirmDelete && QMessageBox::question(&window, "Delete", QString("Delete %1 item(s)?").arg(sel.size())) != QMessageBox::Yes) return;
@@ -791,6 +801,7 @@ int main(int argc, char ** argv)
     window.statusBar()->showMessage(QString("Deleted %1/%2 item(s)").arg(ok).arg(sel.size()));
   };
   auto doProps = [&] {
+    if (busy()) return;
     QStringList sel = active->selectedItems();
     if (sel.size() != 1) { window.statusBar()->showMessage("Select exactly one item"); return; }
     if (!active->isRemote()) { QMessageBox::information(&window, "Properties", "Properties (permissions) apply to remote files."); return; }
@@ -803,6 +814,7 @@ int main(int argc, char ** argv)
     window.statusBar()->showMessage(ok ? "Set " + oct : "chmod failed — " + u8(err));
   };
   auto doOpen = [&] {
+    if (active->isRemote() && busy()) return;
     QStringList sel = active->selectedFiles();
     if (sel.size() != 1) { window.statusBar()->showMessage("Select one file to open"); return; }
     QString f = sel.first();
@@ -964,16 +976,21 @@ int main(int argc, char ** argv)
         engine::Protocol pr = p[4]=="scp"?engine::Protocol::Scp : p[4]=="dav"?engine::Protocol::WebDav
                             : p[4]=="s3"?engine::Protocol::S3 : engine::Protocol::Sftp;
         auto r = engine::connectSftp(s8(p[0]), p[1].toInt(), s8(p[2]), s8(p[3]), pr);
-        if (r.ok) { right->setRemote(QString("%1@%2").arg(p[2]).arg(p[0])); right->navigate(u8(r.currentDir));
-          // exercise the queue in the GUI process (proves transfer + queue end-to-end)
+        if (r.ok) { right->setRemote(QString("%1@%2").arg(p[2]).arg(p[0])); remoteHome = u8(r.currentDir); right->navigate(u8(r.currentDir));
+          // exercise the BACKGROUND transfer queue end-to-end (multi-file, on the worker thread)
           QString xf = qEnvironmentVariable("WINSCP_AUTOXFER");
-          if (!xf.isEmpty()) { queueDock->show(); int rr = queueAdd("Download", xf, "/tmp");
-            std::string err; bool ok = engine::downloadFromRemote(engine::joinPath(r.currentDir, s8(xf)), "/tmp", &err);
-            queueSet(rr, ok ? "done" : ("failed: " + u8(err))); }
+          if (!xf.isEmpty()) {
+            QDir().mkpath("/tmp/dlq"); left->navigate("/tmp/dlq");
+            startTransfer(right, left, xf.split(','), false);
+          }
         }
       }
-      window.grab().save(qEnvironmentVariable("WINSCP_SHOT"));
-      app.quit();
+      // Grab after a delay so background transfers (detached worker) complete first.
+      QTimer::singleShot(qEnvironmentVariableIsEmpty("WINSCP_AUTOXFER") ? 100 : 3000, [&]{
+        window.grab().save(qEnvironmentVariable("WINSCP_SHOT"));
+        app.quit();
+      });
+      return;
     }, Qt::QueuedConnection);
 
   // Offer the Login dialog on startup (like WinSCP), unless launched headless for a smoke test.
