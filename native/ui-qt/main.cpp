@@ -43,6 +43,9 @@
 #include <QTimer>
 #include <QSettings>
 #include <QProgressDialog>
+#include <QDesktopServices>
+#include <QUrl>
+#include <QDir>
 #include <functional>
 
 #include "enginebridge.h"
@@ -277,6 +280,7 @@ public:
   std::function<void()> onActivated;
   std::function<void()> onStatusChanged;
   std::function<void()> onHome;
+  std::function<void()> onFileOpen;   // file (not dir) activated
 
   explicit FilePanel(QWidget * parent = nullptr) : QWidget(parent)
   {
@@ -442,7 +446,7 @@ private:
   {
     if (row < 0 || row >= static_cast<int>(FEntries.size())) return;
     const auto & e = FEntries[static_cast<size_t>(row)];
-    if (!e.isDir) return;
+    if (!e.isDir) { if (onFileOpen) onFileOpen(); return; }
     if (e.isParent) goUp();
     else navigate(u8(engine::joinPath(s8(FPath), e.name)));
   }
@@ -679,6 +683,26 @@ int main(int argc, char ** argv)
     active->refresh();
     window.statusBar()->showMessage(ok ? "Set " + oct : "chmod failed — " + u8(err));
   };
+  auto doOpen = [&] {
+    QStringList sel = active->selectedFiles();
+    if (sel.size() != 1) { window.statusBar()->showMessage("Select one file to open"); return; }
+    QString f = sel.first();
+    QString localPath;
+    if (active->isRemote())
+    {
+      QString tmp = QDir::tempPath() + "/winscp-open";
+      QDir().mkpath(tmp);
+      std::string err;
+      window.statusBar()->showMessage("Opening " + f + "\xE2\x80\xA6");
+      QApplication::processEvents();
+      if (!engine::downloadFromRemote(engine::joinPath(s8(active->path()), s8(f)), s8(tmp), &err))
+      { QMessageBox::warning(&window, "Open", "Could not download: " + u8(err)); return; }
+      localPath = tmp + "/" + f;
+    }
+    else localPath = active->path() + "/" + f;
+    QDesktopServices::openUrl(QUrl::fromLocalFile(localPath));
+    window.statusBar()->showMessage("Opened " + f);
+  };
   auto doQuit = [&] { window.close(); };
 
   // Right-click context menu on each panel (WinSCP-style).
@@ -736,6 +760,7 @@ int main(int argc, char ** argv)
     return b;
   };
   addFKey("F2 Rename", doRename);
+  addFKey("F4 Edit", doOpen);
   addFKey("F5 Copy", doCopy);
   addFKey("F6 Move", doMove);
   addFKey("F7 Create Directory", doMkdir);
@@ -754,7 +779,10 @@ int main(int argc, char ** argv)
     QObject::connect(a, &QAction::triggered, fn); window.addAction(a);
   };
   shortcut(Qt::Key_F2, doRename);
+  shortcut(Qt::Key_F3, doOpen);
+  shortcut(Qt::Key_F4, doOpen);
   shortcut(Qt::Key_F5, doCopy);
+  left->onFileOpen = doOpen; right->onFileOpen = doOpen;
   shortcut(Qt::Key_F6, doMove);
   shortcut(Qt::Key_F7, doMkdir);
   shortcut(Qt::Key_F8, doDelete);
