@@ -414,6 +414,12 @@ public:
     for (const auto & e : FEntries) if (!e.isDir && e.name == n) return (qint64)e.size;
     return 0;
   }
+  // Does the current listing already contain this name (for overwrite confirmation)?
+  bool contains(const QString & name) const {
+    std::string n = s8(name);
+    for (const auto & e : FEntries) if (!e.isParent && e.name == n) return true;
+    return false;
+  }
   void setLocal() { FRemote = false; FHeader->setText("\xF0\x9F\x92\xBB  Local"); }
   void setRemote(const QString & label) { FRemote = true; FHeader->setText("\xF0\x9F\x8C\x90  " + label); }
 
@@ -872,11 +878,31 @@ int main(int argc, char ** argv)
   // live with %/speed/time-left (marshaled to the UI thread). Cancel aborts via the engine progress
   // sink. Single-connection/non-thread-safe engine -> serialized by the bridge mutex + gTransferRunning
   // gating remote UI actions for the batch (local browsing stays responsive).
+  // Overwrite confirmation: returns the names to transfer (all, or non-existing on Skip) or empty on
+  // Cancel. Honors the Preferences "Confirm overwrites" toggle.
+  auto confirmOverwrite = [&](FilePanel * dest, QStringList files) -> QStringList {
+    if (!gConfirmOverwrite) return files;
+    QStringList existing; for (const QString & f : files) if (dest->contains(f)) existing << f;
+    if (existing.isEmpty()) return files;
+    QMessageBox box(&window); box.setIcon(QMessageBox::Question); box.setWindowTitle("Confirm overwrite");
+    box.setText(QString("%1 of %2 item(s) already exist in %3.").arg(existing.size()).arg(files.size()).arg(dest->path()));
+    if (existing.size() <= 10) box.setInformativeText(existing.join("\n"));
+    auto * over = box.addButton("Overwrite", QMessageBox::AcceptRole);
+    auto * skip = box.addButton("Skip existing", QMessageBox::ActionRole);
+    box.addButton(QMessageBox::Cancel);
+    box.exec();
+    if (box.clickedButton() == over) return files;
+    if (box.clickedButton() == skip) { QStringList keep; for (const QString & f : files) if (!dest->contains(f)) keep << f; return keep; }
+    return QStringList();
+  };
+
   auto startTransfer = [&](FilePanel * from, FilePanel * to, QStringList files, bool isMove) {
     if (files.isEmpty()) { window.statusBar()->showMessage("No files selected"); return; }
     if (from->isRemote() && to->isRemote())
     { QMessageBox::information(&window, "Transfer", "Remote-to-remote is not supported yet."); return; }
     if (busy()) return;
+    files = confirmOverwrite(to, files);
+    if (files.isEmpty()) { window.statusBar()->showMessage("Transfer cancelled"); return; }
     const bool srcRemote = from->isRemote(), dstRemote = to->isRemote();
     const std::string srcDir = s8(from->path()), dstDir = s8(to->path());
     const QString op = srcRemote ? "Download" : (dstRemote ? "Upload" : "Copy");
@@ -966,10 +992,15 @@ int main(int argc, char ** argv)
   right->onDropFiles = [&](FilePanel * src, const QStringList & f) { startTransfer(src, right, f, false); };
 
   // External drop (Finder/Nautilus) of local files -> upload (remote panel) or copy (local panel).
-  auto importFiles = [&](FilePanel * dest, const QStringList & absPaths) {
+  auto importFiles = [&](FilePanel * dest, const QStringList & absPathsIn) {
     if (busy()) return;
     const bool toRemote = dest->isRemote();
     const std::string destDir = s8(dest->path());
+    // overwrite confirmation by basename
+    QStringList baseNames; for (const QString & p : absPathsIn) baseNames << QFileInfo(p).fileName();
+    QStringList keepNames = confirmOverwrite(dest, baseNames);
+    if (keepNames.isEmpty()) { window.statusBar()->showMessage("Import cancelled"); return; }
+    QStringList absPaths; for (const QString & p : absPathsIn) if (keepNames.contains(QFileInfo(p).fileName())) absPaths << p;
     queueDock->show();
     std::vector<int> rows; std::vector<std::string> srcs, nm;
     for (const QString & p : absPaths) {
