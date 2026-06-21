@@ -276,6 +276,7 @@ class FilePanel : public QWidget
 public:
   std::function<void()> onActivated;
   std::function<void()> onStatusChanged;
+  std::function<void()> onHome;
 
   explicit FilePanel(QWidget * parent = nullptr) : QWidget(parent)
   {
@@ -292,11 +293,17 @@ public:
     auto * addrLay = new QHBoxLayout(addr);
     addrLay->setContentsMargins(2, 2, 2, 2);
     addrLay->setSpacing(2);
-    FPathEdit = new QLineEdit;
+    auto * backBtn = new QToolButton; backBtn->setText("\xE2\x97\x80"); backBtn->setToolTip("Back");
+    auto * fwdBtn  = new QToolButton; fwdBtn->setText("\xE2\x96\xB6");  fwdBtn->setToolTip("Forward");
     auto * upBtn = new QToolButton; upBtn->setText("\xE2\xAC\x86");  upBtn->setToolTip("Parent directory");
+    auto * homeBtn = new QToolButton; homeBtn->setText("\xF0\x9F\x8F\xA0"); homeBtn->setToolTip("Home");
     auto * rfBtn = new QToolButton; rfBtn->setText("\xE2\x9F\xB3"); rfBtn->setToolTip("Refresh");
-    addrLay->addWidget(FPathEdit, 1);
+    FPathEdit = new QLineEdit;
+    addrLay->addWidget(backBtn);
+    addrLay->addWidget(fwdBtn);
     addrLay->addWidget(upBtn);
+    addrLay->addWidget(homeBtn);
+    addrLay->addWidget(FPathEdit, 1);
     addrLay->addWidget(rfBtn);
 
     FView = new QTableView;
@@ -326,6 +333,9 @@ public:
                      [this] { navigate(FPathEdit->text()); });
     QObject::connect(upBtn, &QToolButton::clicked, [this] { goUp(); });
     QObject::connect(rfBtn, &QToolButton::clicked, [this] { refresh(); });
+    QObject::connect(backBtn, &QToolButton::clicked, [this] { goBack(); });
+    QObject::connect(fwdBtn, &QToolButton::clicked, [this] { goForward(); });
+    QObject::connect(homeBtn, &QToolButton::clicked, [this] { if (onHome) onHome(); });
     QObject::connect(FView->selectionModel(), &QItemSelectionModel::selectionChanged,
                      [this] { if (onStatusChanged) onStatusChanged(); });
   }
@@ -344,8 +354,16 @@ public:
                              .arg(a ? "palette(highlight)" : "palette(midlight)"));
   }
 
+  void goBack()    { if (FHistIdx > 0) { FNav = true; navigate(FHistory[--FHistIdx]); FNav = false; } }
+  void goForward() { if (FHistIdx + 1 < FHistory.size()) { FNav = true; navigate(FHistory[++FHistIdx]); FNav = false; } }
+
   void navigate(const QString & path)
   {
+    if (!FNav)   // record history (truncate any forward entries)
+    {
+      while (FHistory.size() > FHistIdx + 1) FHistory.removeLast();
+      if (FHistory.isEmpty() || FHistory.last() != path) { FHistory.append(path); FHistIdx = FHistory.size() - 1; }
+    }
     FPath = path;
     FPathEdit->setText(path);
     FModel->clear();
@@ -437,7 +455,10 @@ private:
   QString FPath;
   bool FRemote = false;
   bool FActive = false;
+  bool FNav = false;
   int FDirs = 0, FFiles = 0;
+  QStringList FHistory;
+  int FHistIdx = -1;
   std::vector<engine::DirEntry> FEntries;
 };
 
@@ -497,6 +518,9 @@ int main(int argc, char ** argv)
   right->onStatusChanged = updateStatuses;
   left->onActivated = [&] { active = left; left->setActive(true); right->setActive(false); updateStatuses(); };
   right->onActivated = [&] { active = right; right->setActive(true); left->setActive(false); updateStatuses(); };
+  static QString remoteHome = "/";
+  left->onHome  = [&] { left->navigate(u8(engine::homeDir())); };
+  right->onHome = [&] { right->navigate(right->isRemote() ? remoteHome : u8(engine::homeDir())); };
 
   // Session log dock (see what the engine does — invaluable for testing).
   auto * logDock = new QDockWidget("Session log", &window);
@@ -527,6 +551,7 @@ int main(int argc, char ** argv)
                     : lp.protocol == engine::Protocol::WebDav ? "WebDAV"
                     : lp.protocol == engine::Protocol::S3 ? "S3" : "SFTP";
     right->setRemote(QString("%1@%2 \xE2\x80\x94 %3").arg(lp.user).arg(lp.host).arg(pn));
+    remoteHome = u8(r.currentDir);
     right->navigate(u8(r.currentDir));
     right->onActivated();
     actDisconnect->setEnabled(true);
