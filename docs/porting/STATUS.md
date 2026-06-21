@@ -388,3 +388,33 @@ new CMake group (mirror winscpcore_ssh) and Terminal.cpp's `Open()` WebDAV/S3 br
 (already proven) + neon static; (2) fix the ~15 WebDAV/Http/NeonIntf compile gaps above; (3) link +
 runtime-debug WebDAV against a test server (e.g. a dockerized `bytemark/webdav` or rclone serve);
 (4) then S3 (build libs3 + JSON shim) against MinIO. FTP (FileZilla) remains the hardest, last.
+
+### Phase 4 neon build — SCOUTED (configure works; 15/26 .c compile; 11 need fork-porting)
+Out-of-tree autotools configure works and detects everything we need:
+```sh
+mkdir /tmp/neon-build && cd /tmp/neon-build
+sh <repo>/libs/neon/configure --with-ssl=openssl --without-zlib --disable-shared \
+   --enable-static --with-expat CFLAGS="-I$(brew --prefix openssl)/include -I<repo>/libs/expat/lib" \
+   LDFLAGS="-L$(brew --prefix openssl)/lib"
+# config.status dies on a missing test/Makefile.in (test dir not vendored) AFTER making
+# src/Makefile but BEFORE config.h — generate config.h directly:
+sh ./config.status config.h   # -> HAVE_EXPAT, NE_HAVE_SSL, HAVE_OPENSSL_SSL_H, NEON 0.34.2
+```
+Compiling the 26 src/*.c with that config.h: **15 compile clean, 11 fail** — all because this is
+the WinSCP-PATCHED neon (Windows assumptions). The 11 + cause:
+- printf length macros expand to nothing → `%" NE_FMT_TIME_T`, `FMT_NE_OFF_T`, `NE_FMT_SSIZE_T`,
+  version-string concat (ne_auth, ne_basic, ne_request, ne_session, ne_utils). NOTE: config.h DOES
+  define them (`NE_FMT_TIME_T "ld"`, `NE_FMT_SSIZE_T "ld"`, `NE_FMT_NE_OFF_T NE_FMT_OFF_T`), so this
+  is an INCLUDE-WIRING issue (those TUs aren't seeing config.h), not missing macros — verify
+  config.h is included first (HAVE_CONFIG_H + -I order).
+- `ne_openssl.c` `#include <windows.h>` (WinSCP added Windows crypto-store code) — needs an
+  `#ifndef _WIN32` guard / unix branch.
+- `ne_xml.c` "need an XML parser" — HAVE_EXPAT set in config.h but ne_xml selects via a different
+  macro (NE_HAVE_EXPAT / EXPAT vs LIBXML2). Set the macro it actually checks.
+- `ne_md5.c` "Cannot determine unsigned 32-bit data type" — define the size macro it wants.
+- `errno` undeclared in ne_locks/ne_socket — add `#include <errno.h>` (config gap).
+- `NE_207_LIBERAL_ESCAPING` undeclared (ne_207) — a WinSCP-added flag; provide it.
+Plan: capture a working `config.h` into `native/neon/` + a small `ne_defs_compat.h`/extra-defines
+header, guard the 2-3 WinSCP Windows-isms (#ifndef _WIN32, listed in UPSTREAM-PATCHES), then a
+`native/neon/CMakeLists.txt` (mirror expat) compiles libneon.a. Then the 4 engine TUs (their ~15
+compile gaps are inventoried above) + link + un-guard Terminal.cpp. This is multi-session.
