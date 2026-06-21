@@ -517,6 +517,17 @@ public:
 
   void setStatusLine(const QString & s) { FStatus->setText(s); }
   void refresh() { navigate(FPath); }
+  // Norton-style: toggle selection of the current row, then move down one.
+  void toggleSelectAndAdvance() {
+    int row = FView->currentIndex().row();
+    if (row < 0) return;
+    QItemSelectionModel * sm = FView->selectionModel();
+    QModelIndex ix = FModel->index(row, 0);
+    sm->select(QItemSelection(FModel->index(row, 0), FModel->index(row, FModel->columnCount() - 1)),
+               QItemSelectionModel::Toggle);
+    int next = (row + 1 < FModel->rowCount()) ? row + 1 : row;
+    FView->setCurrentIndex(FModel->index(next, 0));
+  }
   void goUp() { navigate(u8(engine::parentDir(s8(FPath)))); if (onLeaveDir) onLeaveDir(); }
 
 protected:
@@ -1074,6 +1085,17 @@ int main(int argc, char ** argv)
   { auto * a = new QAction(&window); a->setShortcut(Qt::CTRL | Qt::Key_Q);
     QObject::connect(a, &QAction::triggered, [&]{ queueDock->setVisible(!queueDock->isVisible()); });
     window.addAction(a); }
+  // WinSCP keyboard set. Qt::CTRL auto-maps to Command on macOS and Ctrl on Linux/Windows, so these
+  // are faithful on Linux and native on mac with no per-OS code. F-keys are identical everywhere.
+  shortcut(Qt::CTRL | Qt::Key_R, [&]{ active->refresh(); });               // refresh
+  shortcut(QKeySequence::Refresh, [&]{ active->refresh(); });
+  shortcut(Qt::ALT | Qt::Key_Left,  [&]{ active->goBack(); });             // history back
+  shortcut(Qt::ALT | Qt::Key_Right, [&]{ active->goForward(); });          // history forward
+  shortcut(Qt::ALT | Qt::Key_Up,    [&]{ active->goUp(); });               // parent dir
+  shortcut(Qt::CTRL | Qt::Key_N, [&]{ doConnect(); });                     // new session
+  shortcut(Qt::Key_Insert, [&]{ active->toggleSelectAndAdvance(); });      // Norton select + advance
+  shortcut(Qt::Key_F1, [&]{ QMessageBox::about(&window, "About WinSCP",
+    "WinSCP \xE2\x80\x94 native port (Mac/Linux)\nSFTP / SCP / FTP / WebDAV / S3"); });
 
   left->setActive(true);
   left->navigate(u8(engine::homeDir()));
