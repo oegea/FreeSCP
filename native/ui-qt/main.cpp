@@ -605,6 +605,36 @@ int main(int argc, char ** argv)
     dst->refresh();
     window.statusBar()->showMessage(QString("Copied %1/%2 file(s) to %3").arg(ok).arg(files.size()).arg(dst->path()));
   };
+  auto doMove = [&] {
+    FilePanel * dst = (active == left) ? right : left;
+    QStringList files = active->selectedFiles();
+    if (files.isEmpty()) { window.statusBar()->showMessage("No files selected"); return; }
+    if (active->isRemote() && dst->isRemote())
+    { QMessageBox::information(&window, "Move", "Remote-to-remote move is not supported yet."); return; }
+    if (QMessageBox::question(&window, "Move",
+          QString("Move %1 item(s) to %2?").arg(files.size()).arg(dst->path())) != QMessageBox::Yes) return;
+    QApplication::setOverrideCursor(Qt::WaitCursor);
+    int ok = 0; std::string err;
+    for (const QString & f : files)
+    {
+      std::string src = engine::joinPath(s8(active->path()), s8(f));
+      bool copied;
+      if (!active->isRemote() && !dst->isRemote())
+        copied = engine::copyFile(src, engine::joinPath(s8(dst->path()), s8(f)));
+      else if (!active->isRemote() && dst->isRemote())
+        copied = engine::uploadToRemote(src, s8(dst->path()), &err);
+      else
+        copied = engine::downloadFromRemote(src, s8(dst->path()), &err);
+      if (!copied) { log("Move (copy step) failed: " + f + " — " + u8(err)); continue; }
+      // delete source after a successful copy
+      bool del = active->isRemote() ? engine::remoteDelete(s8(f), &err)
+                                    : engine::localDelete(s8(active->path()), s8(f), &err);
+      if (del) ++ok; else log("Move (delete step) failed: " + f + " — " + u8(err));
+    }
+    active->refresh(); dst->refresh();
+    QApplication::restoreOverrideCursor();
+    window.statusBar()->showMessage(QString("Moved %1/%2 item(s) to %3").arg(ok).arg(files.size()).arg(dst->path()));
+  };
   auto doMkdir = [&] {
     bool okIn = false;
     QString name = QInputDialog::getText(&window, "Create folder", "New folder name:", QLineEdit::Normal, "", &okIn);
@@ -707,7 +737,7 @@ int main(int argc, char ** argv)
   };
   addFKey("F2 Rename", doRename);
   addFKey("F5 Copy", doCopy);
-  addFKey("F6 Move", [&]{ QMessageBox::information(&window, "Move", "Move (F6) not implemented yet."); });
+  addFKey("F6 Move", doMove);
   addFKey("F7 Create Directory", doMkdir);
   addFKey("F8 Delete", doDelete);
   addFKey("F9 Properties", doProps);
@@ -725,6 +755,7 @@ int main(int argc, char ** argv)
   };
   shortcut(Qt::Key_F2, doRename);
   shortcut(Qt::Key_F5, doCopy);
+  shortcut(Qt::Key_F6, doMove);
   shortcut(Qt::Key_F7, doMkdir);
   shortcut(Qt::Key_F8, doDelete);
   shortcut(QKeySequence::Delete, doDelete);
