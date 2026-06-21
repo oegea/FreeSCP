@@ -515,3 +515,23 @@ excluded from the engine LINK until libs3 is built, since it pulls S3_* symbols)
 REMAINING for S3 runtime: build libs3 natively (17 src/*.c; needs libcurl + libxml2 — brew has both;
 its own config like neon), add it to the neon link, re-enable S3FileSystem.cpp in CORE_NEON_NAMES,
 un-guard Terminal.cpp Open() S3 branch, then runtime-debug vs MinIO (docker). FTP (FileZilla) last.
+
+### Phase 4 libs3 — SCOUTED (compiles as C++ with neon+expat; 10/13, 3 need small edits)
+Key finding: the WinSCP libs3 fork uses **neon (HTTP) + expat (XML)**, NOT curl/libxml2 (simplexml.c
+includes <expat.h>; request.h uses ne_session/ne_request/NeonCode), and is compiled as **C++**
+(request.c uses `new[]`; libs3.h uses bare struct-tag-as-type `ne_session_s *`). So build with
+`clang++ -x c++ -std=gnu++17 -DWINSCP -Ilibs/libs3/inc -Ilibs/neon/src -Inative/neon
+-Ilibs/expat/lib -I$(brew --prefix openssl)/include`. Exclude `s3.c` (CLI tool), `testsimplexml.c`,
+`mingw_*`. Result: 10/13 compile; the 3 remaining need:
+- response_headers_handler.c: `strnicmp` -> add `-Dstrnicmp=strncasecmp`.
+- request_context.c: `memset` undeclared -> add `-include cstring` (C++ build needs it).
+- request.c: (a) `SYSTEMTIME`/`GetSystemTime` (a WINSCP "inspired by PuTTY ltime" block ~line 1567)
+  — guard `#ifdef _WIN32` and use `gmtime_r` on unix, OR provide SYSTEMTIME+GetSystemTime; (b)
+  `ne_set_request_body_provider(..., neon_read_func, ...)` — `neon_read_func` returns `int` but
+  `ne_provide_body` is `ssize_t(*)(...)`; C++ rejects the return-type mismatch. Change neon_read_func
+  to return `ssize_t` (correct everywhere) or cast `(ne_provide_body)`. (Guarded source edits ->
+  UPSTREAM-PATCHES.)
+THEN: native/libs3/CMakeLists.txt (static libs3, links neon+expat+OpenSSL) like native/neon; add it
+to the engine link; re-enable S3FileSystem.cpp in CORE_NEON_NAMES; un-guard Terminal.cpp Open() S3
+branch; runtime-debug vs MinIO (`docker run -p 9000:9000 minio/minio server /data`). FTP (FileZilla)
+remains last + hardest.
