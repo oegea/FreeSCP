@@ -682,3 +682,12 @@ that's a future enhancement).
   at once (CString/CTime/CFile/collections/CCriticalSection + a POSIX CAsyncSocketEx replacing the
   WSAAsyncSelect/hidden-helper-window message pump). This is a dedicated multi-session effort; doing
   it piecemeal yields no runnable increment until the whole chain parses. Groundwork + map committed.
+
+## FTP: libwinscpfilezilla.a BUILDS (entire FileZilla backend compiles natively)
+All 16 source/filezilla TUs + the compat runtime (afx_format/afx_statics/winmsg) compile and archive
+into libwinscpfilezilla via native/filezilla/CMakeLists.txt (links rtlcompat for -fshort-wchar; compat
+shims first on the include path; genprops engine headers). afx_statics.cpp defines the CStringA
+empty-string statics (_afxDataNilA/_afxPchNilA). Remaining for working FTP: build the engine FTP TUs
+(FtpFileSystem.cpp + CoreMain.cpp) into winscpcore, link the lib into harness + winscp-qt, wire
+Protocol::Ftp in enginebridge + un-guard the FTP branch of TTerminal::Open(), then runtime-test vs a
+Docker FTP server (and tune the select-loop edge-trigger semantics in winmsg.cpp).
