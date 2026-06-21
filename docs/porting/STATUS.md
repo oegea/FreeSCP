@@ -362,3 +362,29 @@ Two root causes, both rtlcompat/genprops (no source/ edit):
    the only swscanf in the engine. (swprintf: none.)
 Harness gained an optional transfer self-test (WINSCP_XFER=1) and now prints query MoreMessages.
 NEXT: Phase 4 (FTP/S3/WebDAV) or Phase 7 (Qt dialogs).
+
+## Phase 4 (WebDAV/S3) SCOPED — compile is close; link needs neon/libs3 built natively
+Surveyed the deferred protocol TUs against the real geninclude shadow set (genprops each into
+/tmp/gi4, compile with -I native/build/geninclude/core + neon/expat/libs3/openssl includes,
+-DWINSCP -DNO_GSSAPI). Real COMPILE error counts (NOT link): NeonIntf 1, Http 1, S3FileSystem 2,
+WebDAVFileSystem 13 — all small RTL gaps, same flavor as the SFTP grind. Inventory:
+- **neon header**: `libs/neon/src/ne_defs.h:44` uses `off64_t` (Linux-ism) — macOS has only off_t.
+  Add `#ifdef __APPLE__ typedef off_t off64_t;` via a guarded fix or a -Doff64_t=off_t. (UPSTREAM
+  candidate; affects every neon-including TU.)
+- **rtlcompat adds**: `UTF8String::vprintf` (NeonIntf:415); Win CRT `_close`, `O_BINARY`,
+  `FILE_BEGIN` (WebDAV file I/O); a `FormatDateTime` overload (WebDAV:1483).
+- **codegen/closure**: WebDAV:1253 `winscp::MakeClosure` not resolved in one context (genprops
+  call-arg closure case — like the ProcessFiles/RunAction ones); WebDAV:310 & Http:82 "reference to
+  non-static member function must be called" (a `&obj.Method` / event-bind genprops needs to handle).
+- **string-literal width**: WebDAV:1113 `char32_t[2]` and :1882 `wchar_t[2]` vs UTF8String — a U""/
+  L"" literal concatenated with the wrong string type (fix the operator+ or the literal).
+- **S3 only**: `System.JSON.hpp` not found (S3 uses Delphi System.JSON) — needs a small JSON
+  shim/DOM like XmlDoc.cpp, or compile S3 last.
+
+THE BIG CHUNK is LINK, not compile: neon (autotools, needs OpenSSL+expat+zlib) and libs3
+(GNUmakefile, needs libcurl+libxml2) must build as native static libs first, then the 4 TUs join a
+new CMake group (mirror winscpcore_ssh) and Terminal.cpp's `Open()` WebDAV/S3 branches (currently
+`#ifdef _WIN32`-guarded to throw "not supported") get un-guarded. Suggested order: (1) build expat
+(already proven) + neon static; (2) fix the ~15 WebDAV/Http/NeonIntf compile gaps above; (3) link +
+runtime-debug WebDAV against a test server (e.g. a dockerized `bytemark/webdav` or rclone serve);
+(4) then S3 (build libs3 + JSON shim) against MinIO. FTP (FileZilla) remains the hardest, last.
