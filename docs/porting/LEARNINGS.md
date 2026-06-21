@@ -183,3 +183,21 @@ silently corrupts data far away. Confirmed cases (all caused a remote bug):
   `"SHELL:-include foo.h"` to keep pairs intact.
 - macOS has no `timeout`; bound a hanging run with background + `sleep` + `kill -9`.
 - Always `cmake --build build` + `ctest` + actually run before claiming green.
+
+## 12. Threading the engine: single connection, not thread-safe
+
+The engine + one `TTerminal` are NOT thread-safe and there is ONE connection. To run transfers in
+the background without freezing the UI (and without crashing):
+- **Serialize all engine access** behind a recursive mutex in the bridge (`g_engineMutex`,
+  `ENGINE_LOCK` at every public entry — recursive because some call each other, e.g. upload ->
+  remoteConnected).
+- **Only the worker thread touches the engine during a transfer batch**; the GUI gates remote
+  actions (connect/disconnect/remote-nav/ops) behind an atomic `gTransferRunning` so they refuse
+  while a batch runs. Local browsing (std::filesystem, no engine) stays free.
+- **Marshal all Qt updates from the worker to the UI thread** — the OnProgress sink runs on the
+  worker, so it must `QMetaObject::invokeMethod(&window, fn, Qt::QueuedConnection)`; touching widgets
+  directly from the worker crashes.
+- **Capture per-batch data BY VALUE** into the detached `std::thread` (the enclosing lambda returns
+  immediately); only app-lifetime objects (window, panels, the queue helpers) may be captured by ref.
+- Transfers are serial on the one connection; remote browsing is blocked mid-batch. True parallelism
+  needs a second connection (a separate TTerminal) — future work.
