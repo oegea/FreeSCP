@@ -49,3 +49,23 @@ Windows/C++Builder build is byte-identical.
 
 All other reconciliation is done outside source/ (native/putty/include shims, genprops, the
 rtlcompat/platform layers).
+
+## Phase 4 — neon (libs/neon) guarded portability fixes
+
+The WinSCP neon fork conflates "WINSCP integration" with "Windows". We build neon natively with
+`-DWINSCP` (the engine/NeonIntf need the WinSCP hooks: NE_207_LIBERAL_ESCAPING, NE_DBG_WINSCP_*,
+etc), so the WINSCP branches that were written for Windows must be `_WIN32`-guarded. All are
+`#ifdef`-guarded so the upstream Windows build is byte-identical.
+
+- `libs/neon/src/config.h` — the whole config is `#ifdef WIN32`. Added an `#else` (non-Windows)
+  branch that `#include "neon_config_unix.h"` (captured autotools output, lives in `native/neon/`).
+  Without this, non-Windows builds get an empty config (no NE_FMT_*, no HAVE_*).
+- `libs/neon/src/ne_openssl.c` — `#include <windows.h>` (WinSCP Windows cert-store) wrapped in
+  `#ifdef _WIN32`.
+- `libs/neon/src/ne_socket.c` — three `#ifdef WINSCP` blocks using `ioctlsocket(fd, FIONBIO, …)`
+  (Windows non-blocking-socket) changed to `#if defined(WINSCP) && defined(_WIN32)`, so unix takes
+  the existing `#else` `fcntl(O_NONBLOCK)` path.
+
+Result: all 26 portable `libs/neon/src/*.c` compile on clang/arm64; `native/neon/CMakeLists.txt`
+produces `libneon.a`. (Linking into the engine + the WebDAV/S3 TUs is the next Phase 4 step; see
+STATUS.md.)

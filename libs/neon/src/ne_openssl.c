@@ -57,7 +57,9 @@
 #include "ne_private.h"
 #include "ne_privssl.h"
 
-#include <windows.h>
+#ifdef _WIN32
+#include <windows.h>  /* WinSCP Windows cert-store integration; absent on macOS/Linux */
+#endif
 
 /* OpenSSL 0.9.6 compatibility */
 #if OPENSSL_VERSION_NUMBER < 0x0090700fL

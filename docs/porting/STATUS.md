@@ -425,3 +425,14 @@ Plan: capture a working `config.h` into `native/neon/` + a small `ne_defs_compat
 header, guard the 2-3 WinSCP Windows-isms (#ifndef _WIN32, listed in UPSTREAM-PATCHES), then a
 `native/neon/CMakeLists.txt` (mirror expat) compiles libneon.a. Then the 4 engine TUs (their ~15
 compile gaps are inventoried above) + link + un-guard Terminal.cpp. This is multi-session.
+
+### Phase 4 neon — libneon.a NOW BUILDS (all 26 .c compile on clang/arm64)
+Resolved the _WIN32-gated-config root cause: `native/neon/neon_config_unix.h` (captured autotools
+config) is pulled by a guarded `#else` in `libs/neon/src/config.h`; built with `-DWINSCP
+-DHAVE_CONFIG_H`; the 3 WinSCP-Windows branches (`ne_openssl` <windows.h>, `ne_socket`
+ioctlsocket/FIONBIO ×3) are now `_WIN32`-guarded (UPSTREAM-PATCHES.md). `native/neon/CMakeLists.txt`
+(in the build via add_subdirectory) produces `build/neon/libneon.a` (591 KB); full build + ctest
+green. NEXT Phase 4 steps: (1) expat as a CMake target (neon's XML dep, needed at link);
+(2) fix the ~15 WebDAV/Http/NeonIntf compile gaps (inventory above) + add a winscpcore_neon CMake
+group; (3) link (libneon + expat + OpenSSL) and un-guard Terminal.cpp Open() WebDAV branch;
+(4) runtime-debug against a WebDAV test server. Then S3 (libs3 + System.JSON shim) and FTP last.

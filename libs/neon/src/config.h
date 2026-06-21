@@ -132,4 +132,12 @@ typedef int socklen_t;
 #include <io.h>
 #define read _read
 
+#else /* !WIN32 */
+
+/* Native macOS/Linux port: the block above is Windows-only, leaving non-Windows builds with no
+   config at all. Pull the autotools-generated config (captured in native/neon, on the include
+   path via native/neon/CMakeLists.txt). Guarded so the upstream Windows build is untouched.
+   See docs/porting/UPSTREAM-PATCHES.md. */
+#include "neon_config_unix.h"
+
 #endif
