@@ -125,6 +125,26 @@ Seed/verify WebDAV with curl: `curl -u u:p -X PROPFIND -H "Depth: 1" http://host
 (`ne_sock_init`) after `PuttyInitialize()` — without it `RequireNeon` throws "Neon HTTP library
 initialization failed". When wiring a new backend, check what global init upstream's CoreMain does.
 
+## 11. rtlcompat string/date methods must match Embarcadero EXACTLY (not std:: intuition)
+
+The engine relies on precise Embarcadero RTL semantics; a "reasonable" std-style implementation
+silently corrupts data far away. Confirmed cases (all caused a remote bug):
+- **`UnicodeString::SubString(start, count)`**: a `start < 1` is clamped to 1 with **count
+  UNCHANGED** (so `SubString(0, n)` = first n chars). std::string-style "reduce count by the
+  underflow" drops a char — `S3FileSystem::ParsePath` does `SubString(0, P-1)` and the S3 bucket
+  name lost its last char ("testbucket" → "testbucke" → MinIO "bucket does not exist").
+- **`AnsiString::data()`** returns **NULL for an empty string** (unlike `c_str()` which returns
+  `""`). S3 passes `SecurityToken.data()`; libs3 adds `x-amz-security-token` only when non-NULL — an
+  empty `""` sent a bogus signed header → SigV4 "headers not signed".
+- **`AnsiString::c_str() const`** returns a non-const `char*` (engine assigns it to C `char*`
+  fields like `ne_uri.path`).
+- **`FormatDateTime`** must interpret the Delphi picture (yyyy/mm/mmm/dd/ddd/hh/nn/ss/'lit'/am-pm),
+  not return ISO — WebDAV's HTTP-date header and any formatted date depend on it.
+- **`UnicodeString(wchar_t)`** must be a 1-char string, not the numeric int ctor (L'/' → "/", not
+  "47"); see §1-adjacent. **Lesson**: when an engine value is subtly wrong (off by one char, empty,
+  wrong format), suspect the rtlcompat primitive and check Delphi/Embarcadero docs for exact
+  semantics before assuming std behavior.
+
 ---
 
 ## DEBUG TECHNIQUES THAT WORKED (use these first)
