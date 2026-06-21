@@ -64,6 +64,7 @@ struct LoginParams
   engine::Protocol protocol = engine::Protocol::Sftp;
   QString host, user, pass;
   int port = 22;
+  bool tls = false;
 };
 
 static LoginParams showLoginDialog(QWidget * parent)
@@ -122,8 +123,16 @@ static LoginParams showLoginDialog(QWidget * parent)
   grid->addWidget(user, 2, 1);
   grid->addWidget(new QLabel("Password:"), 2, 2);
   grid->addWidget(pass, 2, 3);
-  grid->setRowStretch(3, 1);
+  auto * enc = new QComboBox; enc->addItem("No encryption"); enc->addItem("TLS/SSL");
+  auto * encLabel = new QLabel("Encryption:");
+  grid->addWidget(encLabel, 3, 0);
+  grid->addWidget(enc, 3, 1);
+  grid->setRowStretch(4, 1);
   top->addWidget(session, 1);
+  // Encryption only applies to WebDAV/S3 (HTTP-based); hide for SFTP/SCP/FTP.
+  auto updateEnc = [&](int i) { bool http = (i == 3 || i == 4); encLabel->setVisible(http); enc->setVisible(http); };
+  QObject::connect(proto, &QComboBox::currentIndexChanged, updateEnc);
+  updateEnc(proto->currentIndex());
 
   // Test-friendly: map protocol -> the local Docker test server's port.
   QObject::connect(proto, &QComboBox::currentIndexChanged, [&](int i) {
@@ -204,6 +213,7 @@ static LoginParams showLoginDialog(QWidget * parent)
   p.ok = true;
   p.host = host->text(); p.port = port->value();
   p.user = user->text(); p.pass = pass->text();
+  p.tls = (enc->currentIndex() == 1);
   return p;
 }
 
@@ -573,7 +583,7 @@ int main(int argc, char ** argv)
     window.statusBar()->showMessage("Connecting\xE2\x80\xA6");
     log(QString("Connecting to %1:%2 \xE2\x80\xA6").arg(lp.host).arg(lp.port));
     QApplication::processEvents();
-    engine::ConnectResult r = engine::connectSftp(s8(lp.host), lp.port, s8(lp.user), s8(lp.pass), lp.protocol);
+    engine::ConnectResult r = engine::connectSftp(s8(lp.host), lp.port, s8(lp.user), s8(lp.pass), lp.protocol, lp.tls);
     if (!r.ok)
     {
       log("FAILED: " + u8(r.error));

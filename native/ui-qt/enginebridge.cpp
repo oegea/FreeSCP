@@ -171,7 +171,7 @@ std::vector<DirEntry> listLocalDir(const std::string & utf8Path)
 //--- remote SFTP session ---------------------------------------------------
 ConnectResult connectSftp(const std::string & host, int port,
                           const std::string & user, const std::string & password,
-                          Protocol protocol)
+                          Protocol protocol, bool tls)
 {
   ConnectResult r;
   try
@@ -189,8 +189,10 @@ ConnectResult connectSftp(const std::string & host, int port,
     switch (protocol)
     {
       case Protocol::Scp:    g_sessionData->FSProtocol = fsSCPonly; break;
-      case Protocol::WebDav: g_sessionData->FSProtocol = fsWebDAV; g_sessionData->Ftps = ftpsNone; break;
-      case Protocol::S3:     g_sessionData->FSProtocol = fsS3; g_sessionData->Ftps = ftpsNone;
+      case Protocol::WebDav: g_sessionData->FSProtocol = fsWebDAV;
+                             g_sessionData->Ftps = tls ? ftpsImplicit : ftpsNone; break;
+      case Protocol::S3:     g_sessionData->FSProtocol = fsS3;
+                             g_sessionData->Ftps = tls ? ftpsImplicit : ftpsNone;
                              g_sessionData->S3UrlStyle = s3usPath; g_sessionData->S3DefaultRegion = L"us-east-1"; break;
       default:               g_sessionData->FSProtocol = fsSFTPonly; break;
     }

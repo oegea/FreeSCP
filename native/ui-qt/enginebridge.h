@@ -68,7 +68,7 @@ enum class Protocol { Sftp = 0, Scp = 1, WebDav = 2, S3 = 3 };
 // `protocol` selects SFTP (default) or SCP — both run over the same SSH transport.
 ConnectResult connectSftp(const std::string & host, int port,
                           const std::string & user, const std::string & password,
-                          Protocol protocol = Protocol::Sftp);
+                          Protocol protocol = Protocol::Sftp, bool tls = false);
 bool remoteConnected();
 std::string remoteCurrentDir();
 

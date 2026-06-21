@@ -56,7 +56,12 @@ int main(int argc, char ** argv)
     Data->PortNumber = Port;
     Data->UserName = User;
     Data->Password = Pass;
-    if (::getenv("WINSCP_DAV") != nullptr)
+    if (::getenv("WINSCP_DAVS") != nullptr)
+    {
+      Data->FSProtocol = fsWebDAV;       // HTTPS WebDAV (TLS)
+      Data->Ftps = ftpsImplicit;
+    }
+    else if (::getenv("WINSCP_DAV") != nullptr)
     {
       Data->FSProtocol = fsWebDAV;   // plain-HTTP WebDAV test server (no TLS)
       Data->Ftps = ftpsNone;

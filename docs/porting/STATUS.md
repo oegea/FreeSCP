@@ -626,3 +626,12 @@ S3 file ops: mkdir (create bucket) and delete (remove bucket) WORK at root; rena
 "Operation not supported" — correct S3 behavior (no bucket-rename API), not a bug. Object-level
 inside buckets uses copy+delete. So S3 is functionally complete for connect/list/transfer + the
 ops S3 actually supports. GUI: Tab now switches the active panel (Norton/WinSCP classic).
+
+## WebDAV HTTPS/TLS WORKS — fifth transport verified
+WebDAV over TLS connects via neon's OpenSSL path: harness `WINSCP_DAVS=1` (Ftps=ftpsImplicit)
+against an rclone https WebDAV server (self-signed) -> cert-verification prompt fires
+(OnQueryUser, auto-accepted) -> CONNECTED -> lists files. enginebridge::connectSftp gained a `tls`
+flag (Ftps=ftpsImplicit for WebDAV/S3); the GUI Login dialog gained an Encryption combo
+(No encryption / TLS-SSL) shown for WebDAV/S3. Plain WebDAV/S3 regression clean.
+HTTPS test server: `docker run -p 8443:8443 -v data -v cert -v key rclone/rclone serve webdav
+/data --addr :8443 --cert /cert.pem --key /key.pem --user winscp --pass winscp123`.
