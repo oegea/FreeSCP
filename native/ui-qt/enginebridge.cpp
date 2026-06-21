@@ -20,6 +20,7 @@
 #include <memory>
 
 void __fastcall PuttyInitialize();   // one-time PuTTY init (sk_init + appname)
+void __fastcall NeonInitialize();    // ne_sock_init (WebDAV/HTTP)
 
 namespace {
 
@@ -46,6 +47,7 @@ void EnsureEngineInited()
   Configuration = new BridgeConfiguration();
   Configuration->Default();
   PuttyInitialize();
+  NeonInitialize();    // ne_sock_init; needed for WebDAV (no-op cost otherwise)
   g_engineInited = true;
 }
 
@@ -176,7 +178,12 @@ ConnectResult connectSftp(const std::string & host, int port,
     g_sessionData->PortNumber = port;
     g_sessionData->UserName = FromU8(user);
     g_sessionData->Password = g_password;
-    g_sessionData->FSProtocol = (protocol == Protocol::Scp) ? fsSCPonly : fsSFTPonly;
+    switch (protocol)
+    {
+      case Protocol::Scp:    g_sessionData->FSProtocol = fsSCPonly; break;
+      case Protocol::WebDav: g_sessionData->FSProtocol = fsWebDAV; g_sessionData->Ftps = ftpsNone; break;
+      default:               g_sessionData->FSProtocol = fsSFTPonly; break;
+    }
     g_sessionData->FingerprintScan = false;
 
     g_terminal.reset(new TTerminal(g_sessionData.get(), Configuration));

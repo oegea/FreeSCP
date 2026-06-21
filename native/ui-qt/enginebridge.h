@@ -59,7 +59,7 @@ struct ConnectResult
 };
 
 // File-transfer protocol for a remote session.
-enum class Protocol { Sftp = 0, Scp = 1 };
+enum class Protocol { Sftp = 0, Scp = 1, WebDav = 2 };
 
 // Open a remote session (blocking). One session at a time; a new connect replaces the old.
 // `protocol` selects SFTP (default) or SCP — both run over the same SSH transport.
