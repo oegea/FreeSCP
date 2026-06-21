@@ -42,6 +42,9 @@ UnicodeString g_password;
 bool g_engineInited = false;
 std::function<bool(const engine::TransferProgress &)> g_progressCb;
 std::string g_lastTransferError;   // set by OnQueryUser on a qtError so transfers can report it
+// Confirmation callback (host-key verification). Returns true to accept. If unset, auto-accept.
+// Connect runs on the caller (UI) thread, so the GUI can show a modal dialog from here.
+std::function<bool(const std::string &)> g_confirmCb;
 
 // Last successful connect params, so we can open additional (parallel) connections to the same server.
 struct ConnParams { std::string host; int port = 0; std::string user, password; engine::Protocol protocol = engine::Protocol::Sftp; bool tls = false; bool valid = false; };
@@ -232,8 +235,10 @@ ConnectResult connectSftp(const std::string & host, int port,
           g_lastTransferError = ToU8(Query);
           Answer = (Answers & qaAbort) ? qaAbort : ((Answers & qaSkip) ? qaSkip : Answers);
         }
+        else if ((Answers & qaYes) && (Answers & qaNo) && g_confirmCb)   // a Yes/No confirmation (host key)
+          Answer = g_confirmCb(ToU8(Query)) ? qaYes : qaNo;
         else
-          Answer = (Answers & qaYes) ? qaYes : ((Answers & qaOK) ? qaOK : Answers);   // host key / confirmations
+          Answer = (Answers & qaYes) ? qaYes : ((Answers & qaOK) ? qaOK : Answers);
       };
     g_terminal->OnProgress =
       [](TFileOperationProgressType & P)
@@ -268,6 +273,7 @@ ConnectResult connectSftp(const std::string & host, int port,
 }
 
 void setProgressSink(const std::function<bool(const TransferProgress &)> & cb) { g_progressCb = cb; }
+void setConfirmCallback(const std::function<bool(const std::string &)> & cb) { g_confirmCb = cb; }
 
 bool remoteConnected() { ENGINE_LOCK; return g_terminal && g_terminal->Active; }
 std::string remoteCurrentDir() { ENGINE_LOCK; return remoteConnected() ? ToU8(g_terminal->CurrentDirectory) : std::string(); }

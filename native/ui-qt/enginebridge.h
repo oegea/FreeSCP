@@ -83,6 +83,8 @@ struct TransferProgress
 // Register a transfer-progress sink. Return TRUE to request cancellation of the current transfer.
 // Pass an empty std::function to clear. Fired on the thread running the transfer.
 void setProgressSink(const std::function<bool(const TransferProgress &)> & cb);
+// Host-key (Yes/No) confirmation callback; returns true to accept. Unset -> auto-accept.
+void setConfirmCallback(const std::function<bool(const std::string &)> & cb);
 // List the remote directory (empty path = current/home). Sorted dirs-first; includes "..".
 std::vector<DirEntry> listRemoteDir(const std::string & utf8Path);
 

@@ -1041,6 +1041,13 @@ int main(int argc, char ** argv)
   };
   left->onDropExternal = importFiles; right->onDropExternal = importFiles;
 
+  // Host-key verification: show the engine's message (fingerprint) + Yes/No instead of auto-accepting.
+  engine::setConfirmCallback([&](const std::string & msg) -> bool {
+    if (qgetenv("QT_QPA_PLATFORM") == "offscreen") return true;   // headless tests: auto-accept
+    return QMessageBox::warning(&window, "Host key verification", u8(msg),
+                                QMessageBox::Yes | QMessageBox::No, QMessageBox::No) == QMessageBox::Yes;
+  });
+
   //--- operations ---------------------------------------------------------
   auto doConnect = [&] {
     if (busy()) return;
