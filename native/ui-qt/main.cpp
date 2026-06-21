@@ -616,6 +616,29 @@ int main(int argc, char ** argv)
   logDock->hide();
   auto log = [&](const QString & s) { logView->appendPlainText(s); };
 
+  // Transfer queue dock (WinSCP-style): a list of transfers with live progress. Processed
+  // sequentially on the UI thread (processEvents keeps it responsive) — visible like WinSCP's queue.
+  auto * queueDock = new QDockWidget("Transfer queue", &window);
+  auto * queueView = new QTableView;
+  auto * queueModel = new QStandardItemModel(0, 4, &window);
+  queueModel->setHorizontalHeaderLabels({ "Operation", "File", "Target", "Progress" });
+  queueView->setModel(queueModel);
+  queueView->verticalHeader()->setVisible(false);
+  queueView->setEditTriggers(QAbstractItemView::NoEditTriggers);
+  queueView->horizontalHeader()->setStretchLastSection(true);
+  queueDock->setWidget(queueView);
+  window.addDockWidget(Qt::BottomDockWidgetArea, queueDock);
+  queueDock->hide();
+  auto queueAdd = [&](const QString & op, const QString & file, const QString & target) -> int {
+    QList<QStandardItem *> row;
+    row << new QStandardItem(op) << new QStandardItem(file) << new QStandardItem(target) << new QStandardItem("queued");
+    queueModel->appendRow(row);
+    return queueModel->rowCount() - 1;
+  };
+  auto queueSet = [&](int r, const QString & status) {
+    if (r >= 0 && r < queueModel->rowCount()) queueModel->item(r, 3)->setText(status);
+  };
+
   //--- operations ---------------------------------------------------------
   auto doConnect = [&] {
     LoginParams lp = showLoginDialog(&window);
@@ -659,22 +682,17 @@ int main(int argc, char ** argv)
     if (files.isEmpty()) { window.statusBar()->showMessage("No files selected"); return; }
     if (active->isRemote() && dst->isRemote())
     { QMessageBox::information(&window, "Copy", "Remote-to-remote copy is not supported yet."); return; }
-    // WinSCP-style transfer progress (per-file bar fed by the engine OnProgress sink).
-    QProgressDialog prog(&window);
-    prog.setWindowTitle(active->isRemote() ? "Download" : (dst->isRemote() ? "Upload" : "Copy"));
-    prog.setMinimumDuration(0);
-    prog.setRange(0, 100);
-    prog.setMinimumWidth(420);
-    engine::setProgressSink([&](const std::string & file, int pct) {
-      prog.setLabelText(u8(file));
-      prog.setValue(pct);
-      QApplication::processEvents();
+    const QString op = active->isRemote() ? "Download" : (dst->isRemote() ? "Upload" : "Copy");
+    queueDock->show();
+    int curRow = -1;
+    engine::setProgressSink([&](const std::string &, int pct) {
+      queueSet(curRow, QString("%1%").arg(pct)); QApplication::processEvents();
     });
     int ok = 0; std::string lastErr;
     for (const QString & f : files)
     {
-      prog.setLabelText(f);
-      QApplication::processEvents();
+      curRow = queueAdd(op, f, dst->path());
+      queueSet(curRow, "active"); QApplication::processEvents();
       std::string src = engine::joinPath(s8(active->path()), s8(f));
       bool r;
       if (!active->isRemote() && !dst->isRemote())
@@ -683,10 +701,10 @@ int main(int argc, char ** argv)
         r = engine::uploadToRemote(src, s8(dst->path()), &lastErr);
       else
         r = engine::downloadFromRemote(src, s8(dst->path()), &lastErr);
+      queueSet(curRow, r ? "done" : ("failed: " + u8(lastErr)));
       if (r) ++ok; else log("Copy failed: " + f + " — " + u8(lastErr));
     }
     engine::setProgressSink(nullptr);
-    prog.close();
     dst->refresh();
     window.statusBar()->showMessage(QString("Copied %1/%2 file(s) to %3").arg(ok).arg(files.size()).arg(dst->path()));
   };
@@ -823,6 +841,7 @@ int main(int argc, char ** argv)
     mSession->addAction("E&xit\tF10", doQuit);
     auto * mOptions = window.menuBar()->addMenu("&Options");
     mOptions->addAction("Session &log\tCtrl+L", [&]{ logDock->setVisible(!logDock->isVisible()); });
+    mOptions->addAction("Transfer &queue\tCtrl+Q", [&]{ queueDock->setVisible(!queueDock->isVisible()); });
     auto * mRemote = window.menuBar()->addMenu("&Remote");
     mRemote->addAction("&Refresh", [&]{ if (right->isRemote()) right->refresh(); });
     auto * mHelp = window.menuBar()->addMenu("&Help");
@@ -873,6 +892,9 @@ int main(int argc, char ** argv)
   // toggle the session log
   { auto * a = new QAction(&window); a->setShortcut(Qt::CTRL | Qt::Key_L);
     QObject::connect(a, &QAction::triggered, [&]{ logDock->setVisible(!logDock->isVisible()); });
+    window.addAction(a); }
+  { auto * a = new QAction(&window); a->setShortcut(Qt::CTRL | Qt::Key_Q);
+    QObject::connect(a, &QAction::triggered, [&]{ queueDock->setVisible(!queueDock->isVisible()); });
     window.addAction(a); }
 
   left->setActive(true);
