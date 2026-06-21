@@ -40,6 +40,7 @@
 #include <QDockWidget>
 #include <QCheckBox>
 #include <QMenu>
+#include <QTimer>
 #include <functional>
 
 #include "enginebridge.h"
@@ -394,9 +395,6 @@ int main(int argc, char ** argv)
   window.setWindowTitle("WinSCP");
   window.resize(1100, 720);
 
-  for (const char * m : { "&Local", "&Mark", "&Files", "&Commands", "&Session", "&Options", "&Remote", "&Help" })
-    window.menuBar()->addMenu(m);
-
   // Main toolbar.
   auto * tb = window.addToolBar("Main");
   tb->setMovable(false);
@@ -573,6 +571,34 @@ int main(int argc, char ** argv)
   };
   installContextMenu(left);
   installContextMenu(right);
+
+  // Menu bar (WinSCP layout; actions wired to the same ops as the toolbar/F-keys).
+  {
+    auto * mLocal = window.menuBar()->addMenu("&Local");
+    mLocal->addAction("&Refresh", [&]{ left->refresh(); });
+    mLocal->addAction("&Home", [&]{ left->navigate(u8(engine::homeDir())); });
+    auto * mFiles = window.menuBar()->addMenu("&Files");
+    mFiles->addAction("&Copy / Upload\tF5", doCopy);
+    mFiles->addAction("&Rename\tF2", doRename);
+    mFiles->addAction("&Delete\tF8", doDelete);
+    mFiles->addAction("&Properties\tF9", doProps);
+    mFiles->addSeparator();
+    mFiles->addAction("Create &Directory\tF7", doMkdir);
+    auto * mSession = window.menuBar()->addMenu("&Session");
+    mSession->addAction("&Login\xE2\x80\xA6", doConnect);
+    mSession->addAction("&Disconnect", doDisconnect);
+    mSession->addSeparator();
+    mSession->addAction("E&xit\tF10", doQuit);
+    auto * mOptions = window.menuBar()->addMenu("&Options");
+    mOptions->addAction("Session &log\tCtrl+L", [&]{ logDock->setVisible(!logDock->isVisible()); });
+    auto * mRemote = window.menuBar()->addMenu("&Remote");
+    mRemote->addAction("&Refresh", [&]{ if (right->isRemote()) right->refresh(); });
+    auto * mHelp = window.menuBar()->addMenu("&Help");
+    mHelp->addAction("&About WinSCP (native port)", [&]{
+      QMessageBox::about(&window, "About",
+        "WinSCP — native macOS port\n\nPorted engine (RTL compat + platform layer) + Qt 6 GUI.\n"
+        "Protocols: SFTP, SCP, WebDAV, S3."); });
+  }
 
   //--- function-key bar buttons ------------------------------------------
   auto addFKey = [&](const QString & text, const std::function<void()> & fn) {
