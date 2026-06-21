@@ -1802,6 +1802,16 @@ void __fastcall TFTPFileSystem::DeleteFile(const UnicodeString AFileName,
   UnicodeString FileName = AbsolutePath(AFileName, false);
   UnicodeString FileNameOnly = UnixExtractFileName(FileName);
   UnicodeString FilePath = RemoteExtractFilePath(FileName);
+#ifndef _WIN32
+  // WINSCP-NATIVE-PORT: a directory's FullFileName can arrive with a trailing slash, so
+  // UnixExtractFileName yields "" and FileZilla's RemoveDir rejects it (INVALIDPARAM). Fall back to
+  // the TRemoteFile's own name (and recompute the path) when the extracted name is empty.
+  if (FileNameOnly.IsEmpty() && (File != NULL))
+  {
+    FileNameOnly = File->FileName;
+    FilePath = RemoteExtractFilePath(UnixExcludeTrailingBackslash(FileName));
+  }
+#endif
 
   bool Dir = FTerminal->DeleteContentsIfDirectory(FileName, File, Params, Action);
 

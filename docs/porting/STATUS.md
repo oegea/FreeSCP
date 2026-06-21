@@ -700,3 +700,15 @@ events, and the select-loop fires FD_READ (level, drives the FTP state machine) 
 peer EOF (peeked with MSG_PEEK|MSG_DONTWAIT to detect end-of-listing without blocking the select
 thread or racing FileZilla's reader). Remaining FTP polish: download + remote ops (mkdir/rename/
 delete) stall after upload — a follow-on data-channel nuance to chase. SFTP/SCP/WebDAV/S3 unaffected.
+
+## FTP COMPLETE — all 5 protocols fully functional (connect/list/transfer/ops)
+Native FTP (ported FileZilla) now does the full set: connect, login, list, upload, download, mkdir,
+rename, AND delete (incl. directory delete). Last two fixes: (1) PreserveDownloadFileTime guarded on
+non-WIN32 (FileZilla's CFile FILE* handle is incompatible with the platform SetFileTime; the
+mismatch faulted the worker and hung downloads); (2) FTP DeleteFile falls back to TRemoteFile->
+FileName when a directory's FullFileName carries a trailing slash (UnixExtractFileName then returned
+"", and FileZilla's RemoveDir rejected the empty name -> INVALIDPARAM).
+
+Full matrix (harness, vs local Docker servers): SFTP/SCP/WebDAV(+TLS)/S3/FTP all connect+list+
+transfer; SFTP/WebDAV/FTP also do mkdir/rename/delete; S3 bucket-level ops. Build from scratch +
+ctest green; Windows tree untouched (FTP source edits #ifdef-guarded, in UPSTREAM-PATCHES).
