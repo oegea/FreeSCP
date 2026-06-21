@@ -402,11 +402,18 @@ sh ./config.status config.h   # -> HAVE_EXPAT, NE_HAVE_SSL, HAVE_OPENSSL_SSL_H, 
 ```
 Compiling the 26 src/*.c with that config.h: **15 compile clean, 11 fail** — all because this is
 the WinSCP-PATCHED neon (Windows assumptions). The 11 + cause:
-- printf length macros expand to nothing → `%" NE_FMT_TIME_T`, `FMT_NE_OFF_T`, `NE_FMT_SSIZE_T`,
-  version-string concat (ne_auth, ne_basic, ne_request, ne_session, ne_utils). NOTE: config.h DOES
-  define them (`NE_FMT_TIME_T "ld"`, `NE_FMT_SSIZE_T "ld"`, `NE_FMT_NE_OFF_T NE_FMT_OFF_T`), so this
-  is an INCLUDE-WIRING issue (those TUs aren't seeing config.h), not missing macros — verify
-  config.h is included first (HAVE_CONFIG_H + -I order).
+- printf length macros expand to nothing → `%" NE_FMT_TIME_T`, etc (ne_auth/basic/request/session/
+  utils). **ROOT CAUSE FOUND**: the neon .c do `#include "config.h"`, which quote-include resolves
+  to the SIBLING `libs/neon/src/config.h` (NOT our generated /tmp/neon-build/config.h — a sibling
+  always wins over -I). That sibling is a WinSCP hand-written config that gates everything under
+  `#if defined(_WIN32)` (`NE_FMT_TIME_T`, `#include <io.h>`, ...), so on macOS the macros are empty
+  and Windows headers leak. THE FIX for the whole neon build: add a `#ifndef _WIN32` branch to
+  `libs/neon/src/config.h` (guarded source edit -> UPSTREAM-PATCHES) that pulls the autotools-
+  generated values (NE_FMT_*, HAVE_EXPAT, NE_HAVE_SSL, sized-int types, errno/headers), OR have the
+  CMake compile neon-source COPIES with our config.h as their sibling (genprops-style shadow). This
+  single fix unblocks most of the 11 (and the `errno`, `ne_md5` 32-bit-type, `ne_xml` parser, and
+  `ne_openssl`/<windows.h> ones are all the same _WIN32-gated-config symptom). ne_207's
+  NE_207_LIBERAL_ESCAPING is a separate WinSCP-added flag.
 - `ne_openssl.c` `#include <windows.h>` (WinSCP added Windows crypto-store code) — needs an
   `#ifndef _WIN32` guard / unix branch.
 - `ne_xml.c` "need an XML parser" — HAVE_EXPAT set in config.h but ne_xml selects via a different
