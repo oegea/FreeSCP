@@ -93,6 +93,13 @@ std::string formatSize(std::int64_t bytes)
 bool copyFile(const std::string & srcUtf8, const std::string & dstUtf8)
 {
   std::error_code ec;
+  if (std::filesystem::is_directory(srcUtf8, ec))
+  {
+    // Recursive directory copy (UI selection can include folders).
+    std::filesystem::copy(srcUtf8, dstUtf8,
+      std::filesystem::copy_options::recursive | std::filesystem::copy_options::overwrite_existing, ec);
+    return !ec;
+  }
   std::filesystem::copy_file(srcUtf8, dstUtf8,
     std::filesystem::copy_options::overwrite_existing, ec);
   return !ec;
