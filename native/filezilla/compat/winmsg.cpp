@@ -41,10 +41,10 @@ int g_wake[2] = { -1, -1 };                    // self-pipe to wake the select l
 
 void wakeSelect() { if (g_wake[1] >= 0) { char c = 1; (void)::write(g_wake[1], &c, 1); } }
 
-bool queueHas(HWND hwnd, UINT msg, WPARAM w)   // dedup: avoid flooding identical socket events
-{
-  for (const auto & m : g_queue) if (m.hwnd == hwnd && m.message == msg && m.wParam == w) return true;
-  return false;
+bool queueHas(HWND hwnd, UINT msg, WPARAM w, LPARAM l)   // dedup a specific (socket,event) — NOT all
+{ // events of a socket: collapsing all of them suppressed a data socket's FD_READ behind its pending
+  for (const auto & m : g_queue) if (m.hwnd == hwnd && m.message == msg && m.wParam == w && m.lParam == l) return true;
+  return false;   // FD_CONNECT/FD_WRITE, so downloads never read their data.
 }
 
 void postLocked(HWND hwnd, UINT msg, WPARAM w, LPARAM l)
@@ -90,26 +90,32 @@ void selectLoop()
       SOCKET s = kv.first; const SockReg & reg = kv.second; long & latch = g_posted[s];
       auto fire = [&](long fd) {
         if (!(reg.events & fd)) return;
-        if ((fd == FD_WRITE || fd == FD_CONNECT) && (latch & fd)) return;  // one-shot for writable
-        if (queueHas(reg.hwnd, reg.msg, (WPARAM)s)) return;
+        if ((fd == FD_WRITE || fd == FD_CONNECT) && (latch & fd)) return;  // one-shot for writable/connect
+        LPARAM l = MAKELONG(fd, 0);
+        if (queueHas(reg.hwnd, reg.msg, (WPARAM)s, l)) return;   // dedup this exact (socket,event)
         if (getenv("FZ_TRACE")) fprintf(stderr, "[fz] post sock=%d event=0x%lx\n", s, fd);
-        postLocked(reg.hwnd, reg.msg, (WPARAM)s, MAKELONG(fd, 0));
+        postLocked(reg.hwnd, reg.msg, (WPARAM)s, l);
         latch |= fd;
       };
       if (FD_ISSET(s, &wfds)) { fire(FD_CONNECT); fire(FD_WRITE); }
       if (FD_ISSET(s, &rfds))
       {
-        fire(FD_READ); fire(FD_ACCEPT);
-        // FD_CLOSE on a REAL EOF only (peek==0), latched + bypassing the FD_READ dedup so it always
-        // reaches FileZilla — without it the data channel never signals end-of-listing (it hung).
-        if ((reg.events & FD_CLOSE) && !(latch & FD_CLOSE))
+        int listening = 0; socklen_t ol = sizeof(listening);   // the event mask is always 0x3f, so only
+        ::getsockopt(s, SOL_SOCKET, SO_ACCEPTCONN, &listening, &ol);  // a REAL listening socket gets FD_ACCEPT
+        if (listening) { fire(FD_ACCEPT); }
+        else
         {
-          char c;   // MSG_DONTWAIT: never block the select thread if FileZilla already drained the data
-          if (::recv(s, &c, 1, MSG_PEEK | MSG_DONTWAIT) == 0)
+          fire(FD_READ);   // level-triggered: drives FileZilla's state machine + reads data-channel bytes
+          // FD_CLOSE on a REAL EOF only (peek==0), latched, so the data channel signals end-of-data.
+          if ((reg.events & FD_CLOSE) && !(latch & FD_CLOSE))
           {
-            if (getenv("FZ_TRACE")) fprintf(stderr, "[fz] post sock=%d event=0x20 (CLOSE/EOF)\n", s);
-            postLocked(reg.hwnd, reg.msg, (WPARAM)s, MAKELONG(FD_CLOSE, 0));
-            latch |= FD_CLOSE;
+            char c;   // MSG_DONTWAIT: never block the select thread if FileZilla already drained the data
+            if (::recv(s, &c, 1, MSG_PEEK | MSG_DONTWAIT) == 0)
+            {
+              if (getenv("FZ_TRACE")) fprintf(stderr, "[fz] post sock=%d event=0x20 (CLOSE/EOF)\n", s);
+              postLocked(reg.hwnd, reg.msg, (WPARAM)s, MAKELONG(FD_CLOSE, 0));
+              latch |= FD_CLOSE;
+            }
           }
         }
       }
