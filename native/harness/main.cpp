@@ -52,7 +52,7 @@ int main(int argc, char ** argv)
     Data->PortNumber = Port;
     Data->UserName = User;
     Data->Password = Pass;
-    Data->FSProtocol = fsSFTPonly;
+    Data->FSProtocol = (::getenv("WINSCP_SCP") != nullptr) ? fsSCPonly : fsSFTPonly;  // TEMP SCP test
     Data->FingerprintScan = false;   // ensure normal connect (not fingerprint-scan mode)
     out(FORMAT(L"[harness] Session: %s@%s:%d (SFTP)", (User, Host, Port)));
 

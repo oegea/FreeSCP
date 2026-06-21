@@ -34,17 +34,24 @@ Expected harness output:
 [harness] Done.
 ```
 
-## >>> THE #1 NEXT TASK: SCP protocol runtime shake-out <<<
+## >>> THE #1 NEXT TASK: expose SCP as a protocol choice in the GUI; then Phase 4 (FTP/S3/WebDAV) <<<
 
-Remote nav, upload/download (F5), mkdir/rename/delete, AND properties (chmod, F9) now WORK over
-SFTP (see STATUS.md). The putty-libs -fshort-wchar item is DEFERRED (investigated: clang poisons
-wcs* under -fshort-wchar and putty's wide-string utils need them; off the SFTP path; keeping putty
-4-byte — see STATUS.md "Investigated: -fshort-wchar on the putty libs"). Next: SCP protocol runtime
-(ScpFileSystem.cpp compiles; needs the same runtime debugging SFTP got — connect with
-FSProtocol=fsSCPonly via the harness, fix what breaks). Then Phase 4 (FTP/S3/WebDAV — unguard
-Terminal.cpp Open() branches) and Phase 7 (rebuild the 48 VCL dialogs in Qt). Watch the two
-transfer-era hazards: (a) any TStrings passed to ProcessFiles must carry TRemoteFile* as each
-entry's Object; (b) never call libc wcs* on engine strings — route through WcsCompat.h.
+Over SFTP: nav, upload/download (F5), mkdir/rename/delete, properties (chmod, F9) all WORK. SCP
+protocol RUNTIME also works now (connect + list, harness-validated with WINSCP_SCP=1 / fsSCPonly) —
+see STATUS.md. The putty-libs -fshort-wchar item is DEFERRED (see STATUS.md). Next options:
+(a) small: add a protocol dropdown (SFTP/SCP) to the Connect dialog + thread FSProtocol through
+enginebridge::connectSftp (engine side proven for both); exercise the file ops over SCP.
+(b) Phase 4: FTP (FileZilla — hardest), S3/WebDAV (neon/libs3) — Terminal.cpp Open() branches are
+`#ifdef _WIN32`-guarded to throw "not supported"; un-guard when ready.
+(c) Phase 7: faithful rebuild of the 48 VCL dialogs in Qt.
+Watch the two transfer-era hazards: (a) any TStrings passed to ProcessFiles must carry TRemoteFile*
+as each entry's Object; (b) never call libc wcs* on engine strings — route through WcsCompat.h.
+
+## (DONE) SCP protocol runtime — connect + list WORKS
+
+ScpFileSystem connects/lists over a shell channel (harness WINSCP_SCP=1). Fixed a latent
+TStrings::Assign no-op (was crashing SCP's OutputCopy->Assign(FOutput)); affected ~13 engine
+call sites. See STATUS.md.
 
 Possible smaller follow-ups: owner/group/timestamp in the properties path (chmod done; the engine
 ChangeFileProperties already supports vpOwner/vpGroup/vpModification — just needs UI + bridge);

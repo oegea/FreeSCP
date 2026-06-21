@@ -78,6 +78,10 @@ class TStrings : public TPersistent
 {
 public:
   virtual ~TStrings() {}
+  // Copy strings + objects from another TStrings (Delphi TStrings.Assign). The base
+  // TPersistent stub was a no-op, which silently left the destination empty (e.g. SCP's
+  // OutputCopy->Assign(FOutput) -> Strings[0] read out of bounds -> crash).
+  virtual void __fastcall Assign(TPersistent * Source);
   virtual int __fastcall GetCount() = 0;
   __declspec(property(get=GetCount)) int Count;
 

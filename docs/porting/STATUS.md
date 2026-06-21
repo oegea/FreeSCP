@@ -323,3 +323,17 @@ Decision: keep putty at 4-byte wchar_t. Revisit only if a concrete UTF-16-crossi
 (e.g. GSSAPI principal names, certain key-file paths) is ever exercised. The wcs* class-bug on the
 ENGINE side is already handled by WcsCompat.h (-include via winscpcore_flags). Made WcsCompat.h
 include <stddef.h> instead of <wchar.h> in C mode (future-proof; avoids the poison if ever used in C).
+
+## SCP protocol RUNTIME WORKS — connect + list (and fixed a latent TStrings::Assign no-op)
+The SCP filesystem now connects, runs its shell-command startup (clear-aliases/detect-return-var/
+pwd) and lists a real directory over an exec/shell channel. Validated via the harness with
+FSProtocol=fsSCPonly (added a WINSCP_SCP=1 env toggle to native/harness/main.cpp): connects, lists
+/config (10 entries incl. hello.txt). Same Docker server (the winscp user has /bin/bash, so SCP's
+shell commands run).
+Root-cause fixed (rtlcompat, no source/ edit): **TStrings::Assign was a no-op stub** in the base
+TPersistent — TSCPFileSystem::ReadDirectory does `OutputCopy->Assign(FOutput)` then reads
+`OutputCopy->Strings[0]`, which on the empty copy went out of bounds and crashed in
+basic_string::__is_long. Implemented TStrings::Assign (clear + copy strings & objects via the
+virtual interface). This was a LATENT bug affecting ~13 Assign call sites across the engine, not
+just SCP. NEXT: wire SCP into enginebridge/GUI as a protocol choice (engine side proven); then
+Phase 4 (FTP/S3/WebDAV) and Phase 7 (Qt dialogs).

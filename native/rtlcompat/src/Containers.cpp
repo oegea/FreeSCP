@@ -86,6 +86,18 @@ void __fastcall TStrings::SetText(const UnicodeString & Text)
   }
   if (!line.IsEmpty()) Add(line);
 }
+void __fastcall TStrings::Assign(TPersistent * Source)
+{
+  TStrings * Src = dynamic_cast<TStrings *>(Source);
+  if (Src == this) return;
+  Clear();
+  if (Src != nullptr)
+  {
+    int n = Src->GetCount();
+    for (int i = 0; i < n; ++i)
+      AddObject(Src->Get(i), Src->GetObject(i));
+  }
+}
 UnicodeString __fastcall TStrings::GetName(int Index)
 {
   UnicodeString S = Get(Index);
