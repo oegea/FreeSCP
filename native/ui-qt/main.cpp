@@ -38,6 +38,8 @@
 #include <QFrame>
 #include <QPlainTextEdit>
 #include <QDockWidget>
+#include <QCheckBox>
+#include <QMenu>
 #include <functional>
 
 #include "enginebridge.h"
@@ -144,6 +146,70 @@ static LoginParams showLoginDialog(QWidget * parent)
 }
 
 //===========================================================================
+// Properties dialog — WinSCP-style permissions grid (Owner/Group/Others x R/W/X) with a synced
+// octal field. Returns the chosen octal string, or empty if cancelled.
+//===========================================================================
+static QString showPropertiesDialog(QWidget * parent, const QString & name, const QString & curOctal)
+{
+  QDialog dlg(parent);
+  dlg.setWindowTitle(name + " — Properties");
+
+  auto * outer = new QVBoxLayout(&dlg);
+  auto * grp = new QGroupBox("Permissions");
+  auto * g = new QGridLayout(grp);
+  g->addWidget(new QLabel("R"), 0, 1, Qt::AlignHCenter);
+  g->addWidget(new QLabel("W"), 0, 2, Qt::AlignHCenter);
+  g->addWidget(new QLabel("X"), 0, 3, Qt::AlignHCenter);
+  const char * rowNames[3] = { "Owner", "Group", "Others" };
+  QCheckBox * cb[9];
+  for (int row = 0; row < 3; ++row)
+  {
+    g->addWidget(new QLabel(rowNames[row]), row + 1, 0);
+    for (int col = 0; col < 3; ++col)
+    {
+      cb[row * 3 + col] = new QCheckBox;
+      g->addWidget(cb[row * 3 + col], row + 1, col + 1, Qt::AlignHCenter);
+    }
+  }
+  outer->addWidget(grp);
+
+  auto * octRow = new QHBoxLayout;
+  octRow->addWidget(new QLabel("Octal:"));
+  auto * octEdit = new QLineEdit;
+  octRow->addWidget(octEdit);
+  outer->addLayout(octRow);
+
+  // seed from curOctal (last 3 digits)
+  int initial = curOctal.right(3).toInt(nullptr, 8);
+  for (int i = 0; i < 9; ++i) cb[i]->setChecked((initial >> (8 - i)) & 1);
+
+  bool guard = false;
+  auto syncOctalFromBoxes = [&] {
+    if (guard) return; guard = true;
+    int v = 0; for (int i = 0; i < 9; ++i) if (cb[i]->isChecked()) v |= (1 << (8 - i));
+    octEdit->setText(QString("%1").arg(v, 3, 8, QChar('0')));
+    guard = false;
+  };
+  auto syncBoxesFromOctal = [&] {
+    if (guard) return; guard = true;
+    int v = octEdit->text().toInt(nullptr, 8);
+    for (int i = 0; i < 9; ++i) cb[i]->setChecked((v >> (8 - i)) & 1);
+    guard = false;
+  };
+  for (int i = 0; i < 9; ++i) QObject::connect(cb[i], &QCheckBox::toggled, syncOctalFromBoxes);
+  QObject::connect(octEdit, &QLineEdit::textEdited, syncBoxesFromOctal);
+  syncOctalFromBoxes();
+
+  auto * bb = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
+  outer->addWidget(bb);
+  QObject::connect(bb, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+  QObject::connect(bb, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+
+  if (dlg.exec() != QDialog::Accepted) return QString();
+  return octEdit->text();
+}
+
+//===========================================================================
 // File panel — a WinSCP-style pane: address bar + file list (Name/Size/Changed/Rights/Owner)
 // + a per-panel status line. Local or remote, both via enginebridge.
 //===========================================================================
@@ -207,6 +273,7 @@ public:
   }
 
   QString path() const { return FPath; }
+  QTableView * view() const { return FView; }
   bool isRemote() const { return FRemote; }
   void setLocal() { FRemote = false; FHeader->setText("\xF0\x9F\x92\xBB  Local"); }
   void setRemote(const QString & label) { FRemote = true; FHeader->setText("\xF0\x9F\x8C\x90  " + label); }
@@ -480,17 +547,32 @@ int main(int argc, char ** argv)
     if (sel.size() != 1) { window.statusBar()->showMessage("Select exactly one item"); return; }
     if (!active->isRemote()) { QMessageBox::information(&window, "Properties", "Properties (permissions) apply to remote files."); return; }
     std::string cur = engine::remoteFileOctal(s8(sel.first()));
-    bool okIn = false;
-    QString oct = QInputDialog::getText(&window, "Properties — " + sel.first(),
-                                        "Octal permissions (e.g. 644):", QLineEdit::Normal,
-                                        cur.empty() ? "644" : u8(cur).right(3), &okIn);
-    if (!okIn || oct.isEmpty()) return;
+    QString oct = showPropertiesDialog(&window, sel.first(), cur.empty() ? "644" : u8(cur));
+    if (oct.isEmpty()) return;
     std::string err;
     bool ok = engine::remoteChmod(s8(sel.first()), s8(oct), &err);
     active->refresh();
     window.statusBar()->showMessage(ok ? "Set " + oct : "chmod failed — " + u8(err));
   };
   auto doQuit = [&] { window.close(); };
+
+  // Right-click context menu on each panel (WinSCP-style).
+  auto installContextMenu = [&](FilePanel * panel) {
+    panel->view()->setContextMenuPolicy(Qt::CustomContextMenu);
+    QObject::connect(panel->view(), &QWidget::customContextMenuRequested, [&, panel](const QPoint & pos) {
+      active = panel; panel->onActivated();
+      QMenu menu;
+      menu.addAction(active->isRemote() ? "Download (F5)" : "Upload / Copy (F5)", doCopy);
+      menu.addAction("Rename (F2)", doRename);
+      menu.addAction("Delete (F8)", doDelete);
+      menu.addSeparator();
+      menu.addAction("Create Directory (F7)", doMkdir);
+      if (active->isRemote()) menu.addAction("Properties (F9)", doProps);
+      menu.exec(panel->view()->viewport()->mapToGlobal(pos));
+    });
+  };
+  installContextMenu(left);
+  installContextMenu(right);
 
   //--- function-key bar buttons ------------------------------------------
   auto addFKey = [&](const QString & text, const std::function<void()> & fn) {
