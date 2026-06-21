@@ -108,7 +108,8 @@ int main(int argc, char ** argv)
       FILE * f = fopen("/tmp/xfer-up.txt", "w"); fputs("scp xfer test\n", f); fclose(f);
       std::unique_ptr<TStrings> up(new TStringList()); up->Add(L"/tmp/xfer-up.txt");
       TCopyParamType cp; cp.Default();
-      bool uok = Terminal->CopyToRemote(up.get(), L"/config/", &cp, cpNoConfirmation, NULL);
+      UnicodeString remoteDir = UnixIncludeTrailingBackslash(Terminal->CurrentDirectory);  // protocol-agnostic
+      bool uok = Terminal->CopyToRemote(up.get(), remoteDir, &cp, cpNoConfirmation, NULL);
       out(FORMAT(L"[harness] SCP/SFTP UPLOAD ok=%d", ((int)uok)));
 
       Terminal->ReadCurrentDirectory(); Terminal->ReadDirectory(false);

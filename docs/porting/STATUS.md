@@ -488,3 +488,9 @@ NEXT: wire WebDAV into enginebridge/GUI (protocol dropdown already exists — ad
 real FormatDateTime picture formatter (HTTP-date header is currently ISO — affects upload timestamps);
 WebDAV upload/download + file ops runtime shake-out; HTTPS (ftpsImplicit/TLS) cert path. Then S3
 (libs3 + System.JSON) and FTP (FileZilla) last.
+
+### WebDAV upload + download WORK (validated)
+WebDAV file transfer round-trips over neon (harness WINSCP_DAV=1 WINSCP_XFER=1: upload /tmp file ->
+server, download back byte-identical). The native fd path (_open_osfhandle/_close/SetFilePointer over
+fd-packed-HANDLE) works at runtime. Fixed the harness self-test to target Terminal->CurrentDirectory
+(protocol-agnostic) instead of a hardcoded /config (WebDAV root is /). SFTP+SCP xfer regression clean.
