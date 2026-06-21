@@ -19,6 +19,35 @@
 #define WM_TIMER    0x0113
 #define WM_DESTROY  0x0002
 #define WM_PAINT    0x000F
+#define WM_QUIT     0x0012
+#define WM_CLOSE    0x0010
+
+// MFC exception macros -> C++ try/catch.
+#define TRY            try {
+#define CATCH(cls, e)  } catch (cls * e) { (void)e;
+#define CATCH_ALL(e)   } catch (CException * e) { (void)e;
+#define AND_CATCH(cls, e) } catch (cls * e) { (void)e;
+#define END_CATCH      }
+#define END_CATCH_ALL  }
+#define THROW(e)       throw (e)
+#define THROW_LAST()   throw
+
+// Threading + sync (CMainThread runs its own worker thread).
+#define CREATE_SUSPENDED        0x00000004
+#define INFINITE                0xFFFFFFFF
+#define WAIT_OBJECT_0           0
+#define WAIT_TIMEOUT            0x00000102
+#define THREAD_PRIORITY_NORMAL  0
+#define THREAD_PRIORITY_IDLE    (-15)
+typedef DWORD (CALLBACK * LPTHREAD_START_ROUTINE)(void *);
+HANDLE CreateThread(void * sec, size_t stack, LPTHREAD_START_ROUTINE fn, void * param, DWORD flags, DWORD * tid);
+DWORD  ResumeThread(HANDLE);
+BOOL   SetThreadPriority(HANDLE, int);
+DWORD  WaitForSingleObject(HANDLE, DWORD);
+BOOL   CloseHandle(HANDLE);
+BOOL   PostThreadMessage(DWORD threadId, UINT msg, WPARAM wParam, LPARAM lParam);
+UINT   RegisterWindowMessage(const wchar_t * name);
+extern HINSTANCE afxCurrentResourceHandle;   // assignable lvalue (FileZillaIntf sets it)
 #define PM_NOREMOVE 0x0000
 #define PM_REMOVE   0x0001
 #define GWL_USERDATA   (-21)

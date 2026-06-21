@@ -13,6 +13,8 @@
 #include <atomic>
 #include <sys/select.h>
 
+HINSTANCE afxCurrentResourceHandle = nullptr;
+
 namespace {
 
 struct FzWindow { WNDPROC proc = nullptr; INT_PTR userData = 0; };
@@ -93,6 +95,26 @@ void ensureSelectThread()
 }
 
 } // namespace
+
+//=== threading + sync emulation ============================================
+namespace { struct FzThread { std::thread t; }; }
+
+HANDLE CreateThread(void *, size_t, LPTHREAD_START_ROUTINE fn, void * param, DWORD, DWORD * tid)
+{
+  if (tid) *tid = 0;
+  auto * h = new FzThread();
+  h->t = std::thread([fn, param]{ if (fn) fn(param); });   // CREATE_SUSPENDED ignored; ResumeThread is a no-op
+  h->t.detach();
+  return (HANDLE)h;
+}
+DWORD ResumeThread(HANDLE) { return 1; }
+BOOL  SetThreadPriority(HANDLE, int) { return TRUE; }
+DWORD WaitForSingleObject(HANDLE, DWORD) { return WAIT_OBJECT_0; }   // detached threads; no real join
+BOOL  CloseHandle(HANDLE) { return TRUE; }                          // thread handles leak (rare, app-lifetime)
+BOOL  PostThreadMessage(DWORD, UINT msg, WPARAM w, LPARAM l)
+{ std::lock_guard<std::mutex> lk(g_mtx); postLocked(nullptr, msg, w, l); return TRUE; }  // thread msgs: hwnd=NULL
+UINT  RegisterWindowMessage(const wchar_t *)
+{ static std::atomic<UINT> next{0xC000}; return next++; }
 
 unsigned short RegisterClassEx(const WNDCLASSEX * wc)
 {

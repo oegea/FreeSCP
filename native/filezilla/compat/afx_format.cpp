@@ -26,6 +26,11 @@ int fz_sntprintf(wchar_t * buf, size_t n, const wchar_t * fmt, ...)
   va_list ap; va_start(ap, fmt); int r = fz_vsntprintf(buf, n, fmt, ap); va_end(ap); return r;
 }
 
+int fz_stprintf(wchar_t * buf, const wchar_t * fmt, ...)
+{
+  va_list ap; va_start(ap, fmt); int r = fz_vsntprintf(buf, 4096, fmt, ap); va_end(ap); return r;
+}
+
 void CString::FormatV(const wchar_t * fmt, va_list ap)
 {
   std::wstring out;
@@ -85,4 +90,19 @@ void CString::FormatV(const wchar_t * fmt, va_list ap)
     }
   }
   *this = out.c_str();
+}
+
+//=== WIN32 file-info shims (POSIX stat) ====================================
+#include <sys/stat.h>
+HANDLE FindFirstFile(const wchar_t * name, WIN32_FIND_DATAW * data)
+{
+  if (!name || !data) return INVALID_HANDLE_VALUE;
+  std::string p; for (const wchar_t * w = name; *w; ++w) p.push_back((char)*w);
+  struct stat st;
+  if (::stat(p.c_str(), &st) != 0) return INVALID_HANDLE_VALUE;
+  std::memset(data, 0, sizeof(*data));
+  data->dwFileAttributes = S_ISDIR(st.st_mode) ? FILE_ATTRIBUTE_DIRECTORY : FILE_ATTRIBUTE_NORMAL;
+  data->nFileSizeLow  = (DWORD)(st.st_size & 0xFFFFFFFF);
+  data->nFileSizeHigh = (DWORD)((unsigned long long)st.st_size >> 32);
+  return (HANDLE)(intptr_t)1;   // non-NULL, non-INVALID sentinel; FindClose is a no-op
 }

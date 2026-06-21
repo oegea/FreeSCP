@@ -87,3 +87,8 @@ always ran this code). Marked `// WINSCP-NATIVE-PORT`.
   (C++ rejects the mismatch at `ne_set_request_body_provider`; harmless on Windows). Built as C++.
 - `source/core/Terminal.cpp`: S3 branch of TTerminal::Open() un-guarded (TS3FileSystem now builds
   natively via libs3). FTP branch remains guarded.
+
+## source/filezilla S_un.S_addr -> s_addr (FTP port)
+AsyncProxySocketLayer.cpp, FtpControlSocket.cpp: `sin_addr.S_un.S_addr` -> `sin_addr.s_addr`.
+Safe on Windows too — `<winsock2.h>` defines `#define s_addr S_un.S_addr`, so `.s_addr` is the
+portable spelling. Needed because POSIX `struct in_addr` has no `S_un` union member.

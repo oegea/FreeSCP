@@ -1,5 +1,6 @@
 #ifndef WINSCP_FZ_TEXTS_H
 #define WINSCP_FZ_TEXTS_H
+#include <TextsCore.h>
 // Resource string ids FileZilla references. Strings themselves are not bundled in the port;
 // LoadStr returns empty. Ids enumerated so the code compiles.
 enum {

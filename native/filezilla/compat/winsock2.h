@@ -36,6 +36,10 @@ typedef struct sockaddr *    LPSOCKADDR;
 typedef struct in_addr       IN_ADDR;
 typedef struct in_addr *     LPIN_ADDR;
 typedef struct in6_addr      IN6_ADDR;
+typedef struct sockaddr_in * LPSOCKADDR_IN;
+#ifndef INADDR_NONE
+  #define INADDR_NONE 0xFFFFFFFF
+#endif
 typedef struct sockaddr_in   SOCKADDR_IN;
 typedef struct sockaddr_in6  SOCKADDR_IN6;
 typedef struct sockaddr_storage SOCKADDR_STORAGE;
@@ -71,6 +75,9 @@ typedef struct addrinfo      ADDRINFOT;
 #define WSAENETUNREACH   ENETUNREACH
 #define WSANOTINITIALISED (-100001)
 #define WSAHOST_NOT_FOUND (-100002)
+#define WSAENOTSOCK      ENOTSOCK
+#define WSAEFAULT        EFAULT
+#define WSAEACCES        EACCES
 
 #define SD_RECEIVE  SHUT_RD
 #define SD_SEND     SHUT_WR
@@ -91,6 +98,10 @@ inline int  ioctlsocket(SOCKET s, long cmd, unsigned long * argp)
   return ::ioctl(s, cmd, argp) < 0 ? SOCKET_ERROR : 0;   // FIONREAD etc
 }
 inline int WSACancelAsyncRequest(HANDLE) { return 0; }
+// SIO_IDEAL_SEND_BACKLOG_QUERY is a Windows-only optimization; return error so FileZilla uses its
+// default send buffer logic.
+#define SIO_IDEAL_SEND_BACKLOG_QUERY 0x4004747B
+inline int WSAIoctl(SOCKET, DWORD, void *, DWORD, void *, DWORD, DWORD *, void *, void *) { return SOCKET_ERROR; }
 
 // FileZilla passes `int*` for socklen args; POSIX wants socklen_t*. Provide int*-len overloads.
 inline SOCKET accept(SOCKET s, sockaddr * a, int * len)

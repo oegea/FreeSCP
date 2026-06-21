@@ -145,6 +145,58 @@ inline int fz_tcsicmp(const wchar_t * a, const wchar_t * b)
 { for (; *a && *b; ++a, ++b) { wchar_t ca = (*a >= L'A' && *a <= L'Z') ? *a + 32 : *a, cb = (*b >= L'A' && *b <= L'Z') ? *b + 32 : *b; if (ca != cb) return ca - cb; } return *a - *b; }
 inline DWORD GetCurrentThreadId() { return (DWORD)(uintptr_t)pthread_self(); }
 inline DWORD GetCurrentProcessId() { return (DWORD)getpid(); }
+
+//=== misc Win32 stubs FileZilla references =================================
+int fz_stprintf(wchar_t * buf, const wchar_t * fmt, ...);   // impl in afx_format.cpp (4K buffer)
+#define _stprintf fz_stprintf
+
+union LARGE_INTEGER { struct { DWORD LowPart; LONG HighPart; }; long long QuadPart; };
+typedef union LARGE_INTEGER * PLARGE_INTEGER;
+inline BOOL QueryPerformanceCounter(LARGE_INTEGER * p)
+{ if (p) { struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts); p->QuadPart = (long long)ts.tv_sec * 1000000000LL + ts.tv_nsec; } return TRUE; }
+inline BOOL QueryPerformanceFrequency(LARGE_INTEGER * p) { if (p) p->QuadPart = 1000000000LL; return TRUE; }
+
+#define FORMAT_MESSAGE_ALLOCATE_BUFFER 0x0100
+#define FORMAT_MESSAGE_FROM_SYSTEM     0x1000
+#define FORMAT_MESSAGE_IGNORE_INSERTS  0x0200
+#define FORMAT_MESSAGE_ARGUMENT_ARRAY  0x2000
+inline DWORD FormatMessage(DWORD, const void *, DWORD, DWORD, wchar_t * buf, DWORD, va_list *)
+{ if (buf) buf[0] = 0; return 0; }
+inline void LocalFree(void * p) { free(p); }
+inline void GlobalFree(void * p) { free(p); }
+inline BOOL IsBadWritePtr(void *, UINT_PTR) { return FALSE; }
+
+#define MB_OK              0x0000
+#define MB_ICONEXCLAMATION 0x0030
+#define MB_ICONERROR       0x0010
+inline int MessageBox(HWND, const wchar_t *, const wchar_t *, UINT) { return 0; }
+
+inline HANDLE GlobalAlloc(UINT, size_t n) { return (HANDLE)calloc(1, n); }
+inline void * GlobalLock(HANDLE h) { return h; }
+inline BOOL GlobalUnlock(HANDLE) { return TRUE; }
+
+//=== file enumeration (WIN32_FIND_DATA) — POSIX-backed, single-file ========
+struct FZ_FILETIME { DWORD dwLowDateTime, dwHighDateTime; };
+#ifndef FILE_ATTRIBUTE_NORMAL
+  #define FILE_ATTRIBUTE_NORMAL    0x80
+#endif
+#ifndef FILE_ATTRIBUTE_DIRECTORY
+  #define FILE_ATTRIBUTE_DIRECTORY 0x10
+#endif
+#ifndef INVALID_HANDLE_VALUE
+  #define INVALID_HANDLE_VALUE     ((HANDLE)(intptr_t)-1)
+#endif
+struct WIN32_FIND_DATAW {
+  DWORD dwFileAttributes;
+  FZ_FILETIME ftCreationTime, ftLastAccessTime, ftLastWriteTime;
+  DWORD nFileSizeHigh, nFileSizeLow, dwReserved0, dwReserved1;
+  wchar_t cFileName[MAX_PATH]; wchar_t cAlternateFileName[16];
+};
+typedef WIN32_FIND_DATAW WIN32_FIND_DATA;
+HANDLE FindFirstFile(const wchar_t * name, WIN32_FIND_DATAW * data);   // impl in afx_format.cpp
+inline BOOL FindNextFile(HANDLE, WIN32_FIND_DATAW *) { return FALSE; }
+inline BOOL FindClose(HANDLE h) { (void)h; return TRUE; }
+// GetFileAttributes is declared by rtlcompat (SysExtra.h) — don't redeclare here.
 #ifndef CP_UTF8
   #define CP_UTF8 65001
   #define CP_ACP  0
@@ -254,6 +306,7 @@ public:
   int Find(wchar_t c, int start = 0) const { auto p = s_.find(c, (size_t)(start < 0 ? 0 : start)); return p == std::wstring::npos ? -1 : (int)p; }
   int Find(const wchar_t * sub, int start = 0) const { if (!sub) return -1; auto p = s_.find(sub, (size_t)(start < 0 ? 0 : start)); return p == std::wstring::npos ? -1 : (int)p; }
   int ReverseFind(wchar_t c) const { auto p = s_.rfind(c); return p == std::wstring::npos ? -1 : (int)p; }
+  int FindOneOf(const wchar_t * set) const { if (!set) return -1; auto p = s_.find_first_of(set); return p == std::wstring::npos ? -1 : (int)p; }
 
   void MakeLower() { for (auto & c : s_) c = (wchar_t)towlower2(c); }
   void MakeUpper() { for (auto & c : s_) c = (wchar_t)towupper2(c); }
@@ -286,6 +339,8 @@ public:
   void ReleaseBuffer(int newLen = -1) { if (newLen < 0) newLen = (int)wcslen2(s_.c_str()); s_.resize((size_t)newLen); }
 
   void Format(const wchar_t * fmt, ...) { va_list ap; va_start(ap, fmt); FormatV(fmt, ap); va_end(ap); }
+  // MFC Format(UINT nFormatID, ...) loads the resource then formats; resources absent -> empty fmt.
+  void Format(unsigned id, ...) { (void)id; s_.clear(); }
   void FormatV(const wchar_t * fmt, va_list ap);
   BOOL LoadString(UINT) { s_.clear(); return FALSE; }   // resource strings not present in the port
 
@@ -311,15 +366,25 @@ inline BOOL  ReadFile(HANDLE h, void * buf, DWORD n, DWORD * read, void *)
 inline BOOL  WriteFile(HANDLE h, const void * buf, DWORD n, DWORD * wrote, void *)
 { size_t w = h ? fwrite(buf, 1, n, (FILE *)h) : 0; if (wrote) *wrote = (DWORD)w; return TRUE; }
 
-//=== CFileException ========================================================
-class CFileException : public CObject
+//=== CException / CFileException ============================================
+class CException : public CObject
+{
+public:
+  virtual BOOL GetErrorMessage(wchar_t * buf, UINT n, UINT * help = nullptr) const
+  { if (help) *help = 0; if (buf && n) buf[0] = 0; return FALSE; }
+  void Delete() { delete this; }
+};
+class CFileException : public CException
 {
 public:
   LONG m_lOsError = 0;
   CString m_strFileName;
   CFileException(LONG e = 0, const CString & n = CString()) : m_lOsError(e), m_strFileName(n) {}
   static void PASCAL ThrowOsError(LONG err, const CString & name = CString()) { throw CFileException(err, name); }
+  BOOL GetErrorMessage(wchar_t * buf, UINT n, UINT * help = nullptr) const override
+  { if (help) *help = 0; const wchar_t * s = (const wchar_t *)m_strFileName; UINT i = 0; if (buf) { for (; s && s[i] && i + 1 < n; ++i) buf[i] = s[i]; buf[i] = 0; } return TRUE; }
 };
+typedef CException * LPCEXCEPTION;
 
 //=== CFileStatus ===========================================================
 struct CFileStatus
@@ -396,12 +461,14 @@ public:
   __int64 GetTotalSeconds() const { return m_span; }
 };
 
+struct FZ_FILETIME;
 class CTime
 {
 public:
   std::time_t m_time = 0;
   CTime() {}
   CTime(std::time_t t) : m_time(t) {}
+  CTime(const FZ_FILETIME & ft);   // defined after FZ_FILETIME below
   CTime(int y, int mon, int d, int h, int mi, int s) {
     std::tm tmv; std::memset(&tmv, 0, sizeof(tmv));
     tmv.tm_year = y - 1900; tmv.tm_mon = mon - 1; tmv.tm_mday = d;
@@ -417,7 +484,21 @@ public:
   int GetMinute() const{ std::tm t; localtime_r(&m_time, &t); return t.tm_min; }
   int GetSecond() const{ std::tm t; localtime_r(&m_time, &t); return t.tm_sec; }
   CTimeSpan operator-(const CTime & o) const { return CTimeSpan(m_time - o.m_time); }
+  bool operator==(const CTime & o) const { return m_time == o.m_time; }
+  bool operator!=(const CTime & o) const { return m_time != o.m_time; }
+  bool operator<(const CTime & o) const { return m_time < o.m_time; }
+  bool operator==(int v) const { return m_time == (std::time_t)v; }   // sentinel checks (== -1)
+  bool operator!=(int v) const { return m_time != (std::time_t)v; }
 };
+// FILETIME (100ns ticks since 1601) -> CTime (unix time_t).
+inline CTime::CTime(const FZ_FILETIME & ft)
+{
+  unsigned long long ticks = ((unsigned long long)ft.dwHighDateTime << 32) | ft.dwLowDateTime;
+  m_time = (std::time_t)(ticks / 10000000ULL) - 11644473600LL;
+}
+#include <sys/stat.h>
+inline BOOL CreateDirectory(const wchar_t * name, void *)
+{ std::string p; for (const wchar_t * w = name; w && *w; ++w) p.push_back((char)*w); return ::mkdir(p.c_str(), 0755) == 0; }
 
 #include "afxconv.h"
 #include "winmsg.h"

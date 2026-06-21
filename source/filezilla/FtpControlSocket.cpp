@@ -2188,7 +2188,7 @@ void CFtpControlSocket::List(BOOL bFinish, int nError /*=FALSE*/, CServerPath pa
           ResetOperation(FZ_REPLY_ERROR);
           return;
         }
-        else if (!m_pTransferSocket->Listen(addr.sin_addr.S_un.S_addr))
+        else if (!m_pTransferSocket->Listen(addr.sin_addr.s_addr))
         {
           ResetOperation(FZ_REPLY_ERROR);
           return;
@@ -3999,7 +3999,7 @@ void CFtpControlSocket::FileTransfer(t_transferfile *transferfile/*=0*/,BOOL bFi
           ShowStatus(IDS_ERRORMSG_CANTGETLIST,FZ_LOG_ERROR);
           bError=TRUE;
         }
-        else if (!m_pTransferSocket->Listen(addr.sin_addr.S_un.S_addr))
+        else if (!m_pTransferSocket->Listen(addr.sin_addr.s_addr))
         {
           ShowStatus(IDS_ERRORMSG_CANTGETLIST,FZ_LOG_ERROR);
           bError=TRUE;
@@ -4231,7 +4231,7 @@ void CFtpControlSocket::FileTransfer(t_transferfile *transferfile/*=0*/,BOOL bFi
           ShowStatus(IDS_ERRORMSG_CANTGETLIST,FZ_LOG_ERROR);
           bError=TRUE;
         }
-        else if (!m_pTransferSocket->Listen(addr.sin_addr.S_un.S_addr))
+        else if (!m_pTransferSocket->Listen(addr.sin_addr.s_addr))
         {
           ShowStatus(IDS_ERRORMSG_CANTGETLIST,FZ_LOG_ERROR);
           bError=TRUE;
