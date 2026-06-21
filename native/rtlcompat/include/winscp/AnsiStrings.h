@@ -31,7 +31,11 @@ public:
   // Embarcadero AnsiString::c_str() returns a non-const char* even on a const string (engine
   // code assigns it to C struct char* fields, e.g. ne_uri.path = Path.c_str()).
   char * c_str() const { return const_cast<char *>(FData.c_str()); }
-  char * data() const { return const_cast<char *>(FData.data()); }
+  // Embarcadero AnsiString::data() returns NULL for an EMPTY string (unlike c_str(), which
+  // returns ""). Engine code relies on this: S3FileSystem passes SecurityToken.data() and libs3
+  // adds the x-amz-security-token header only when it's non-NULL — an empty "" would send a
+  // bogus signed header and MinIO rejects the request.
+  char * data() const { return FData.empty() ? nullptr : const_cast<char *>(FData.data()); }
   char operator[](int index) const { return FData[static_cast<size_t>(index - 1)]; }
   char & operator[](int index) { return FData[static_cast<size_t>(index - 1)]; }
   void SetLength(int len) { FData.resize(static_cast<size_t>(len)); }

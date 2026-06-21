@@ -208,7 +208,8 @@ int main(int argc, char ** argv)
     QDialog dlg(&window);
     dlg.setWindowTitle("Connect to server");
     auto * form = new QFormLayout(&dlg);
-    auto * proto = new QComboBox; proto->addItem("SFTP"); proto->addItem("SCP"); proto->addItem("WebDAV");
+    auto * proto = new QComboBox;
+    proto->addItem("SFTP"); proto->addItem("SCP"); proto->addItem("WebDAV"); proto->addItem("S3");
     auto * host = new QLineEdit("127.0.0.1");
     auto * port = new QSpinBox; port->setRange(1, 65535); port->setValue(2222);
     auto * user = new QLineEdit("winscp");
@@ -228,6 +229,7 @@ int main(int argc, char ** argv)
     QApplication::processEvents();
     engine::Protocol pr = (proto->currentIndex() == 1) ? engine::Protocol::Scp
                         : (proto->currentIndex() == 2) ? engine::Protocol::WebDav
+                        : (proto->currentIndex() == 3) ? engine::Protocol::S3
                         : engine::Protocol::Sftp;
     engine::ConnectResult r = engine::connectSftp(
       s8(host->text()), port->value(), s8(user->text()), s8(pass->text()), pr);

@@ -182,6 +182,8 @@ ConnectResult connectSftp(const std::string & host, int port,
     {
       case Protocol::Scp:    g_sessionData->FSProtocol = fsSCPonly; break;
       case Protocol::WebDav: g_sessionData->FSProtocol = fsWebDAV; g_sessionData->Ftps = ftpsNone; break;
+      case Protocol::S3:     g_sessionData->FSProtocol = fsS3; g_sessionData->Ftps = ftpsNone;
+                             g_sessionData->S3UrlStyle = s3usPath; g_sessionData->S3DefaultRegion = L"us-east-1"; break;
       default:               g_sessionData->FSProtocol = fsSFTPonly; break;
     }
     g_sessionData->FingerprintScan = false;

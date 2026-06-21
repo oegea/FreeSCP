@@ -552,3 +552,15 @@ header is in the HTTP request but absent from SignedHeaders. Suspects: a neon-ad
 This is the S3 equivalent of the SFTP "userauth frontier" — characterized; needs a focused runtime
 session (use the MinIO server log + a temp trace of the headers libs3 signs vs sends).
 The S3 session uses s3usPath + region us-east-1 + ftpsNone (harness WINSCP_S3).
+
+## S3 WORKS — FOURTH protocol live (libs3 native); SigV4 frontier was a one-liner
+S3 connects to MinIO, authenticates (AWS SigV4), and lists buckets: `WINSCP_S3=1
+./native/build/harness/winscp-harness 127.0.0.1 9100 minioadmin minioadmin123` -> CONNECTED, lists
+`/` (testbucket). The "headers present which were not signed" frontier was `AnsiStringBase::data()`
+returning a non-null "" for an empty string: S3FileSystem passes `SecurityToken.data()` and libs3
+adds x-amz-security-token only when non-NULL — Embarcadero's data() returns NULL for empty, ours
+didn't, so an empty signed security-token header was sent and MinIO rejected it. Fixed data() to
+return NULL when empty (Embarcadero fidelity). GUI: Protocol dropdown gains S3 (s3usPath + region
+us-east-1 + ftpsNone). All four protocols (SFTP/SCP/WebDAV/S3) connect+list; ctest green; full build
++ GUI launch OK. NEXT for S3: bucket/object nav + upload/download/ops runtime; then FTP (FileZilla).
+Test server: `docker run -p 9100:9000 -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin123 minio/minio server /data`.
