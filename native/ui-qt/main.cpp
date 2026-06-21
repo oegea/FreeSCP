@@ -556,6 +556,8 @@ int main(int argc, char ** argv)
   QMainWindow window;
   window.setWindowTitle("WinSCP");
   window.resize(1100, 720);
+  { QSettings s("WinSCP-native-port", "WinSCP");
+    if (s.contains("win/geometry")) window.restoreGeometry(s.value("win/geometry").toByteArray()); }
 
   // Main toolbar (native icons, WinSCP-style text-beside-icon).
   auto * tb = window.addToolBar("Main");
@@ -578,7 +580,9 @@ int main(int argc, char ** argv)
   right->setLocal();
   splitter->addWidget(left);
   splitter->addWidget(right);
-  splitter->setSizes({ 550, 550 });
+  { QSettings s("WinSCP-native-port", "WinSCP");
+    if (s.contains("win/splitter")) splitter->restoreState(s.value("win/splitter").toByteArray());
+    else splitter->setSizes({ 550, 550 }); }
 
   auto * central = new QWidget;
   auto * centralLay = new QVBoxLayout(central);
@@ -939,6 +943,13 @@ int main(int argc, char ** argv)
   left->navigate(u8(engine::homeDir()));
   right->navigate(u8(engine::homeDir()));
   updateStatuses();
+
+  // Persist window geometry + splitter on quit.
+  QObject::connect(&app, &QApplication::aboutToQuit, [&]{
+    QSettings s("WinSCP-native-port", "WinSCP");
+    s.setValue("win/geometry", window.saveGeometry());
+    s.setValue("win/splitter", splitter->saveState());
+  });
 
   window.statusBar()->showMessage(QString::fromUtf8(engine::banner().c_str()));
   window.show();
