@@ -672,3 +672,13 @@ duration. Verified in the GUI process: a 3-file background download (hello/owned
 harness (single-threaded) unaffected by the mutex. Note: still ONE connection -> transfers are
 serial and remote browsing is blocked mid-batch (WinSCP uses a 2nd connection for true parallelism;
 that's a future enhancement).
+
+## FTP (FileZilla) — phase started: engine side compiles, lib is the mountain
+- `FtpFileSystem.cpp` compiles clean (RTL gaps filled). Cannot link — needs the FileZilla lib.
+- FileZilla lib scoped in docs/porting/FTP-SCOPE.md. Key finding: `stdafx.h` (524 lines) pulls
+  `<afx.h>` (MFC → windows.h) AND `FileZillaApi.h` → `AsyncSslSocketLayer.h`, so the header chain is
+  tightly coupled — even the "simple" TUs (ServerPath/structures) transitively need the afx shim +
+  OLE + socket headers to parse. So the first compilable TU requires building most of the shim layer
+  at once (CString/CTime/CFile/collections/CCriticalSection + a POSIX CAsyncSocketEx replacing the
+  WSAAsyncSelect/hidden-helper-window message pump). This is a dedicated multi-session effort; doing
+  it piecemeal yields no runnable increment until the whole chain parses. Groundwork + map committed.
