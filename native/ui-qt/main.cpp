@@ -377,6 +377,12 @@ public:
   QString path() const { return FPath; }
   QTableView * view() const { return FView; }
   bool isRemote() const { return FRemote; }
+  // Size (bytes) of a listed entry by name, for the transfer queue; 0 if unknown/dir.
+  qint64 sizeOf(const QString & name) const {
+    std::string n = s8(name);
+    for (const auto & e : FEntries) if (!e.isDir && e.name == n) return (qint64)e.size;
+    return 0;
+  }
   void setLocal() { FRemote = false; FHeader->setText("\xF0\x9F\x92\xBB  Local"); }
   void setRemote(const QString & label) { FRemote = true; FHeader->setText("\xF0\x9F\x8C\x90  " + label); }
 
@@ -635,35 +641,64 @@ int main(int argc, char ** argv)
   // Transfer queue dock (WinSCP-style): a list of transfers with live progress. Processed
   // sequentially on the UI thread (processEvents keeps it responsive) — visible like WinSCP's queue.
   auto * queueDock = new QDockWidget("Transfer queue", &window);
+  auto * queueWidget = new QWidget;
+  auto * queueLay = new QVBoxLayout(queueWidget);
+  queueLay->setContentsMargins(0, 0, 0, 0); queueLay->setSpacing(2);
+  auto * queueBtns = new QHBoxLayout; queueBtns->setContentsMargins(3, 2, 3, 0);
+  auto * btnCancel = new QPushButton("Cancel"); btnCancel->setEnabled(false);
+  auto * btnClear = new QPushButton("Clear finished");
+  queueBtns->addWidget(btnCancel); queueBtns->addWidget(btnClear); queueBtns->addStretch(1);
   auto * queueView = new QTableView;
-  auto * queueModel = new QStandardItemModel(0, 4, &window);
-  queueModel->setHorizontalHeaderLabels({ "Operation", "File", "Target", "Progress" });
+  auto * queueModel = new QStandardItemModel(0, 7, &window);
+  queueModel->setHorizontalHeaderLabels({ "Operation", "File", "Size", "Progress", "Speed", "Time left", "Status" });
   queueView->setModel(queueModel);
   queueView->verticalHeader()->setVisible(false);
   queueView->setEditTriggers(QAbstractItemView::NoEditTriggers);
   queueView->horizontalHeader()->setStretchLastSection(true);
-  queueDock->setWidget(queueView);
+  queueView->setColumnWidth(1, 200);
+  queueLay->addLayout(queueBtns); queueLay->addWidget(queueView);
+  queueDock->setWidget(queueWidget);
   window.addDockWidget(Qt::BottomDockWidgetArea, queueDock);
   queueDock->hide();
-  auto queueAdd = [&](const QString & op, const QString & file, const QString & target) -> int {
+
+  auto fmtSpeed = [](qint64 cps) -> QString { return cps > 0 ? u8(engine::formatSize(cps)) + "/s" : QString(); };
+  auto fmtEta = [](qint64 secs) -> QString {
+    if (secs <= 0) return QString();
+    return QString::asprintf("%lld:%02lld", (long long)(secs / 60), (long long)(secs % 60));
+  };
+  auto queueAdd = [&](const QString & op, const QString & file, qint64 size) -> int {
     QList<QStandardItem *> row;
-    row << new QStandardItem(op) << new QStandardItem(file) << new QStandardItem(target) << new QStandardItem("queued");
+    row << new QStandardItem(op) << new QStandardItem(file)
+        << new QStandardItem(size > 0 ? u8(engine::formatSize(size)) : QString())
+        << new QStandardItem("0%") << new QStandardItem() << new QStandardItem() << new QStandardItem("queued");
     queueModel->appendRow(row);
     return queueModel->rowCount() - 1;
   };
-  auto queueSet = [&](int r, const QString & status) {
-    if (r >= 0 && r < queueModel->rowCount()) queueModel->item(r, 3)->setText(status);
-  };
+  auto queueCell = [&](int r, int c, const QString & v) { if (r >= 0 && r < queueModel->rowCount()) queueModel->item(r, c)->setText(v); };
+  auto queueStatus = [&](int r, const QString & s) { queueCell(r, 6, s); };
+
+  // Cancel flag for the currently-running batch (Cancel button -> sink returns true -> engine aborts).
+  auto currentCancel = std::make_shared<std::shared_ptr<std::atomic<bool>>>();
+  QObject::connect(btnCancel, &QPushButton::clicked, [&, currentCancel]{
+    if (*currentCancel) (*currentCancel)->store(true);
+    window.statusBar()->showMessage("Cancelling\xE2\x80\xA6");
+  });
+  QObject::connect(btnClear, &QPushButton::clicked, [&]{
+    for (int r = queueModel->rowCount() - 1; r >= 0; --r) {
+      QString st = queueModel->item(r, 6)->text();
+      if (st == "done" || st.startsWith("failed") || st.startsWith("cancelled")) queueModel->removeRow(r);
+    }
+  });
 
   auto busy = [&]() -> bool {
     if (gTransferRunning.load()) { window.statusBar()->showMessage("Transfer in progress\xE2\x80\xA6 please wait"); return true; }
     return false;
   };
 
-  // Background transfer: runs the batch on a worker thread so the UI never freezes; the queue dock
-  // updates live (progress marshaled to the UI thread). The engine is single-connection/non-thread-
-  // safe, so engine access is serialized by the bridge mutex AND remote UI actions are gated
-  // (gTransferRunning) for the duration — local browsing stays fully responsive.
+  // Background transfer: runs the batch on a worker thread (UI never freezes); the queue dock updates
+  // live with %/speed/time-left (marshaled to the UI thread). Cancel aborts via the engine progress
+  // sink. Single-connection/non-thread-safe engine -> serialized by the bridge mutex + gTransferRunning
+  // gating remote UI actions for the batch (local browsing stays responsive).
   auto startTransfer = [&](FilePanel * from, FilePanel * to, QStringList files, bool isMove) {
     if (files.isEmpty()) { window.statusBar()->showMessage("No files selected"); return; }
     if (from->isRemote() && to->isRemote())
@@ -674,20 +709,28 @@ int main(int argc, char ** argv)
     const QString op = srcRemote ? "Download" : (dstRemote ? "Upload" : "Copy");
     queueDock->show();
     std::vector<int> rows; std::vector<std::string> names;
-    for (const QString & f : files) { rows.push_back(queueAdd(isMove ? "Move" : op, f, to->path())); names.push_back(s8(f)); }
+    for (const QString & f : files) { rows.push_back(queueAdd(isMove ? "Move" : op, f, from->sizeOf(f))); names.push_back(s8(f)); }
     gTransferRunning = true;
-    auto curIdx = std::make_shared<std::atomic<int>>(0);
-    engine::setProgressSink([&, rows, curIdx](const std::string &, int pct) {
-      int i = curIdx->load(); int rowVal = (i >= 0 && i < (int)rows.size()) ? rows[i] : -1;
-      QMetaObject::invokeMethod(&window, [&, rowVal, pct]{ queueSet(rowVal, QString("%1%").arg(pct)); }, Qt::QueuedConnection);
+    btnCancel->setEnabled(true);
+    auto cancel = std::make_shared<std::atomic<bool>>(false);
+    *currentCancel = cancel;
+    auto curRow = std::make_shared<std::atomic<int>>(rows.empty() ? -1 : rows[0]);
+    engine::setProgressSink([&, curRow, cancel](const engine::TransferProgress & tp) -> bool {
+      int rowVal = curRow->load();
+      int pct = tp.total > 0 ? (int)(tp.transferred * 100 / tp.total) : 0;
+      qint64 cps = tp.cps; qint64 eta = (cps > 0 && tp.total > tp.transferred) ? (tp.total - tp.transferred) / cps : 0;
+      QMetaObject::invokeMethod(&window, [&, rowVal, pct, cps, eta]{
+        queueCell(rowVal, 3, QString("%1%").arg(pct)); queueCell(rowVal, 4, fmtSpeed(cps)); queueCell(rowVal, 5, fmtEta(eta));
+      }, Qt::QueuedConnection);
+      return cancel->load();
     });
-    std::thread([&, rows, names, srcDir, dstDir, srcRemote, dstRemote, isMove, from, to, curIdx]{
+    std::thread([&, rows, names, srcDir, dstDir, srcRemote, dstRemote, isMove, from, to, curRow, cancel]{
       int ok = 0;
       for (size_t i = 0; i < names.size(); ++i)
       {
-        curIdx->store((int)i);
-        int rowVal = rows[i];
-        QMetaObject::invokeMethod(&window, [&, rowVal]{ queueSet(rowVal, "active"); }, Qt::QueuedConnection);
+        if (cancel->load()) { QMetaObject::invokeMethod(&window, [&, r = rows[i]]{ queueStatus(r, "cancelled"); }, Qt::QueuedConnection); continue; }
+        int rowVal = rows[i]; curRow->store(rowVal);
+        QMetaObject::invokeMethod(&window, [&, rowVal]{ queueStatus(rowVal, "active"); }, Qt::QueuedConnection);
         std::string src = engine::joinPath(srcDir, names[i]);
         std::string err; bool r;
         if (!srcRemote && !dstRemote) r = engine::copyFile(src, engine::joinPath(dstDir, names[i]));
@@ -695,14 +738,18 @@ int main(int argc, char ** argv)
         else r = engine::downloadFromRemote(src, dstDir, &err);
         if (r && isMove)
           r = srcRemote ? engine::remoteDelete(names[i], &err) : engine::localDelete(srcDir, names[i], &err);
-        bool done = r; QString status = done ? "done" : ("failed" + (err.empty() ? QString() : (": " + u8(err))));
-        QMetaObject::invokeMethod(&window, [&, rowVal, status]{ queueSet(rowVal, status); }, Qt::QueuedConnection);
-        if (done) ++ok;
+        bool cancelled = cancel->load();
+        QString status = cancelled ? "cancelled" : (r ? "done" : ("failed" + (err.empty() ? QString() : (": " + u8(err)))));
+        QMetaObject::invokeMethod(&window, [&, rowVal, status, r]{
+          queueStatus(rowVal, status); if (r) { queueCell(rowVal, 3, "100%"); queueCell(rowVal, 4, QString()); queueCell(rowVal, 5, QString()); }
+        }, Qt::QueuedConnection);
+        if (r && !cancelled) ++ok;
       }
       int total = (int)names.size();
       QMetaObject::invokeMethod(&window, [&, ok, total, isMove, from, to]{
         engine::setProgressSink(nullptr);
         gTransferRunning = false;
+        btnCancel->setEnabled(false);
         to->refresh(); if (isMove) from->refresh();
         window.statusBar()->showMessage(QString("Transferred %1/%2 item(s)").arg(ok).arg(total));
       }, Qt::QueuedConnection);

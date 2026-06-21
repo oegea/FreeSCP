@@ -72,10 +72,17 @@ ConnectResult connectSftp(const std::string & host, int port,
 bool remoteConnected();
 std::string remoteCurrentDir();
 
-// Register a transfer-progress sink: called during upload/download with (current file, percent
-// 0-100 for that file). Pass an empty std::function to clear. Fired on the calling thread (the
-// blocking transfer), so a Qt UI should processEvents() inside it.
-void setProgressSink(const std::function<void(const std::string &, int)> & cb);
+// Richer transfer progress, reported during upload/download.
+struct TransferProgress
+{
+  std::string file;            // current file name (UTF-8)
+  std::int64_t transferred = 0; // bytes transferred for this file
+  std::int64_t total = 0;       // total bytes for this file (0 if unknown)
+  std::int64_t cps = 0;         // current speed, bytes/sec
+};
+// Register a transfer-progress sink. Return TRUE to request cancellation of the current transfer.
+// Pass an empty std::function to clear. Fired on the thread running the transfer.
+void setProgressSink(const std::function<bool(const TransferProgress &)> & cb);
 // List the remote directory (empty path = current/home). Sorted dirs-first; includes "..".
 std::vector<DirEntry> listRemoteDir(const std::string & utf8Path);
 

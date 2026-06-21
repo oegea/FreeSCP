@@ -40,7 +40,7 @@ std::unique_ptr<TTerminal> g_terminal;
 std::unique_ptr<TSessionData> g_sessionData;
 UnicodeString g_password;
 bool g_engineInited = false;
-std::function<void(const std::string &, int)> g_progressCb;
+std::function<bool(const engine::TransferProgress &)> g_progressCb;
 
 // Serializes ALL engine access. The engine + single TTerminal are not thread-safe; the GUI runs
 // transfers on a worker thread, so every public entry point takes this (recursive: some call each
@@ -218,7 +218,17 @@ ConnectResult connectSftp(const std::string & host, int port,
       { Answer = (Answers & qaYes) ? qaYes : ((Answers & qaOK) ? qaOK : Answers); };   // auto-accept host key
     g_terminal->OnProgress =
       [](TFileOperationProgressType & P)
-      { if (g_progressCb) g_progressCb(ToU8(P.FileName), P.TransferProgress()); };
+      {
+        if (g_progressCb)
+        {
+          TransferProgress tp;
+          tp.file = ToU8(P.FileName);
+          tp.transferred = P.TransferredSize;
+          tp.total = P.TransferSize;
+          tp.cps = (std::int64_t)P.CPS();
+          if (g_progressCb(tp)) P.SetCancel(csCancel);   // sink requested cancel
+        }
+      };
 
     g_terminal->Open();
     r.ok = true;
@@ -237,7 +247,7 @@ ConnectResult connectSftp(const std::string & host, int port,
   return r;
 }
 
-void setProgressSink(const std::function<void(const std::string &, int)> & cb) { g_progressCb = cb; }
+void setProgressSink(const std::function<bool(const TransferProgress &)> & cb) { g_progressCb = cb; }
 
 bool remoteConnected() { ENGINE_LOCK; return g_terminal && g_terminal->Active; }
 std::string remoteCurrentDir() { ENGINE_LOCK; return remoteConnected() ? ToU8(g_terminal->CurrentDirectory) : std::string(); }
