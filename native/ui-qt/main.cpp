@@ -43,6 +43,9 @@
 #include <QDialogButtonBox>
 #include <QFrame>
 #include <QPlainTextEdit>
+#include <QTextDocument>
+#include <QTextCursor>
+#include <QCloseEvent>
 #include <QDockWidget>
 #include <QCheckBox>
 #include <QMenu>
@@ -656,6 +659,66 @@ private:
 FilePanel * FilePanel::s_dragSource = nullptr;
 
 //===========================================================================
+// Internal text editor (the classic WinSCP notepad): edit + save, line/col, Find, word-wrap,
+// Save & Close, and an unsaved-changes prompt on close. onSave returns true on success.
+//===========================================================================
+class EditorWindow : public QMainWindow
+{
+public:
+  QPlainTextEdit * te;
+  std::function<bool()> onSave;
+
+  EditorWindow(QWidget * parent, const QString & title, const QString & text) : QMainWindow(parent), FBase(title)
+  {
+    setAttribute(Qt::WA_DeleteOnClose);
+    te = new QPlainTextEdit; te->setPlainText(text);
+    te->setLineWrapMode(QPlainTextEdit::NoWrap);
+    te->setFont(QFont("Menlo", 12));
+    te->setTabStopDistance(4 * te->fontMetrics().horizontalAdvance(' '));
+    setCentralWidget(te);
+    auto * tb = addToolBar("Edit"); tb->setMovable(false);
+    auto * aSave = tb->addAction("\xF0\x9F\x92\xBE Save"); aSave->setShortcut(QKeySequence::Save);
+    connect(aSave, &QAction::triggered, this, [this]{ doSave(); });
+    auto * aSaveClose = tb->addAction("Save && Close");
+    connect(aSaveClose, &QAction::triggered, this, [this]{ if (doSave()) close(); });
+    tb->addSeparator();
+    auto * aFind = tb->addAction("\xF0\x9F\x94\x8D Find"); aFind->setShortcut(QKeySequence::Find);
+    connect(aFind, &QAction::triggered, this, [this]{ findText(); });
+    auto * aWrap = tb->addAction("Wrap"); aWrap->setCheckable(true);
+    connect(aWrap, &QAction::toggled, this, [this](bool w){ te->setLineWrapMode(w ? QPlainTextEdit::WidgetWidth : QPlainTextEdit::NoWrap); });
+    statusBar();
+    connect(te, &QPlainTextEdit::cursorPositionChanged, this, [this]{ updateStatus(); });
+    connect(te->document(), &QTextDocument::modificationChanged, this, [this](bool){ updateTitle(); });
+    updateTitle(); updateStatus();
+    resize(760, 580);
+  }
+  bool doSave() { if (onSave && onSave()) { te->document()->setModified(false); updateTitle(); return true; } return false; }
+
+protected:
+  void closeEvent(QCloseEvent * e) override
+  {
+    if (te->document()->isModified())
+    {
+      auto r = QMessageBox::question(this, "Editor", "Save changes before closing?",
+                                     QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel);
+      if (r == QMessageBox::Cancel) { e->ignore(); return; }
+      if (r == QMessageBox::Save && !doSave()) { e->ignore(); return; }
+    }
+    e->accept();
+  }
+
+private:
+  QString FBase, FLastFind;
+  void updateTitle() { setWindowTitle((te->document()->isModified() ? "* " : "") + FBase); }
+  void updateStatus() { auto c = te->textCursor(); statusBar()->showMessage(QString("Ln %1, Col %2").arg(c.blockNumber() + 1).arg(c.columnNumber() + 1)); }
+  void findText()
+  {
+    bool ok; QString q = QInputDialog::getText(this, "Find", "Find:", QLineEdit::Normal, FLastFind, &ok);
+    if (ok && !q.isEmpty()) { FLastFind = q; if (!te->find(q)) { te->moveCursor(QTextCursor::Start); if (!te->find(q)) statusBar()->showMessage("Not found: " + q); } }
+  }
+};
+
+//===========================================================================
 
 int main(int argc, char ** argv)
 {
@@ -1095,29 +1158,22 @@ int main(int argc, char ** argv)
     if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) { QMessageBox::warning(&window, "Edit", "Cannot open file"); return; }
     QString text = QString::fromUtf8(file.readAll()); file.close();
 
-    auto * ed = new QMainWindow(&window); ed->setAttribute(Qt::WA_DeleteOnClose);
-    ed->setWindowTitle(f + (remote ? "  \xE2\x80\x94  " + remoteDir + " (remote)" : ""));
-    ed->resize(720, 560);
-    auto * te = new QPlainTextEdit; te->setPlainText(text);
-    te->setLineWrapMode(QPlainTextEdit::NoWrap);
-    te->setFont(QFont("Menlo", 12));
-    ed->setCentralWidget(te);
-    auto * tb = ed->addToolBar("Edit");
-    auto saveFn = [te, localPath, remote, remoteDir, f, &window, &left, &right]() {
+    auto * ed = new EditorWindow(&window, f + (remote ? "  \xE2\x80\x94  " + remoteDir + " (remote)" : ""), text);
+    auto * te = ed->te;
+    ed->onSave = [te, localPath, remote, remoteDir, f, &window, &left, &right]() -> bool {
       QFile out(localPath);
-      if (!out.open(QIODevice::WriteOnly | QIODevice::Text)) { QMessageBox::warning(&window, "Save", "Cannot write file"); return; }
+      if (!out.open(QIODevice::WriteOnly | QIODevice::Text)) { QMessageBox::warning(&window, "Save", "Cannot write file"); return false; }
       out.write(te->toPlainText().toUtf8()); out.close();
       if (remote)
       {
         std::string err;
         if (!engine::uploadToRemote(s8(localPath), s8(remoteDir), &err))
-          QMessageBox::warning(&window, "Save", "Upload failed: " + u8(err));
-        else { window.statusBar()->showMessage("Saved + uploaded " + f); if (right->isRemote()) right->refresh(); }
+        { QMessageBox::warning(&window, "Save", "Upload failed: " + u8(err)); return false; }
+        window.statusBar()->showMessage("Saved + uploaded " + f); if (right->isRemote()) right->refresh();
       }
       else { window.statusBar()->showMessage("Saved " + f); left->refresh(); }
+      return true;
     };
-    auto * actSave = tb->addAction("\xF0\x9F\x92\xBE Save"); actSave->setShortcut(Qt::CTRL | Qt::Key_S);
-    QObject::connect(actSave, &QAction::triggered, ed, saveFn);
     ed->show();
   };
   auto doQuit = [&] { window.close(); };
