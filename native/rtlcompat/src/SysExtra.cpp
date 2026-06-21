@@ -124,6 +124,27 @@ UnicodeString __fastcall FormatDateTime(const UnicodeString &, const TDateTime &
 // ("ddd, d mmm yyyy hh:nn:ss 'GMT'") will be wrong until a real picture formatter lands. TODO.
 UnicodeString __fastcall FormatDateTime(const UnicodeString & Fmt, const TDateTime & DT, const TFormatSettings &)
 { return FormatDateTime(Fmt, DT); }
+// File modification time as a TDateTime (SysUtils.FileAge). Returns false if the file is absent.
+bool __fastcall FileAge(const UnicodeString & FileName, TDateTime & DateTime)
+{
+  struct stat st;
+  if (::stat(ToU8(FileName).c_str(), &st) != 0) return false;
+  struct tm tmv; time_t t = st.st_mtime; ::localtime_r(&t, &tmv);
+  DateTime = EncodeDate(tmv.tm_year + 1900, tmv.tm_mon + 1, tmv.tm_mday) +
+             EncodeTime(tmv.tm_hour, tmv.tm_min, tmv.tm_sec, 0);
+  return true;
+}
+// Parse an ISO-8601 timestamp ("YYYY-MM-DDThh:mm:ss[.fff][Z]") to TDateTime. ReturnUTC is honored
+// only trivially (the input is treated as already in the desired zone — sufficient for S3, which
+// passes UTC strings and compares them against UTC).
+TDateTime __fastcall ISO8601ToDate(const UnicodeString & S, bool /*ReturnUTC*/)
+{
+  std::string n = ToU8(S);
+  int y=0,mo=0,d=0,h=0,mi=0,sec=0;
+  ::sscanf(n.c_str(), "%d-%d-%dT%d:%d:%d", &y, &mo, &d, &h, &mi, &sec);
+  if (y == 0) return TDateTime();
+  return EncodeDate(y, mo, d) + EncodeTime(h, mi, sec, 0);
+}
 UnicodeString __fastcall FormatFloat(const UnicodeString &, double Value) { return Format(L"%g", ARRAYOFCONST((Value))); }
 TDateTime __fastcall SystemTimeToDateTime(const SYSTEMTIME & ST)
 { return EncodeDate(ST.wYear, ST.wMonth, ST.wDay) + EncodeTime(ST.wHour, ST.wMinute, ST.wSecond, ST.wMilliseconds); }

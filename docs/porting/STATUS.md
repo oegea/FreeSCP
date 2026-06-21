@@ -499,3 +499,19 @@ fd-packed-HANDLE) works at runtime. Fixed the harness self-test to target Termin
 WebDAV mkdir/rename/delete (MKCOL/MOVE/DELETE) validated via harness WINSCP_OPS=1. All three
 protocols now pass the same self-tests: connect, list, upload, download, mkdir, rename, delete.
 (Harness WINSCP_OPS uses Terminal->CurrentDirectory too, so it's protocol-agnostic.) ctest green.
+
+### Phase 4 — S3FileSystem.cpp COMPILES (System.JSON shim + RTL/XML adds); link pending libs3
+S3FileSystem.cpp now compiles clean in the winscpcore_neon group (verified by building the object;
+excluded from the engine LINK until libs3 is built, since it pulls S3_* symbols). Added:
+- **System.JSON shim**: native/rtlcompat/include/System.JSON.hpp + src/JsonDoc.cpp — a compact
+  recursive-descent JSON parser + the tiny Delphi DOM S3 uses (TJSONObject::ParseJSONValue,
+  Values[name], Value(), GetEnumerator/MoveNext/Current, TJSONPair JsonString/JsonValue). Only the
+  AWS instance-metadata credential path; arrays/numbers kept as text.
+- rtlcompat: AnsiStringBase::data() + static AnsiString::Format (byte Format via the wide Format);
+  SysExtra FileAge (stat mtime->TDateTime) + ISO8601ToDate (sscanf YYYY-MM-DDThh:mm:ss).
+- XML DOM (XMLIntf.hpp/XmlDoc.cpp): IXMLNodeList::FindNode(Name, Namespace) 2-arg; IXMLDocument
+  LoadFromXML(str) + ParseOptions (TParseOptions/poPreserveWhiteSpace, stored/ignored);
+  XmlDocImpl::LoadString (parse from buffer, refactored out of Load).
+REMAINING for S3 runtime: build libs3 natively (17 src/*.c; needs libcurl + libxml2 — brew has both;
+its own config like neon), add it to the neon link, re-enable S3FileSystem.cpp in CORE_NEON_NAMES,
+un-guard Terminal.cpp Open() S3 branch, then runtime-debug vs MinIO (docker). FTP (FileZilla) last.

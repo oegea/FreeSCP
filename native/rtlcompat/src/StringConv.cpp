@@ -105,3 +105,11 @@ UnicodeString __fastcall TObject::ClassName() const
   // Mangled name for now (e.g. "9TTerminal"); good enough for logs/classification.
   return UnicodeString(typeid(*this).name());
 }
+
+// AnsiString::Format (static) — delegate to the wide Format, then narrow to bytes (UTF-8).
+#include "SysUtils.hpp"   // Format(UnicodeString, TVarRec*, int)
+AnsiStringBase __cdecl AnsiStringBase::Format(const char * Fmt, const TVarRec * Args, int Count)
+{
+  UnicodeString R = ::Format(UnicodeString(Fmt), Args, Count);
+  return AnsiStringBase(UTF8String(R).raw());
+}

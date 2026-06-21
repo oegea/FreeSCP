@@ -11,6 +11,8 @@
 #include <cstdarg>
 #include <cstdio>
 
+struct TVarRec;  // defined in SysUtils.hpp (included after this header); only used by-pointer here
+
 class UnicodeString;  // for cross-conversion ctors (defined in src/StringConv.cpp)
 
 class AnsiStringBase
@@ -29,6 +31,7 @@ public:
   // Embarcadero AnsiString::c_str() returns a non-const char* even on a const string (engine
   // code assigns it to C struct char* fields, e.g. ne_uri.path = Path.c_str()).
   char * c_str() const { return const_cast<char *>(FData.c_str()); }
+  char * data() const { return const_cast<char *>(FData.data()); }
   char operator[](int index) const { return FData[static_cast<size_t>(index - 1)]; }
   char & operator[](int index) { return FData[static_cast<size_t>(index - 1)]; }
   void SetLength(int len) { FData.resize(static_cast<size_t>(len)); }
@@ -54,6 +57,10 @@ public:
   AnsiStringBase operator+(const AnsiStringBase & o) const { AnsiStringBase r(*this); r.FData += o.FData; return r; }
   bool operator==(const AnsiStringBase & o) const { return FData == o.FData; }
   bool operator!=(const AnsiStringBase & o) const { return FData != o.FData; }
+
+  // C++Builder AnsiString::Format (static) — like the wide Format but yields a byte string.
+  // Implemented in StringConv.cpp (delegates to the wide Format, then narrows).
+  static AnsiStringBase __cdecl Format(const char * Fmt, const TVarRec * Args, int Count);
 
   // C++Builder AnsiString/UTF8String::vprintf — printf-style format into *this (replaces
   // contents). Used by NeonIntf's neon debug/log forwarder.

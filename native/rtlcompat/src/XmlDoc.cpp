@@ -179,19 +179,23 @@ struct XmlDocImpl
   ListImpl Root;                 // top-level nodes (the document element)
   NodeImpl * Element = nullptr;
 
-  void Load(const UnicodeString & FileName)
+  void LoadString(std::string all)
   {
     Pool.clear(); Root.Items.clear(); Element = nullptr;
-    std::FILE * f = std::fopen(std::string(UTF8String(FileName).c_str()).c_str(), "rb");
-    if (!f) return;
-    std::string all; char buf[8192]; size_t n;
-    while ((n = std::fread(buf, 1, sizeof(buf), f)) > 0) all.append(buf, n);
-    std::fclose(f);
     if (all.size() >= 3 && (unsigned char)all[0] == 0xEF && (unsigned char)all[1] == 0xBB && (unsigned char)all[2] == 0xBF)
       all.erase(0, 3);
     Parser p(all, Pool);
     Element = p.parseElement();
     if (Element) Root.Items.push_back(Element);
+  }
+  void Load(const UnicodeString & FileName)
+  {
+    std::FILE * f = std::fopen(std::string(UTF8String(FileName).c_str()).c_str(), "rb");
+    if (!f) { LoadString(std::string()); return; }
+    std::string all; char buf[8192]; size_t n;
+    while ((n = std::fread(buf, 1, sizeof(buf), f)) > 0) all.append(buf, n);
+    std::fclose(f);
+    LoadString(std::move(all));
   }
 };
 
@@ -202,6 +206,8 @@ __fastcall TXMLDocument::TXMLDocument(void *) : FImpl(new XmlDocImpl()) {}
 __fastcall TXMLDocument::~TXMLDocument() { delete static_cast<XmlDocImpl *>(FImpl); }
 void __fastcall TXMLDocument::LoadFromFile(const UnicodeString & FileName)
 { static_cast<XmlDocImpl *>(FImpl)->Load(FileName); }
+void __fastcall TXMLDocument::LoadFromXML(const UnicodeString & XML)
+{ static_cast<XmlDocImpl *>(FImpl)->LoadString(std::string(UTF8String(XML).c_str())); }
 _di_IXMLNode __fastcall TXMLDocument::GetDocumentElement()
 { XmlDocImpl * d = static_cast<XmlDocImpl *>(FImpl); return d->Element ? _di_IXMLNode(d->Element) : _di_IXMLNode(); }
 _di_IXMLNodeList __fastcall TXMLDocument::GetChildNodes()

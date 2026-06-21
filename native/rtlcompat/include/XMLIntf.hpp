@@ -10,6 +10,7 @@
 #include "winscp/rtldefs.h"
 #include "winscp/UnicodeString.h"
 #include "SysUtils.hpp"   // OleVariant (Variant)
+#include "winscp/DelphiSet.h"   // Set<> (TParseOptions)
 
 namespace System {
   template <class Intf>
@@ -49,6 +50,8 @@ struct IXMLNodeList
   __declspec(property(get=GetCount)) int Count;
   virtual _di_IXMLNode __fastcall Get(int Index) = 0;
   virtual _di_IXMLNode __fastcall FindNode(const UnicodeString & Name) = 0;
+  // 2-arg overload (Name, Namespace) — namespace ignored by this DOM; delegates to the 1-arg.
+  _di_IXMLNode __fastcall FindNode(const UnicodeString & Name, const UnicodeString &) { return FindNode(Name); }
   virtual __fastcall ~IXMLNodeList() {}
 };
 
@@ -70,9 +73,19 @@ struct IXMLNode
   virtual __fastcall ~IXMLNode() {}
 };
 
+// Xml.XMLDoc parse options (Delphi TXMLDocument.ParseOptions). Only the names the engine uses;
+// this DOM ignores them (it always preserves text as parsed).
+enum TParseOption { poParseUnknown, poPreserveWhiteSpace, poAsyncLoad, poAutoPrefix,
+  poNamespaceDecl, poAutoSave };
+typedef Set<TParseOption, poParseUnknown, poAutoSave> TParseOptions;
+
 struct IXMLDocument
 {
   virtual void __fastcall LoadFromFile(const UnicodeString & FileName) = 0;
+  virtual void __fastcall LoadFromXML(const UnicodeString & XML) = 0;
+  virtual TParseOptions __fastcall GetParseOptions() = 0;
+  virtual void __fastcall SetParseOptions(TParseOptions Value) = 0;
+  __declspec(property(get=GetParseOptions, put=SetParseOptions)) TParseOptions ParseOptions;
   virtual _di_IXMLNode __fastcall GetDocumentElement() = 0;
   __declspec(property(get=GetDocumentElement)) _di_IXMLNode DocumentElement;
   virtual _di_IXMLNodeList __fastcall GetChildNodes() = 0;
@@ -87,6 +100,7 @@ using Xmlintf::TNodeType;
 using Xmlintf::ntReserved;  using Xmlintf::ntElement; using Xmlintf::ntAttribute;
 using Xmlintf::ntText;      using Xmlintf::ntCData;   using Xmlintf::ntEntityRef;
 using Xmlintf::ntComment;   using Xmlintf::ntDocument;
+using Xmlintf::TParseOptions; using Xmlintf::TParseOption; using Xmlintf::poPreserveWhiteSpace;
 
 // Delphi interface_cast<I>(obj) — reinterpret a concrete object as one of its interfaces.
 template <class I, class T>
@@ -100,10 +114,14 @@ public:
   __fastcall TXMLDocument(void * Owner = nullptr);
   virtual __fastcall ~TXMLDocument();
   virtual void __fastcall LoadFromFile(const UnicodeString & FileName);
+  virtual void __fastcall LoadFromXML(const UnicodeString & XML);
+  virtual TParseOptions __fastcall GetParseOptions() { return FParseOptions; }
+  virtual void __fastcall SetParseOptions(TParseOptions Value) { FParseOptions = Value; }
   virtual _di_IXMLNode __fastcall GetDocumentElement();
   virtual _di_IXMLNodeList __fastcall GetChildNodes();
 private:
   void * FImpl;   // -> XmlDocImpl (owns the node tree)
+  TParseOptions FParseOptions;
 };
 
 #endif

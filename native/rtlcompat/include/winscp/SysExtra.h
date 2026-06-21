@@ -76,6 +76,8 @@ __int64 __fastcall MilliSecondOfTheYear(const TDateTime & DT);
 UnicodeString __fastcall FormatDateTime(const UnicodeString & Fmt, const TDateTime & DT);
 UnicodeString __fastcall FormatDateTime(const UnicodeString & Fmt, const TDateTime & DT, const TFormatSettings & FS);
 UnicodeString __fastcall DateTimeToStr(const TDateTime & DT);
+bool __fastcall FileAge(const UnicodeString & FileName, TDateTime & DateTime);
+TDateTime __fastcall ISO8601ToDate(const UnicodeString & S, bool ReturnUTC);
 UnicodeString __fastcall DateToStr(const TDateTime & DT);
 UnicodeString __fastcall TimeToStr(const TDateTime & DT);
 UnicodeString __fastcall FormatFloat(const UnicodeString & Fmt, double Value);

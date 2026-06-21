@@ -18,6 +18,7 @@ add_library(rtlcompat STATIC
   src/Masks.cpp
   src/ResStrings.cpp
   src/WcsCompat.cpp
+  src/JsonDoc.cpp
 )
 target_include_directories(rtlcompat PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_features(rtlcompat PUBLIC cxx_std_17)
