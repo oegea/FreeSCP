@@ -611,3 +611,12 @@ format and always returned ISO — wrong for WebDAV's HTTP-date header
 ("ddd, d mmm yyyy hh:nn:ss 'GMT'" -> "Sun, 21 Jun 2026 07:29:07 GMT" now) and for any
 date routed through FormatDateTime (logs/display). Fixes the documented WebDAV upload-timestamp
 TODO. Full build + ctest green; all protocols regression-clean.
+
+## S3 upload/download WORK — SubString off-by-one fixed (bucket name truncation)
+S3 file transfer now round-trips (harness: cd /testbucket, upload -> bucket has the object,
+download -> byte-identical). Root cause: UnicodeString::SubString clamped a start<1 by SHRINKING
+count (std::string style), but Delphi Copy/SubString clamps start to 1 and KEEPS count.
+S3FileSystem::ParsePath does `BucketName = Path.SubString(0, P-1)`, so "testbucket" became
+"testbucke" -> MinIO "specified bucket does not exist". Fixed SubString to Delphi semantics
+(start<1 -> 1, count unchanged). CLASS fix (any SubString(0/negative, n) across the engine).
+All four protocols now do connect/list/transfer; ctest green; regression clean.

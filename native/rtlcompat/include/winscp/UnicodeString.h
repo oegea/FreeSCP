@@ -79,7 +79,10 @@ public:
   // SubString(start, count) — 1-based start, Delphi semantics.
   UnicodeString SubString(int start, int count) const
   {
-    if (start < 1) { count += (start - 1); start = 1; }
+    // Delphi Copy/SubString: a start < 1 is clamped to 1 WITHOUT shrinking count (so
+    // SubString(0, n) returns the first n chars). S3FileSystem::ParsePath relies on this —
+    // SubString(0, P-1) must give the whole bucket name (previously dropped its last char).
+    if (start < 1) start = 1;
     if (count <= 0 || start > Length()) return UnicodeString();
     return UnicodeString(FData.substr(static_cast<size_t>(start - 1),
                                       static_cast<size_t>(count)));
