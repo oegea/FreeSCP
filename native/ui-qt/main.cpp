@@ -31,6 +31,7 @@
 #include <QMessageBox>
 #include <QInputDialog>
 #include <QComboBox>
+#include <QTabWidget>
 #include <QString>
 #include <QDialog>
 #include <QFormLayout>
@@ -62,8 +63,11 @@
 static QString u8(const std::string & s) { return QString::fromUtf8(s.c_str()); }
 static std::string s8(const QString & s) { return s.toUtf8().constData(); }
 
-static bool gShowHidden = true;     // WinSCP "Show hidden files" toggle (dotfiles)
-static bool gConfirmDelete = true;  // confirm before deleting
+static bool gShowHidden = true;        // WinSCP "Show hidden files" toggle (dotfiles)
+static bool gConfirmDelete = true;     // confirm before deleting
+static bool gConfirmOverwrite = true;  // confirm before overwriting (stored; enforcement TBD)
+static int  gParallelMax = 2;          // max concurrent connections for queue parallelism (1-4)
+static bool gAltColors = true;         // alternating row colors in panels
 static std::atomic<bool> gTransferRunning{false};  // a background transfer batch is in flight
 
 //===========================================================================
@@ -614,7 +618,10 @@ int main(int argc, char ** argv)
   app.setApplicationName("WinSCP");
   { QSettings s("WinSCP-native-port", "WinSCP");
     gShowHidden = s.value("prefs/showHidden", true).toBool();
-    gConfirmDelete = s.value("prefs/confirmDelete", true).toBool(); }
+    gConfirmDelete = s.value("prefs/confirmDelete", true).toBool();
+    gConfirmOverwrite = s.value("prefs/confirmOverwrite", true).toBool();
+    gParallelMax = s.value("prefs/parallelMax", 2).toInt();
+    gAltColors = s.value("prefs/altColors", true).toBool(); }
 
   QMainWindow window;
   window.setWindowTitle("WinSCP");
@@ -777,7 +784,7 @@ int main(int argc, char ** argv)
     std::vector<int> handles;
     if (wantParallel)
     {
-      int want = (int)std::min<size_t>(2, names.size());
+      int want = (int)std::min<size_t>((size_t)std::max(1, gParallelMax), names.size());
       for (int k = 0; k < want; ++k) { int h = engine::openParallelConnection(nullptr); if (h > 0) handles.push_back(h); }
       if (handles.size() < 2) { engine::closeParallelConnections(); handles.clear(); }  // need >=2 to be worth it
     }
@@ -1015,20 +1022,45 @@ int main(int argc, char ** argv)
       QSettings("WinSCP-native-port","WinSCP").setValue("prefs/showHidden", on); });
     mOptions->addSeparator();
     mOptions->addAction("&Preferences\xE2\x80\xA6", [&]{
-      QDialog d(&window); d.setWindowTitle("Preferences");
-      auto * v = new QVBoxLayout(&d);
+      QDialog d(&window); d.setWindowTitle("Preferences"); d.resize(520, 360);
+      auto * outer = new QVBoxLayout(&d);
+      auto * tabs = new QTabWidget; outer->addWidget(tabs, 1);
+
+      // --- Environment ---
+      auto * envTab = new QWidget; auto * envLay = new QVBoxLayout(envTab);
       auto * cbHidden = new QCheckBox("Show hidden files"); cbHidden->setChecked(gShowHidden);
-      auto * cbDel = new QCheckBox("Confirm before deleting"); cbDel->setChecked(gConfirmDelete);
-      v->addWidget(cbHidden); v->addWidget(cbDel);
+      auto * cbDel = new QCheckBox("Confirm file deletion"); cbDel->setChecked(gConfirmDelete);
+      auto * cbOvr = new QCheckBox("Confirm overwrites"); cbOvr->setChecked(gConfirmOverwrite);
+      envLay->addWidget(cbHidden); envLay->addWidget(cbDel); envLay->addWidget(cbOvr); envLay->addStretch(1);
+      tabs->addTab(envTab, "Environment");
+
+      // --- Transfer ---
+      auto * trTab = new QWidget; auto * trForm = new QFormLayout(trTab);
+      auto * spinPar = new QSpinBox; spinPar->setRange(1, 4); spinPar->setValue(gParallelMax);
+      trForm->addRow("Maximum parallel transfers:", spinPar);
+      auto * cmbMode = new QComboBox; cmbMode->addItems({ "Binary", "Text", "Automatic" }); cmbMode->setCurrentIndex(0);
+      trForm->addRow("Default transfer mode:", cmbMode);
+      tabs->addTab(trTab, "Transfer");
+
+      // --- Panels ---
+      auto * pnTab = new QWidget; auto * pnLay = new QVBoxLayout(pnTab);
+      auto * cbAlt = new QCheckBox("Alternating row colors"); cbAlt->setChecked(gAltColors);
+      pnLay->addWidget(cbAlt); pnLay->addStretch(1);
+      tabs->addTab(pnTab, "Panels");
+
       auto * bb = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
-      v->addWidget(bb);
+      outer->addWidget(bb);
       QObject::connect(bb, &QDialogButtonBox::accepted, &d, &QDialog::accept);
       QObject::connect(bb, &QDialogButtonBox::rejected, &d, &QDialog::reject);
       if (d.exec() != QDialog::Accepted) return;
       gShowHidden = cbHidden->isChecked(); gConfirmDelete = cbDel->isChecked();
+      gConfirmOverwrite = cbOvr->isChecked(); gParallelMax = spinPar->value(); gAltColors = cbAlt->isChecked();
       actHidden->setChecked(gShowHidden);
       QSettings s("WinSCP-native-port","WinSCP");
       s.setValue("prefs/showHidden", gShowHidden); s.setValue("prefs/confirmDelete", gConfirmDelete);
+      s.setValue("prefs/confirmOverwrite", gConfirmOverwrite); s.setValue("prefs/parallelMax", gParallelMax);
+      s.setValue("prefs/altColors", gAltColors);
+      left->view()->setAlternatingRowColors(gAltColors); right->view()->setAlternatingRowColors(gAltColors);
       left->refresh(); right->refresh();
     });
     auto * mRemote = window.menuBar()->addMenu("&Remote");
