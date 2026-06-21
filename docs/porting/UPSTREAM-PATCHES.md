@@ -92,3 +92,12 @@ always ran this code). Marked `// WINSCP-NATIVE-PORT`.
 AsyncProxySocketLayer.cpp, FtpControlSocket.cpp: `sin_addr.S_un.S_addr` -> `sin_addr.s_addr`.
 Safe on Windows too — `<winsock2.h>` defines `#define s_addr S_un.S_addr`, so `.s_addr` is the
 portable spelling. Needed because POSIX `struct in_addr` has no `S_un` union member.
+
+## FTP backend (Phase 8) — guarded source edits
+- source/core/Terminal.cpp: un-guarded the fsFTP branch of TTerminal::Open() (FileZilla builds now).
+- source/core/FtpFileSystem.cpp: PreserveDownloadFileTime body `#ifdef _WIN32`-guarded (handle-type
+  mismatch on the native CFile); DeleteFile falls back to File->FileName for trailing-slash dir paths
+  (both `#ifndef _WIN32`).
+- source/filezilla/AsyncProxySocketLayer.cpp, FtpControlSocket.cpp: `sin_addr.S_un.S_addr` ->
+  `sin_addr.s_addr` (portable; Windows winsock #defines s_addr to S_un.S_addr).
+All keep the Windows build intact.

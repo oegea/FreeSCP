@@ -216,3 +216,24 @@ UnicodeString uses `std::u16string`, never std::wstring.
   but assignment/compare/find/c_str-length go through the 4-byte instantiation and break.
 - Fixed across the FileZilla compat: CString, afxconv A2T/T2A pools, MultiByteToWideChar,
   CString::FormatV, the winmsg window-class map — all rebacked on std::u16string.
+
+## 14. FTP (FileZilla) runtime: the non-obvious blockers
+
+Porting FileZilla's async engine, the bugs that actually stalled FTP at runtime (all post-compile):
+- **std::wstring is 4-byte-ABI in libc++** (see §13) — corrupted the host string ("127.0.0.1"->"1").
+  Reback every 2-byte string container on std::u16string.
+- **Non-blocking connect()**: POSIX returns EINPROGRESS; FileZilla checks WSAEWOULDBLOCK. Map it in
+  WSAGetLastError.
+- **WSAAsyncSelect emulation**: FD_READ must be level-triggered (drives FileZilla's command state
+  machine, like Windows re-arming on each recv); FD_CLOSE only on a real peer EOF detected with
+  recv(MSG_PEEK|MSG_DONTWAIT) (a blocking peek stalls the select thread; a plain peek races
+  FileZilla's reader); dedup per (socket,event) NOT per socket (else a data socket's FD_READ is
+  suppressed behind its pending FD_CONNECT); FD_ACCEPT only for real listening sockets (SO_ACCEPTCONN
+  — the event mask is always 0x3f).
+- **PreserveDownloadFileTime**: FileZilla hands the platform a compat-CFile FILE* where the engine's
+  SetFileTime wants an fd-packed HANDLE; the mismatch faults the worker thread, so the transfer-
+  complete reply never arrives and the (otherwise finished) download blocks forever. Guarded out.
+- **Directory delete**: a dir's FullFileName carries a trailing slash -> UnixExtractFileName "" ->
+  FileZilla RemoveDir INVALIDPARAM. Fall back to TRemoteFile->FileName.
+- Debug tip: FZ_TRACE=1 (compat wrappers) prints connect/getaddrinfo/send/recv + WSAAsyncSelect/
+  post/PostThreadMessage — invaluable for the worker/data-channel choreography.
