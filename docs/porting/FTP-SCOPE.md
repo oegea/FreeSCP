@@ -93,3 +93,16 @@ failed". Likely causes to chase next:
   for readable diagnostics.
 - select-loop edge-trigger semantics (one-shot writable latch, FD_READ dedup) need validation under
   real traffic. FZ_TRACE=1 prints WSAAsyncSelect/select/post events.
+
+## Download frontier: data flows, finalization stalls (precise finding)
+The full FTP dialogue is correct (traced via FZ_TRACE send/recv wrappers): USER/PASS/SYST/FEAT/PWD/
+TYPE/PASV/LIST (listing works), CWD/SIZE/MDTM/STOR (upload works), then PASV/RETR for download. On
+RETR the data socket connects, **FileZilla reads the file bytes** (`recv sock=8 n=14`), FD_CLOSE
+fires on EOF (`recv n=0`), and the control socket gets the 226 (`recv sock=3 n=24`). So the data
+channel + event emulation are correct end-to-end for download too. BUT: the local file is created
+0 bytes and CopyToLocal never returns — the bytes FileZilla read aren't written to the local file /
+the transfer-complete isn't signalled to the engine. Next: chase CTransferSocket's download path
+(OnReceive -> buffer -> CFile write, and OnClose/transfer-end -> engine notify) — likely a
+finalization/flush or a missing completion event from the data-socket OnClose into FtpFileSystem.
+Same likely applies to remote ops (mkdir/rename/delete) which also wait on completion. The MDTM also
+sends a suspicious timestamp ("MDTM 655351130000000 xfer-up.txt") worth checking.

@@ -109,6 +109,16 @@ inline int fz_connect(SOCKET s, const struct sockaddr * a, socklen_t l)
 inline int fz_bind(SOCKET s, const struct sockaddr * a, socklen_t l)
 { int r = ::bind(s, a, l); if (getenv("FZ_TRACE")) fprintf(stderr, "[fz] bind sock=%d r=%d errno=%d\n", s, r, errno); return r; }
 #define bind fz_bind
+inline ssize_t fz_send(SOCKET s, const void * b, size_t n, int f)
+{ ssize_t r = ::send(s, b, n, f);
+  if (getenv("FZ_TRACE") && n < 200) { fprintf(stderr, "[fz] send sock=%d n=%zd: ", s, r); fwrite(b, 1, (r>0?(size_t)r:0), stderr); }
+  return r; }
+#define send fz_send
+inline ssize_t fz_recv(SOCKET s, void * b, size_t n, int f)
+{ ssize_t r = ::recv(s, b, n, f);
+  if (getenv("FZ_TRACE") && !(f & MSG_PEEK)) fprintf(stderr, "[fz] recv sock=%d n=%zd\n", s, r);
+  return r; }
+#define recv fz_recv
 inline int fz_getaddrinfo(const char * node, const char * svc, const struct addrinfo * hints, struct addrinfo ** res)
 { int r = ::getaddrinfo(node, svc, hints, res);
   if (getenv("FZ_TRACE")) { char ip[64]={0}; if (!r && *res) { const void*pa=(*res)->ai_family==AF_INET6?(const void*)&((sockaddr_in6*)(*res)->ai_addr)->sin6_addr:(const void*)&((sockaddr_in*)(*res)->ai_addr)->sin_addr; inet_ntop((*res)->ai_family, pa, ip, sizeof ip);} fprintf(stderr, "[fz] getaddrinfo node=%s svc=%s r=%d fam=%d ip=%s\n", node?node:"(null)", svc?svc:"(null)", r, (!r&&*res)?(*res)->ai_family:-1, ip); }
