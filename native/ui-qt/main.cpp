@@ -55,7 +55,8 @@
 static QString u8(const std::string & s) { return QString::fromUtf8(s.c_str()); }
 static std::string s8(const QString & s) { return s.toUtf8().constData(); }
 
-static bool gShowHidden = true;   // WinSCP "Show hidden files" toggle (dotfiles)
+static bool gShowHidden = true;     // WinSCP "Show hidden files" toggle (dotfiles)
+static bool gConfirmDelete = true;  // confirm before deleting
 
 //===========================================================================
 // Login dialog — faithful to WinSCP: a sites tree on the left, a "Session" form on the right
@@ -548,6 +549,9 @@ int main(int argc, char ** argv)
 {
   QApplication app(argc, argv);
   app.setApplicationName("WinSCP");
+  { QSettings s("WinSCP-native-port", "WinSCP");
+    gShowHidden = s.value("prefs/showHidden", true).toBool();
+    gConfirmDelete = s.value("prefs/confirmDelete", true).toBool(); }
 
   QMainWindow window;
   window.setWindowTitle("WinSCP");
@@ -775,7 +779,7 @@ int main(int argc, char ** argv)
   auto doDelete = [&] {
     QStringList sel = active->selectedItems();
     if (sel.isEmpty()) { window.statusBar()->showMessage("No files selected"); return; }
-    if (QMessageBox::question(&window, "Delete", QString("Delete %1 item(s)?").arg(sel.size())) != QMessageBox::Yes) return;
+    if (gConfirmDelete && QMessageBox::question(&window, "Delete", QString("Delete %1 item(s)?").arg(sel.size())) != QMessageBox::Yes) return;
     int ok = 0; std::string err;
     for (const QString & f : sel)
       if (active->isRemote() ? engine::remoteDelete(s8(f), &err) : engine::localDelete(s8(active->path()), s8(f), &err)) ++ok;
@@ -854,9 +858,28 @@ int main(int argc, char ** argv)
     auto * mOptions = window.menuBar()->addMenu("&Options");
     mOptions->addAction("Session &log\tCtrl+L", [&]{ logDock->setVisible(!logDock->isVisible()); });
     mOptions->addAction("Transfer &queue\tCtrl+Q", [&]{ queueDock->setVisible(!queueDock->isVisible()); });
-    { auto * a = mOptions->addAction("Show &hidden files"); a->setCheckable(true); a->setChecked(gShowHidden);
-      a->setShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_H));
-      QObject::connect(a, &QAction::toggled, [&](bool on){ gShowHidden = on; left->refresh(); right->refresh(); }); }
+    auto * actHidden = mOptions->addAction("Show &hidden files"); actHidden->setCheckable(true); actHidden->setChecked(gShowHidden);
+    actHidden->setShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_H));
+    QObject::connect(actHidden, &QAction::toggled, [&](bool on){ gShowHidden = on; left->refresh(); right->refresh();
+      QSettings("WinSCP-native-port","WinSCP").setValue("prefs/showHidden", on); });
+    mOptions->addSeparator();
+    mOptions->addAction("&Preferences\xE2\x80\xA6", [&]{
+      QDialog d(&window); d.setWindowTitle("Preferences");
+      auto * v = new QVBoxLayout(&d);
+      auto * cbHidden = new QCheckBox("Show hidden files"); cbHidden->setChecked(gShowHidden);
+      auto * cbDel = new QCheckBox("Confirm before deleting"); cbDel->setChecked(gConfirmDelete);
+      v->addWidget(cbHidden); v->addWidget(cbDel);
+      auto * bb = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
+      v->addWidget(bb);
+      QObject::connect(bb, &QDialogButtonBox::accepted, &d, &QDialog::accept);
+      QObject::connect(bb, &QDialogButtonBox::rejected, &d, &QDialog::reject);
+      if (d.exec() != QDialog::Accepted) return;
+      gShowHidden = cbHidden->isChecked(); gConfirmDelete = cbDel->isChecked();
+      actHidden->setChecked(gShowHidden);
+      QSettings s("WinSCP-native-port","WinSCP");
+      s.setValue("prefs/showHidden", gShowHidden); s.setValue("prefs/confirmDelete", gConfirmDelete);
+      left->refresh(); right->refresh();
+    });
     auto * mRemote = window.menuBar()->addMenu("&Remote");
     mRemote->addAction("&Refresh", [&]{ if (right->isRemote()) right->refresh(); });
     auto * mHelp = window.menuBar()->addMenu("&Help");
