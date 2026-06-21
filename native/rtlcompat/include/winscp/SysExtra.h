@@ -136,6 +136,8 @@ void * __fastcall GetProcAddress(HMODULE h, const char * Name);
 void  __fastcall SetLastError(DWORD e);
 BOOL  __fastcall FileTimeToSystemTime(const FILETIME * ft, SYSTEMTIME * st);
 BOOL  __fastcall FileTimeToLocalFileTime(const FILETIME * ft, FILETIME * lft);
+BOOL  __fastcall SystemTimeToFileTime(const SYSTEMTIME * st, FILETIME * ft);
+BOOL  __fastcall LocalFileTimeToFileTime(const FILETIME * lft, FILETIME * ft);
 int   __fastcall StrCmpLogicalW(const wchar_t * a, const wchar_t * b);
 void  __fastcall CoTaskMemFree(void * p);
 long  __fastcall CoInitialize(void * p);

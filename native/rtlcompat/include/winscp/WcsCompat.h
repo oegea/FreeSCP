@@ -55,6 +55,7 @@ int winscp_swscanf(const wchar_t * s, const wchar_t * fmt, ...);
 #define wcscpy  winscp_wcscpy
 #define wcsncpy winscp_wcsncpy
 #define wcsdup  winscp_wcsdup
+#define _wcsdup winscp_wcsdup
 #define swscanf winscp_swscanf
 
 #endif

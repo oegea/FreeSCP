@@ -214,10 +214,12 @@ public:
   Variant(unsigned int v) : FValue(v), FNull(false) {}
   Variant(long long v) : FValue(v), FNull(false) {}
   Variant(unsigned long v) : FValue((long long)v), FNull(false) {}
+  Variant(double v) : FDbl(v), FIsDbl(true), FNull(false) {}   // e.g. TDateTime difference (days)
   Variant(const UnicodeString & s) : FStr(s), FIsStr(true), FNull(false) {}
-  operator int() const { return static_cast<int>(FValue); }
-  operator unsigned int() const { return static_cast<unsigned int>(FValue); }
-  operator long long() const { return FValue; }
+  operator int() const { return FIsDbl ? static_cast<int>(FDbl) : static_cast<int>(FValue); }
+  operator unsigned int() const { return FIsDbl ? static_cast<unsigned int>(FDbl) : static_cast<unsigned int>(FValue); }
+  operator long long() const { return FIsDbl ? static_cast<long long>(FDbl) : FValue; }
+  operator double() const { return FIsDbl ? FDbl : (FIsStr ? FStr.ToDouble() : static_cast<double>(FValue)); }
   operator UnicodeString() const { return FIsStr ? FStr : UnicodeString(static_cast<long long>(FValue)); }
   bool __fastcall IsNull() const { return FNull; }
   bool operator==(const UnicodeString & o) const { return (UnicodeString)(*this) == o; }
@@ -240,6 +242,8 @@ public:
     if (Index >= FLow) (*FArray)[Index - FLow] = Value.FValue; }
 private:
   long long FValue = 0;
+  double FDbl = 0.0;
+  bool FIsDbl = false;
   UnicodeString FStr;
   bool FIsStr = false;
   bool FNull = true;        // a default-constructed Variant is Null (Unassigned)
@@ -247,6 +251,13 @@ private:
   std::shared_ptr<std::vector<long long>> FArray;
 };
 typedef Variant OleVariant;
+
+// Variant arithmetic the engine uses (e.g. FtpFileSystem: SecsPerDay * Variant(TDateTime diff)).
+// Exact-match int/double overloads beat the ambiguous built-ins (Variant has several conversions).
+inline Variant operator*(int a, const Variant & b)    { return Variant(static_cast<double>(a) * static_cast<double>(b)); }
+inline Variant operator*(double a, const Variant & b)  { return Variant(a * static_cast<double>(b)); }
+inline Variant operator*(const Variant & a, int b)     { return Variant(static_cast<double>(a) * static_cast<double>(b)); }
+inline Variant operator*(const Variant & a, double b)  { return Variant(static_cast<double>(a) * b); }
 
 // Variant array type tags (only the ones the engine names) + VarArrayCreate(bounds{low,high}).
 enum { varInteger = 3, varLongWord = 19, varInt64 = 20 };

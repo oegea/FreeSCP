@@ -343,6 +343,22 @@ void * __fastcall GetProcAddress(HMODULE, const char *) { return nullptr; }
 void  __fastcall SetLastError(DWORD) {}
 BOOL  __fastcall FileTimeToSystemTime(const FILETIME *, SYSTEMTIME * st) { if (st) std::memset(st, 0, sizeof(*st)); return TRUE; }
 BOOL  __fastcall FileTimeToLocalFileTime(const FILETIME * ft, FILETIME * lft) { if (lft && ft) *lft = *ft; return TRUE; }
+BOOL  __fastcall LocalFileTimeToFileTime(const FILETIME * lft, FILETIME * ft) { if (ft && lft) *ft = *lft; return TRUE; }
+// SYSTEMTIME (y/m/d h:m:s, treated as UTC — local==UTC simplification, matching the passthrough
+// FileTimeToLocalFileTime) -> FILETIME (100ns ticks since 1601-01-01).
+BOOL  __fastcall SystemTimeToFileTime(const SYSTEMTIME * st, FILETIME * ft)
+{
+  if (!st || !ft) return FALSE;
+  struct tm tmv; std::memset(&tmv, 0, sizeof(tmv));
+  tmv.tm_year = st->wYear - 1900; tmv.tm_mon = st->wMonth - 1; tmv.tm_mday = st->wDay;
+  tmv.tm_hour = st->wHour; tmv.tm_min = st->wMinute; tmv.tm_sec = st->wSecond;
+  time_t secs = ::timegm(&tmv);
+  unsigned long long ticks = ((unsigned long long)secs + 11644473600ULL) * 10000000ULL
+                           + (unsigned long long)st->wMilliseconds * 10000ULL;
+  ft->dwLowDateTime = (DWORD)(ticks & 0xFFFFFFFF);
+  ft->dwHighDateTime = (DWORD)(ticks >> 32);
+  return TRUE;
+}
 int   __fastcall StrCmpLogicalW(const wchar_t * a, const wchar_t * b) { return UnicodeString(a).CompareIC(UnicodeString(b)); }
 void  __fastcall CoTaskMemFree(void *) {}
 

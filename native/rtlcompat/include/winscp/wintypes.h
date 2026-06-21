@@ -15,6 +15,7 @@ typedef HANDLE          HINSTANCE;
 typedef HANDLE          HMODULE;
 typedef HANDLE          HWND;
 typedef unsigned long   DWORD;
+typedef unsigned short  WORD;
 typedef unsigned int    UINT;
 typedef int             BOOL;
 typedef unsigned char   BYTE;
