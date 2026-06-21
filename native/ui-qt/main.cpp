@@ -492,6 +492,9 @@ int main(int argc, char ** argv)
     if (files.isEmpty()) { window.statusBar()->showMessage("No files selected"); return; }
     if (active->isRemote() && dst->isRemote())
     { QMessageBox::information(&window, "Copy", "Remote-to-remote copy is not supported yet."); return; }
+    QApplication::setOverrideCursor(Qt::WaitCursor);
+    window.statusBar()->showMessage(QString("Transferring %1 file(s)\xE2\x80\xA6").arg(files.size()));
+    QApplication::processEvents();
     int ok = 0; std::string lastErr;
     for (const QString & f : files)
     {
@@ -506,6 +509,7 @@ int main(int argc, char ** argv)
       if (r) ++ok; else log("Copy failed: " + f + " — " + u8(lastErr));
     }
     dst->refresh();
+    QApplication::restoreOverrideCursor();
     window.statusBar()->showMessage(QString("Copied %1/%2 file(s) to %3").arg(ok).arg(files.size()).arg(dst->path()));
   };
   auto doMkdir = [&] {

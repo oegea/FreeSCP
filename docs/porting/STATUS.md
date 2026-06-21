@@ -580,3 +580,12 @@ S3 9100 — the local test servers). Engine wiring unchanged (connect/copy/mkdir
 through enginebridge). winscp-qt builds + launches; verified by an offscreen render (WINSCP_SHOT=path).
 NEXT GUI: real transfer progress + queue pane, context menus, drive/bookmark bar, faithful Properties
 dialog (rights checkboxes), wire the menu bar actions; FTP backend later.
+
+## Phase 7 cont. — Properties dialog, context menus, menu bar, transfer feedback
+GUI faithfulness round 2: a WinSCP-style **Properties dialog** (Owner/Group/Others x R/W/X checkbox
+grid synced to an octal field) replaces the bare octal prompt; **right-click context menus** on each
+panel (Upload/Download, Rename, Delete, Create Directory, Properties); the **menu bar** is wired
+(Local/Files/Session/Options/Remote/Help -> the same ops); transfers show a wait cursor + status.
+Verified by offscreen renders (Login dialog + Commander both read as WinSCP). All four protocols are
+now testable end-to-end through the GUI. NEXT GUI: real per-file transfer progress/queue pane,
+drive/bookmark bar, synchronized-browsing, faithful site manager (save sessions).
