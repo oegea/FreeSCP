@@ -54,6 +54,9 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QFileIconProvider>
+#include <QHash>
+#include <QIcon>
 #include <QFont>
 #include <QStyle>
 #include <algorithm>
@@ -477,8 +480,9 @@ public:
     for (const auto & e : FEntries)
     {
       QList<QStandardItem *> row;
-      QString icon = e.isParent ? "\xE2\xA4\xB4 " : e.isDir ? "\xF0\x9F\x93\x81 " : "\xF0\x9F\x93\x84 ";
-      row << new QStandardItem(icon + u8(e.name));
+      auto * nameItem = new QStandardItem(u8(e.name));
+      nameItem->setIcon(iconFor(e));               // native folder / file-type icon
+      row << nameItem;
       auto * sz = new QStandardItem(e.isDir ? QString() : u8(engine::formatSize(e.size)));
       sz->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
       row << sz;
@@ -528,6 +532,26 @@ public:
   }
 
   void setStatusLine(const QString & s) { FStatus->setText(s); }
+  // Native icon for an entry: folder icon for dirs, "up" for "..", file-type icon (by extension) for
+  // files. Cached per extension so listing stays fast.
+  QIcon iconFor(const engine::DirEntry & e) const {
+    static QFileIconProvider prov;
+    static QIcon folder = prov.icon(QFileIconProvider::Folder);
+    static QIcon upIcon = qApp->style()->standardIcon(QStyle::SP_FileDialogToParent);
+    static QIcon genericFile = prov.icon(QFileIconProvider::File);
+    static QHash<QString, QIcon> byExt;
+    if (e.isParent) return upIcon;
+    if (e.isDir) return folder;
+    QString n = u8(e.name); int dot = n.lastIndexOf('.');
+    QString ext = (dot > 0) ? n.mid(dot + 1).toLower() : QString();
+    if (ext.isEmpty()) return genericFile;
+    auto it = byExt.find(ext);
+    if (it != byExt.end()) return it.value();
+    QIcon ic = prov.icon(QFileInfo("x." + ext));   // type icon by extension
+    if (ic.isNull()) ic = genericFile;
+    byExt.insert(ext, ic);
+    return ic;
+  }
   void refresh() { navigate(FPath); }
   // Norton-style: toggle selection of the current row, then move down one.
   void toggleSelectAndAdvance() {
