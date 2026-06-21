@@ -70,3 +70,11 @@ etc), so the WINSCP branches that were written for Windows must be `_WIN32`-guar
 Result: all 26 portable `libs/neon/src/*.c` compile on clang/arm64; `native/neon/CMakeLists.txt`
 produces `libneon.a`. (Linking into the engine + the WebDAV/S3 TUs is the next Phase 4 step; see
 STATUS.md.)
+
+## Phase 4 — Terminal.cpp WebDAV Open() un-guarded
+
+`source/core/Terminal.cpp` TTerminal::Open(): the WebDAV branch's `#ifdef _WIN32` guard (which
+threw "WebDAV protocol is not supported on this build yet") is removed now that TWebDAVFileSystem
+builds natively — it unconditionally does `new TWebDAVFileSystem(this); Open()`. The FTP and S3
+branches remain guarded (those backends are not built yet). The Windows build is unaffected (it
+always ran this code). Marked `// WINSCP-NATIVE-PORT`.

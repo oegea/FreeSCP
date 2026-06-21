@@ -1525,14 +1525,11 @@ void __fastcall TTerminal::Open()
             else if (SessionData->FSProtocol == fsWebDAV)
             {
               FFSProtocol = cfsWebDAV;
-#ifdef _WIN32  // WINSCP-NATIVE-PORT: see above.
+              // WINSCP-NATIVE-PORT: WebDAV backend (neon) now builds natively (Phase 4).
               FFileSystem = new TWebDAVFileSystem(this);
               FFileSystem->Open();
               Log->AddSeparator();
               LogEvent(L"Using WebDAV protocol.");
-#else
-              throw Exception(L"WebDAV protocol is not supported on this build yet.");
-#endif
             }
             else if (SessionData->FSProtocol == fsS3)
             {

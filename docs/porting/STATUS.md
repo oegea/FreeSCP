@@ -474,3 +474,17 @@ Full build + ctest green; SFTP/SCP regression clean. REMAINING: S3FileSystem.cpp
 System.JSON shim + libs3 built) — then un-guard Terminal.cpp Open() WebDAV branch + runtime-debug
 against a WebDAV server (FormatDateTime picture + the upload fd path are the likely first runtime
 issues).
+
+## WebDAV WORKS END-TO-END — third protocol live (neon, native)
+The ported engine connects to a real WebDAV server over neon (native libneon+libexpat), authenticates
+(HTTP Basic), and lists a directory. Validated via the harness: `WINSCP_DAV=1
+./native/build/harness/winscp-harness 127.0.0.1 8086 winscp winscp123` -> CONNECTED, lists `/`
+(hello-dav.txt). Two final wiring fixes: harness/bridge must call `NeonInitialize()` (ne_sock_init;
+normally done by CoreInitialize) — added after PuttyInitialize; and Terminal.cpp's WebDAV Open()
+branch un-guarded (UPSTREAM-PATCHES). SFTP+SCP regression clean; full build + ctest green.
+Test server: `docker run -d --name winscp-test-dav -p 8086:80 -e AUTH_TYPE=Basic -e USERNAME=winscp
+-e PASSWORD=winscp123 bytemark/webdav` (PUT/GET/PROPFIND verified with curl).
+NEXT: wire WebDAV into enginebridge/GUI (protocol dropdown already exists — add WebDAV + host/path);
+real FormatDateTime picture formatter (HTTP-date header is currently ISO — affects upload timestamps);
+WebDAV upload/download + file ops runtime shake-out; HTTPS (ftpsImplicit/TLS) cert path. Then S3
+(libs3 + System.JSON) and FTP (FileZilla) last.

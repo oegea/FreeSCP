@@ -19,6 +19,7 @@
 // PuTTY one-time init (sk_init + sets appname); normally called by CoreInitialize.
 void __fastcall PuttyInitialize();
 void __fastcall PuttyFinalize();
+void __fastcall NeonInitialize();   // ne_sock_init (normally done by CoreInitialize); needed for WebDAV
 
 static void out(const UnicodeString & s)
 { std::string u(UTF8String(s).c_str()); std::fprintf(stderr, "%s\n", u.c_str()); }
@@ -46,6 +47,7 @@ int main(int argc, char ** argv)
     Configuration = new THarnessConfiguration();
     Configuration->Default();
     PuttyInitialize();   // sk_init + appname; the engine's CoreInitialize would normally do this    // logging disabled for now
+    NeonInitialize();    // ne_sock_init (WebDAV/HTTP); no-op cost for SFTP/SCP runs
     out(L"[harness] Configuration created; PuTTY initialized.");
 
     std::unique_ptr<TSessionData> Data(new TSessionData(L""));
@@ -54,7 +56,15 @@ int main(int argc, char ** argv)
     Data->PortNumber = Port;
     Data->UserName = User;
     Data->Password = Pass;
-    Data->FSProtocol = (::getenv("WINSCP_SCP") != nullptr) ? fsSCPonly : fsSFTPonly;  // TEMP SCP test
+    if (::getenv("WINSCP_DAV") != nullptr)
+    {
+      Data->FSProtocol = fsWebDAV;   // plain-HTTP WebDAV test server (no TLS)
+      Data->Ftps = ftpsNone;
+    }
+    else
+    {
+      Data->FSProtocol = (::getenv("WINSCP_SCP") != nullptr) ? fsSCPonly : fsSFTPonly;
+    }
     Data->FingerprintScan = false;   // ensure normal connect (not fingerprint-scan mode)
     out(FORMAT(L"[harness] Session: %s@%s:%d (SFTP)", (User, Host, Port)));
 
