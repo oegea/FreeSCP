@@ -404,12 +404,18 @@ public:
   // Per-panel status: selection / totals (WinSCP shows selected of total).
   QString statusText() const
   {
-    int sel = (int)selectedFiles().size();
-    if (sel > 0) return QString("%1 of %2 file(s) selected").arg(sel).arg(FFiles);
+    int sel = (int)selectedItems().size();
+    if (sel > 0) return QString("%1 of %2 item(s) selected").arg(sel).arg(FFiles + FDirs);
     return QString("%1 director%2, %3 file(s)").arg(FDirs).arg(FDirs == 1 ? "y" : "ies").arg(FFiles);
   }
 
-  QStringList selectedFiles() const
+  // Selected real files only (excludes dirs + "..").
+  QStringList selectedFiles() const { return selected(false); }
+  // Selected items including directories (excludes ".."); used by copy/move/delete which the
+  // engine handles recursively for folders.
+  QStringList selectedItems() const { return selected(true); }
+
+  QStringList selected(bool includeDirs) const
   {
     QStringList out;
     if (!FView->selectionModel()) return out;
@@ -417,8 +423,9 @@ public:
     for (const auto & ix : rows)
     {
       int r = ix.row();
-      if (r >= 0 && r < (int)FEntries.size() && !FEntries[r].isDir)
-        out << u8(FEntries[r].name);
+      if (r < 0 || r >= (int)FEntries.size() || FEntries[r].isParent) continue;
+      if (FEntries[r].isDir && !includeDirs) continue;
+      out << u8(FEntries[r].name);
     }
     return out;
   }
@@ -574,7 +581,7 @@ int main(int argc, char ** argv)
 
   auto doCopy = [&] {
     FilePanel * dst = (active == left) ? right : left;
-    QStringList files = active->selectedFiles();
+    QStringList files = active->selectedItems();
     if (files.isEmpty()) { window.statusBar()->showMessage("No files selected"); return; }
     if (active->isRemote() && dst->isRemote())
     { QMessageBox::information(&window, "Copy", "Remote-to-remote copy is not supported yet."); return; }
@@ -611,7 +618,7 @@ int main(int argc, char ** argv)
   };
   auto doMove = [&] {
     FilePanel * dst = (active == left) ? right : left;
-    QStringList files = active->selectedFiles();
+    QStringList files = active->selectedItems();
     if (files.isEmpty()) { window.statusBar()->showMessage("No files selected"); return; }
     if (active->isRemote() && dst->isRemote())
     { QMessageBox::information(&window, "Move", "Remote-to-remote move is not supported yet."); return; }
@@ -650,7 +657,7 @@ int main(int argc, char ** argv)
     window.statusBar()->showMessage(ok ? "Created " + name : "Create folder failed — " + u8(err));
   };
   auto doRename = [&] {
-    QStringList sel = active->selectedFiles();
+    QStringList sel = active->selectedItems();
     if (sel.size() != 1) { window.statusBar()->showMessage("Select exactly one item to rename"); return; }
     bool okIn = false;
     QString nn = QInputDialog::getText(&window, "Rename", "New name:", QLineEdit::Normal, sel.first(), &okIn);
@@ -662,7 +669,7 @@ int main(int argc, char ** argv)
     window.statusBar()->showMessage(ok ? "Renamed to " + nn : "Rename failed — " + u8(err));
   };
   auto doDelete = [&] {
-    QStringList sel = active->selectedFiles();
+    QStringList sel = active->selectedItems();
     if (sel.isEmpty()) { window.statusBar()->showMessage("No files selected"); return; }
     if (QMessageBox::question(&window, "Delete", QString("Delete %1 item(s)?").arg(sel.size())) != QMessageBox::Yes) return;
     int ok = 0; std::string err;
@@ -672,7 +679,7 @@ int main(int argc, char ** argv)
     window.statusBar()->showMessage(QString("Deleted %1/%2 item(s)").arg(ok).arg(sel.size()));
   };
   auto doProps = [&] {
-    QStringList sel = active->selectedFiles();
+    QStringList sel = active->selectedItems();
     if (sel.size() != 1) { window.statusBar()->showMessage("Select exactly one item"); return; }
     if (!active->isRemote()) { QMessageBox::information(&window, "Properties", "Properties (permissions) apply to remote files."); return; }
     std::string cur = engine::remoteFileOctal(s8(sel.first()));
