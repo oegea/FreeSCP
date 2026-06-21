@@ -247,3 +247,17 @@ formatter + TSafeHandleStream(THandle) + multi-arg closure ProcessDirectory), Sf
 Terminal 49, SessionData 45 (Xml.XMLIntf surface: IXMLNode/IXMLDocument ChildNodes/Count/FindNode/
 Get/Text/NodeName/GetAttribute — session import/export), SessionInfo 71, CoreMain 1 (FileZillaIntf.h
 — FTP, deferred). Next best path to a connect: SftpFileSystem + Terminal + SessionData.
+
+## Remote directory navigation WORKS — nav-crash fixed (rtlcompat property binding)
+Double-clicking a remote dir (GUI) / `Terminal->ChangeDirectory()` (harness) segfaulted with a
+stack overflow inside `TRemoteDirectoryChangesCache::GetValue` (RemoteFiles.cpp:1928). Root cause:
+that engine class (`: private TStringList`) redeclares non-virtual `GetValue`/`SetValue` AND uses
+the inherited `Values[]` property internally. In Delphi a property binds *statically* to the
+accessor of its declaring class (TStrings), so `Values[]` -> TStrings.GetValue (no recursion). With
+clang `__declspec(property)` the bare accessor name `GetValue` instead resolves in the *derived*
+scope -> `TRemoteDirectoryChangesCache::GetValue` -> infinite recursion -> guard-page crash (lldb
+mis-shows `this=NULL`; it's actually a stack overflow at the function prologue).
+Fix (rtlcompat only, no source/ edit): bind `Names[]`/`Values[]` to non-shadowable forwarder
+accessors `DoGetName`/`DoGetValue`/`DoSetValue` in TStrings (Classes.hpp). Replicates Delphi's
+declaring-class binding; derived shadows can no longer capture the property. Verified: harness
+`ChangeDirectory("/config/testdir")` now lists 3 entries; ctest green. NEXT: remote upload/download.

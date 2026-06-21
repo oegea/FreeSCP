@@ -34,11 +34,25 @@ Expected harness output:
 [harness] Done.
 ```
 
-## >>> THE #1 NEXT TASK: fix the remote-directory navigation crash <<<
+## >>> THE #1 NEXT TASK: remote upload/download (F5) <<<
+
+Remote directory navigation now WORKS (the nav crash below is FIXED — see STATUS.md
+"Remote directory navigation WORKS"). Next: wire `enginebridge` copy to/from the remote,
+mirroring the local `copyFile` path, so F5 in the GUI transfers files. Then the rest of the
+file ops (mkdir/delete/rename/properties) via TTerminal.
+
+## (DONE) the remote-directory navigation crash — FIXED
 
 In the GUI, **Connect works and lists the home dir, but double-clicking a remote directory
 crashes** (segfault). Same crash reproducible by un-simplifying the harness (calling
 `Terminal->ChangeDirectory(L"/somedir")`).
+
+**FIXED** (rtlcompat property binding). The diagnosis below ("`this=NULL`") was wrong: it was a
+stack overflow from infinite recursion. `TRemoteDirectoryChangesCache` redeclares non-virtual
+`GetValue`/`SetValue` and uses the inherited `Values[]` property internally; clang
+`__declspec(property)` resolved the accessor in the derived scope -> self-recursion. Bound
+`Names[]`/`Values[]` to non-shadowable forwarders (`DoGetName`/`DoGetValue`/`DoSetValue`) in
+TStrings (native/rtlcompat/include/Classes.hpp). See STATUS.md.
 
 **Known cause** (already diagnosed via lldb earlier): `TTerminal::ChangeDirectory` →
 `TRemoteDirectoryChangesCache::GetValue(this=NULL)` — `FDirectoryChangesCache` is NULL.

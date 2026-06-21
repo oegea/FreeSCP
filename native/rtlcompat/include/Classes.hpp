@@ -125,8 +125,16 @@ public:
   UnicodeString __fastcall GetValue(const UnicodeString & Name);
   void __fastcall SetValue(const UnicodeString & Name, const UnicodeString & Value);
   UnicodeString __fastcall GetValueFromIndex(int Index);
-  __declspec(property(get=GetName)) UnicodeString Names[];
-  __declspec(property(get=GetValue, put=SetValue)) UnicodeString Values[];
+  // Bind the Names[]/Values[] properties to non-shadowable accessor names. In Delphi a
+  // property binds statically to the accessor of its *declaring* class; a derived class
+  // redeclaring GetValue/SetValue (e.g. TRemoteDirectoryChangesCache) does NOT capture the
+  // property. With __declspec(property) the bare accessor name would instead resolve in the
+  // derived scope and recurse infinitely. Forwarders keep the engine semantics intact.
+  UnicodeString __fastcall DoGetName(int Index) { return GetName(Index); }
+  UnicodeString __fastcall DoGetValue(const UnicodeString & Name) { return GetValue(Name); }
+  void __fastcall DoSetValue(const UnicodeString & Name, const UnicodeString & Value) { SetValue(Name, Value); }
+  __declspec(property(get=DoGetName)) UnicodeString Names[];
+  __declspec(property(get=DoGetValue, put=DoSetValue)) UnicodeString Values[];
   __declspec(property(get=GetValueFromIndex)) UnicodeString ValueFromIndex[];
 
   wchar_t Delimiter = L',';
