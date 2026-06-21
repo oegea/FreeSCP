@@ -409,6 +409,8 @@ SLOT_RULES = [
     _make_slot_rule('DoAnyCommand', 1, bare_ok=False),
     _make_slot_rule('DoAdd', 2),                              # DoAdd(Type, Line, DoAddToSelf)
     _make_slot_rule('DoAddStartupInfo', 0, require_comma=True),  # (Entry, Conf, bool) not (Data)
+    _make_slot_rule('InitNeonTls', 1),   # (Session, TNeonTlsInit METHOD, VerifyCb, ...) slot 1 (WebDAV/Http)
+    _make_slot_rule('SetNeonTlsInit', 1),# (Session, TNeonTlsInit METHOD, Terminal)     slot 1
 ]
 
 # 4d) 3-arg <-> 4-arg process-file event arity casts (std::function won't convert; the bridge

@@ -80,12 +80,10 @@ RawByteString EncryptPassword(UnicodeString Password, UnicodeString /*Key*/, Int
 UnicodeString DecryptPassword(RawByteString Password, UnicodeString /*Key*/, Integer /*Algorithm*/)
 { return UTF8ToString(Password); }
 
-//--- NeonIntf.h: TLS certificate verification (FTPS/WebDAV) — not exercised by SFTP ---
-UnicodeString __fastcall CertificateSummary(const TNeonCertificateData &, const UnicodeString &)
-{ return UnicodeString(); }
-UnicodeString __fastcall CertificateVerificationMessage(const TNeonCertificateData &)
-{ return UnicodeString(); }
-bool NeonWindowsValidateCertificateWithMessage(TNeonCertificateData &, UnicodeString &)
+//--- NeonIntf.h: CertificateSummary/CertificateVerificationMessage/NeonWindowsValidateCertificate-
+//    WithMessage are now provided by the real NeonIntf.cpp (Phase 4 winscpcore_neon group).
+// Security.h: Windows cert-store validation (last-resort path); n/a on macOS — OpenSSL verifies.
+bool WindowsValidateCertificate(const unsigned char *, size_t, UnicodeString &)
 { return false; }
 
 //--- S3FileSystem.h: S3 env helpers (Phase 4) ---

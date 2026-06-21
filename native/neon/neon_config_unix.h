@@ -117,7 +117,8 @@
 /* #undef HAVE_GNUTLS_X509_DN_GET_RDN_AVA */
 
 /* Define if GSSAPI support is enabled */
-#define HAVE_GSSAPI 1
+/* Disabled for the native port (matches the engine's NO_GSSAPI stance; avoids a Kerberos dep). */
+/* #undef HAVE_GSSAPI */
 
 /* Define to 1 if you have the <gssapi/gssapi_generic.h> header file. */
 #define HAVE_GSSAPI_GSSAPI_GENERIC_H 1

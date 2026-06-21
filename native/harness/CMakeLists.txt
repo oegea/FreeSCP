@@ -31,4 +31,5 @@ target_link_options(winscp-harness PRIVATE
   -Wl,-force_load,$<TARGET_FILE:puttycrypto_vs>)
 target_link_libraries(winscp-harness PRIVATE
   winscpcore winscp_harness puttycore puttyplatform puttycrypto_vs rtlcompat
+  neon expat                              # Phase 4: WebDAV (NeonIntf/Http) deps, on-demand
   OpenSSL::SSL OpenSSL::Crypto)

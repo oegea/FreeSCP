@@ -436,3 +436,23 @@ green. NEXT Phase 4 steps: (1) expat as a CMake target (neon's XML dep, needed a
 (2) fix the ~15 WebDAV/Http/NeonIntf compile gaps (inventory above) + add a winscpcore_neon CMake
 group; (3) link (libneon + expat + OpenSSL) and un-guard Terminal.cpp Open() WebDAV branch;
 (4) runtime-debug against a WebDAV test server. Then S3 (libs3 + System.JSON shim) and FTP last.
+
+### Phase 4 progress — NeonIntf + Http compile AND link into the engine
+2 of the 4 WebDAV/S3 TUs are now in the build (winscpcore_neon OBJECT group, folded into
+libwinscpcore): **NeonIntf.cpp, Http.cpp**. Both compile and the harness/qt exes link them with
+libneon + libexpat. Fixes this round:
+- rtlcompat: `AnsiStringBase::vprintf(const char*, va_list)` (NeonIntf's neon debug forwarder).
+- genprops: slot rules for `InitNeonTls`/`SetNeonTlsInit` (TNeonTlsInit closure in arg slot 1).
+- link: neon was pulling GSSAPI -> set `/* #undef HAVE_GSSAPI */` in native/neon/neon_config_unix.h
+  (matches the engine's NO_GSSAPI). Added `neon expat` to the harness + qt link lists (on-demand).
+  NeonIntf.cpp now provides CertificateSummary/CertificateVerificationMessage/NeonWindowsValidate-
+  CertificateWithMessage, so those interface_stub.cpp stubs were removed (were duplicates); added a
+  `WindowsValidateCertificate` stub (Security.cpp not compiled). Full build + ctest green; SFTP
+  regression clean.
+Remaining for the WebDAV/S3 group (re-enable in CORE_NEON_NAMES): **WebDAVFileSystem.cpp** ~6 gaps —
+UTF-32 literal `U"\U0001F512"` + UnicodeString (needs a char32_t ctor/operator+), genprops wrongly
+wrapping the `CalculateFilesChecksum` DEFINITION (slot rule matched a method def, not a call — needs
+a def-guard), neon `off64_t` in ne_defs.h (NE_LFS path; define off64_t or force the off_t branch),
+`_close`/`O_BINARY`/`FILE_BEGIN` (rtlcompat winapi stubs), a `FormatDateTime(fmt, dt, FormatSettings)`
+overload, and a const-qualifier assign (Uri.path). **S3FileSystem.cpp** also needs a System.JSON shim.
+Then link (libs3 for S3) + un-guard Terminal.cpp Open() + runtime-debug vs a WebDAV server.

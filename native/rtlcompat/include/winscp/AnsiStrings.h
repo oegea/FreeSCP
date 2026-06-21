@@ -8,6 +8,8 @@
 
 #include "winscp/rtldefs.h"
 #include <string>
+#include <cstdarg>
+#include <cstdio>
 
 class UnicodeString;  // for cross-conversion ctors (defined in src/StringConv.cpp)
 
@@ -51,6 +53,18 @@ public:
   AnsiStringBase operator+(const AnsiStringBase & o) const { AnsiStringBase r(*this); r.FData += o.FData; return r; }
   bool operator==(const AnsiStringBase & o) const { return FData == o.FData; }
   bool operator!=(const AnsiStringBase & o) const { return FData != o.FData; }
+
+  // C++Builder AnsiString/UTF8String::vprintf — printf-style format into *this (replaces
+  // contents). Used by NeonIntf's neon debug/log forwarder.
+  int vprintf(const char * Format, va_list Args)
+  {
+    va_list a2; va_copy(a2, Args);
+    int n = ::vsnprintf(nullptr, 0, Format, a2); va_end(a2);
+    if (n < 0) { FData.clear(); return n; }
+    FData.resize(static_cast<size_t>(n));
+    if (n > 0) ::vsnprintf(&FData[0], static_cast<size_t>(n) + 1, Format, Args);
+    return n;
+  }
 
 protected:
   std::string FData;

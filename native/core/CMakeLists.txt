@@ -116,6 +116,38 @@ target_include_directories(winscpcore_ssh PRIVATE
   ${CMAKE_SOURCE_DIR}/../source/putty)
 target_sources(winscpcore PRIVATE $<TARGET_OBJECTS:winscpcore_ssh>)
 
+# --- step 4 (Phase 4): WebDAV/S3 engine objects (include neon/expat/libs3) ---
+set(CORE_NEON_NAMES
+  NeonIntf.cpp
+  Http.cpp
+  # WebDAVFileSystem.cpp  # Phase 4 next: ~6 compile gaps (UTF-32 literal, genprops
+  # CalculateFilesChecksum-definition mangling, off64_t, _close/O_BINARY/FILE_BEGIN,
+  # FormatDateTime overload, const-qualifier) — inventory in STATUS.md.
+  # S3FileSystem.cpp     # needs System.JSON shim (see STATUS.md)
+)
+set(CORE_NEON_GEN_SOURCES "")
+foreach(name ${CORE_NEON_NAMES})
+  add_custom_command(
+    OUTPUT ${GEN_DIR}/${name}
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/../tools/genprops.py ${CORE_DIR}/${name} ${GEN_DIR}/${name}
+    DEPENDS ${CORE_DIR}/${name} ${CMAKE_CURRENT_SOURCE_DIR}/../tools/genprops.py
+    COMMENT "genprops ${name}")
+  list(APPEND CORE_NEON_GEN_SOURCES ${GEN_DIR}/${name})
+endforeach()
+
+add_library(winscpcore_neon OBJECT ${CORE_NEON_GEN_SOURCES})
+add_dependencies(winscpcore_neon winscpcore_genheaders)
+target_link_libraries(winscpcore_neon PUBLIC winscpcore_flags)
+target_compile_definitions(winscpcore_neon PRIVATE WINSCP NO_GSSAPI)
+target_include_directories(winscpcore_neon PRIVATE
+  ${CMAKE_SOURCE_DIR}/neon            # neon_config_unix.h (sibling config.h pulls it on unix)
+  ${LIBS_DIR}/neon/src
+  ${LIBS_DIR}/expat/lib
+  ${LIBS_DIR}/libs3/inc
+  ${CMAKE_SOURCE_DIR}/putty/include   # NeonIntf may reach putty types via Common chain
+  ${CMAKE_SOURCE_DIR}/../source/putty)
+target_sources(winscpcore PRIVATE $<TARGET_OBJECTS:winscpcore_neon>)
+
 # --- header-parse regression guard: each listed header must compile standalone ---
 # (proves the RTL surface + __property codegen keep covering them as rtlcompat grows)
 # Guard = every core header EXCEPT those that still need the putty backend (Phase 3:

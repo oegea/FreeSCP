@@ -37,4 +37,5 @@ target_link_options(winscp-qt PRIVATE
 target_link_libraries(winscp-qt PRIVATE
   Qt6::Widgets enginebridge
   winscpcore winscp_harness puttycore puttyplatform puttycrypto_vs rtlcompat
+  neon expat                              # Phase 4: WebDAV (NeonIntf/Http) deps, on-demand
   OpenSSL::SSL OpenSSL::Crypto)
