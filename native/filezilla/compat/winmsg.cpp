@@ -149,7 +149,8 @@ HANDLE CreateThread(void *, size_t, LPTHREAD_START_ROUTINE fn, void * param, DWO
 // (WinThreads/SysExtra). FileZilla's CreateThread returns a detached std::thread handle that those
 // rtlcompat fns don't recognize (Lookup fails -> no-op), which is fine: our threads run immediately.
 BOOL  PostThreadMessage(DWORD, UINT msg, WPARAM w, LPARAM l)
-{ std::lock_guard<std::mutex> lk(g_mtx); postLocked(nullptr, msg, w, l); return TRUE; }  // thread msgs: hwnd=NULL
+{ if (getenv("FZ_TRACE")) fprintf(stderr, "[fz] PostThreadMessage msg=%u wParam=%lu\n", msg, (unsigned long)w);
+  std::lock_guard<std::mutex> lk(g_mtx); postLocked(nullptr, msg, w, l); return TRUE; }  // thread msgs: hwnd=NULL
 UINT  RegisterWindowMessage(const wchar_t *)
 { static std::atomic<UINT> next{0xC000}; return next++; }
 

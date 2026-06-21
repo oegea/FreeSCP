@@ -4694,7 +4694,14 @@ void __fastcall TFTPFileSystem::PreserveDownloadFileTime(HANDLE Handle, void * U
 {
   TFileTransferData * Data = static_cast<TFileTransferData *>(UserData);
   DebugAssert(Data->CopyParam->OnTransferOut == NULL);
+#ifdef _WIN32
   FTerminal->UpdateTargetTime(Handle, Data->Modification, mfFull, dstmUnix);
+#else
+  // WINSCP-NATIVE-PORT: FileZilla's compat CFile passes a FILE*-based handle here, which is not the
+  // fd-packed HANDLE the platform UpdateTargetTime/SetFileTime expects; skip (timestamp-preserve on
+  // download is best-effort). Without this guard the worker faulted and the transfer never completed.
+  DebugUsedParam(Handle);
+#endif
 }
 //---------------------------------------------------------------------------
 bool __fastcall TFTPFileSystem::GetFileModificationTimeInUtc(const wchar_t * FileName, struct tm & Time)
