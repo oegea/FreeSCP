@@ -23,6 +23,11 @@
 #include <QToolButton>
 #include <QAction>
 #include <QKeyEvent>
+#include <QMouseEvent>
+#include <QDrag>
+#include <QMimeData>
+#include <QDragEnterEvent>
+#include <QDropEvent>
 #include <QMessageBox>
 #include <QInputDialog>
 #include <QComboBox>
@@ -300,6 +305,8 @@ public:
   std::function<void(const QString &)> onEnterDir;  // user entered a subdir (for sync browsing)
   std::function<void()> onLeaveDir;                 // user went up (for sync browsing)
   std::function<void()> onSwitchPanel;              // Tab pressed -> focus the other panel
+  std::function<void(FilePanel *, const QStringList &)> onDropFiles;  // files dropped from another panel
+  static FilePanel * s_dragSource;                  // panel a drag originated from
 
   // Mirror operations (used by synchronized browsing; navigate directly, no callbacks -> no loop).
   void enterSubdir(const QString & name)
@@ -349,6 +356,8 @@ public:
     FView->verticalHeader()->setVisible(false);
     FView->verticalHeader()->setDefaultSectionSize(20);
     FView->installEventFilter(this);
+    FView->viewport()->installEventFilter(this);     // drag start + drop target
+    FView->viewport()->setAcceptDrops(true);
 
     FStatus = new QLabel;
     FStatus->setStyleSheet("padding:2px 6px; background:palette(window); border-top:1px solid palette(mid);");
@@ -511,7 +520,7 @@ public:
   void goUp() { navigate(u8(engine::parentDir(s8(FPath)))); if (onLeaveDir) onLeaveDir(); }
 
 protected:
-  bool eventFilter(QObject *, QEvent * ev) override
+  bool eventFilter(QObject * obj, QEvent * ev) override
   {
     if (ev->type() == QEvent::FocusIn && onActivated) onActivated();
     if (ev->type() == QEvent::KeyPress)
@@ -521,6 +530,39 @@ protected:
       if (ke->key() == Qt::Key_Tab) { if (onSwitchPanel) onSwitchPanel(); return true; }
       if (ke->key() == Qt::Key_Return || ke->key() == Qt::Key_Enter)
       { activate(FView->currentIndex().row()); return true; }
+    }
+    // --- drag & drop between panels ---
+    if (obj == FView->viewport())
+    {
+      static const char * kFmt = "application/x-winscp-files";
+      if (ev->type() == QEvent::MouseButtonPress)
+      { auto * me = static_cast<QMouseEvent *>(ev); if (me->button() == Qt::LeftButton) FDragStart = me->pos(); }
+      else if (ev->type() == QEvent::MouseMove)
+      {
+        auto * me = static_cast<QMouseEvent *>(ev);
+        if ((me->buttons() & Qt::LeftButton) &&
+            (me->pos() - FDragStart).manhattanLength() >= QApplication::startDragDistance() &&
+            !selectedItems().isEmpty())
+        {
+          s_dragSource = this;
+          auto * mime = new QMimeData; mime->setData(kFmt, "1");
+          auto * drag = new QDrag(this); drag->setMimeData(mime);
+          drag->exec(Qt::CopyAction);
+          s_dragSource = nullptr;
+          return true;
+        }
+      }
+      else if (ev->type() == QEvent::DragEnter || ev->type() == QEvent::DragMove)
+      {
+        auto * de = static_cast<QDragMoveEvent *>(ev);
+        if (de->mimeData()->hasFormat(kFmt) && s_dragSource && s_dragSource != this) { de->acceptProposedAction(); return true; }
+      }
+      else if (ev->type() == QEvent::Drop)
+      {
+        auto * de = static_cast<QDropEvent *>(ev);
+        if (de->mimeData()->hasFormat(kFmt) && s_dragSource && s_dragSource != this)
+        { FilePanel * src = s_dragSource; if (onDropFiles) onDropFiles(src, src->selectedItems()); de->acceptProposedAction(); return true; }
+      }
     }
     return false;
   }
@@ -546,10 +588,12 @@ private:
   bool FNav = false;
   int FDirs = 0, FFiles = 0;
   int FSortCol = 0; bool FSortAsc = true;
+  QPoint FDragStart;
   QStringList FHistory;
   int FHistIdx = -1;
   std::vector<engine::DirEntry> FEntries;
 };
+FilePanel * FilePanel::s_dragSource = nullptr;
 
 //===========================================================================
 
@@ -785,6 +829,10 @@ int main(int argc, char ** argv)
       }, Qt::QueuedConnection);
     }).detach();
   };
+
+  // Drag files from one panel, drop on the other -> transfer (copy).
+  left->onDropFiles  = [&](FilePanel * src, const QStringList & f) { startTransfer(src, left, f, false); };
+  right->onDropFiles = [&](FilePanel * src, const QStringList & f) { startTransfer(src, right, f, false); };
 
   //--- operations ---------------------------------------------------------
   auto doConnect = [&] {
