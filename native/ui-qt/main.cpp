@@ -281,6 +281,16 @@ public:
   std::function<void()> onStatusChanged;
   std::function<void()> onHome;
   std::function<void()> onFileOpen;   // file (not dir) activated
+  std::function<void(const QString &)> onEnterDir;  // user entered a subdir (for sync browsing)
+  std::function<void()> onLeaveDir;                 // user went up (for sync browsing)
+
+  // Mirror operations (used by synchronized browsing; navigate directly, no callbacks -> no loop).
+  void enterSubdir(const QString & name)
+  {
+    for (const auto & e : FEntries)
+      if (e.isDir && !e.isParent && u8(e.name) == name) { navigate(u8(engine::joinPath(s8(FPath), e.name))); return; }
+  }
+  void upOne() { navigate(u8(engine::parentDir(s8(FPath)))); }
 
   explicit FilePanel(QWidget * parent = nullptr) : QWidget(parent)
   {
@@ -432,7 +442,7 @@ public:
 
   void setStatusLine(const QString & s) { FStatus->setText(s); }
   void refresh() { navigate(FPath); }
-  void goUp() { navigate(u8(engine::parentDir(s8(FPath)))); }
+  void goUp() { navigate(u8(engine::parentDir(s8(FPath)))); if (onLeaveDir) onLeaveDir(); }
 
 protected:
   bool eventFilter(QObject *, QEvent * ev) override
@@ -454,8 +464,8 @@ private:
     if (row < 0 || row >= static_cast<int>(FEntries.size())) return;
     const auto & e = FEntries[static_cast<size_t>(row)];
     if (!e.isDir) { if (onFileOpen) onFileOpen(); return; }
-    if (e.isParent) goUp();
-    else navigate(u8(engine::joinPath(s8(FPath), e.name)));
+    if (e.isParent) { goUp(); }
+    else { QString nm = u8(e.name); navigate(u8(engine::joinPath(s8(FPath), e.name))); if (onEnterDir) onEnterDir(nm); }
   }
 
   QLabel * FHeader;
@@ -492,6 +502,8 @@ int main(int argc, char ** argv)
   auto * actHome = tb->addAction("\xF0\x9F\x8F\xA0 Home");
   auto * actRefresh = tb->addAction("\xE2\x9F\xB3 Refresh");
   auto * actDisconnect = tb->addAction("\xE2\x9C\x96 Disconnect"); actDisconnect->setEnabled(false);
+  tb->addSeparator();
+  auto * actSync = tb->addAction("\xE2\x87\x84 Sync browsing"); actSync->setCheckable(true);
 
   // Panels.
   auto * splitter = new QSplitter(Qt::Horizontal);
@@ -532,6 +544,11 @@ int main(int argc, char ** argv)
   static QString remoteHome = "/";
   left->onHome  = [&] { left->navigate(u8(engine::homeDir())); };
   right->onHome = [&] { right->navigate(right->isRemote() ? remoteHome : u8(engine::homeDir())); };
+  // Synchronized browsing: entering/leaving a dir in one panel mirrors to the other.
+  left->onEnterDir  = [&](const QString & n) { if (actSync->isChecked()) right->enterSubdir(n); };
+  left->onLeaveDir  = [&] { if (actSync->isChecked()) right->upOne(); };
+  right->onEnterDir = [&](const QString & n) { if (actSync->isChecked()) left->enterSubdir(n); };
+  right->onLeaveDir = [&] { if (actSync->isChecked()) left->upOne(); };
 
   // Session log dock (see what the engine does — invaluable for testing).
   auto * logDock = new QDockWidget("Session log", &window);
