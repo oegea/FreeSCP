@@ -41,6 +41,7 @@
 #include <QCheckBox>
 #include <QMenu>
 #include <QTimer>
+#include <QSettings>
 #include <functional>
 
 #include "enginebridge.h"
@@ -72,15 +73,28 @@ static LoginParams showLoginDialog(QWidget * parent)
   auto * top = new QHBoxLayout;
   outer->addLayout(top, 1);
 
-  // Left: sites tree (New Site).
+  // Left: sites tree — "New Site" plus saved sessions (persisted in QSettings, the WinSCP
+  // Site Manager experience: pick a saved server instead of retyping).
   auto * sites = new QTreeWidget;
   sites->setHeaderLabel("");
-  sites->setMaximumWidth(200);
-  sites->setMinimumWidth(170);
+  sites->setMaximumWidth(220);
+  sites->setMinimumWidth(180);
   auto * newSite = new QTreeWidgetItem(sites, QStringList("\xF0\x9F\x96\xA5  New Site"));
-  sites->addTopLevelItem(newSite);
-  sites->setCurrentItem(newSite);
   top->addWidget(sites);
+
+  QSettings settings("WinSCP-native-port", "WinSCP");
+  auto reloadSites = [&] {
+    while (sites->topLevelItemCount() > 1) delete sites->takeTopLevelItem(1);
+    settings.beginGroup("sites");
+    for (const QString & name : settings.childGroups())
+    {
+      auto * it = new QTreeWidgetItem(sites, QStringList("\xF0\x9F\x8C\x90  " + name));
+      it->setData(0, Qt::UserRole, name);
+    }
+    settings.endGroup();
+  };
+  reloadSites();
+  sites->setCurrentItem(newSite);
 
   // Right: Session group.
   auto * session = new QGroupBox("Session");
@@ -114,10 +128,52 @@ static LoginParams showLoginDialog(QWidget * parent)
     // FTP not supported yet — disable Login is handled below via the protocol check.
   });
 
-  // Bottom buttons: Tools / Manage ... Login / Close (WinSCP layout).
+  // Load a saved site into the form.
+  auto loadSite = [&](const QString & name) {
+    settings.beginGroup("sites/" + name);
+    proto->setCurrentIndex(settings.value("protocol", 0).toInt());
+    host->setText(settings.value("host").toString());
+    port->setValue(settings.value("port", 22).toInt());
+    user->setText(settings.value("user").toString());
+    pass->setText(settings.value("pass").toString());
+    settings.endGroup();
+  };
+  QObject::connect(sites, &QTreeWidget::currentItemChanged, [&](QTreeWidgetItem * cur, QTreeWidgetItem *) {
+    if (cur) { QString n = cur->data(0, Qt::UserRole).toString(); if (!n.isEmpty()) loadSite(n); }
+  });
+  QObject::connect(sites, &QTreeWidget::itemDoubleClicked, [&](QTreeWidgetItem * it, int) {
+    if (it && !it->data(0, Qt::UserRole).toString().isEmpty()) dlg.accept();
+  });
+
+  // Bottom buttons: Tools / Save / Delete ... Login / Close (WinSCP layout).
   auto * btnRow = new QHBoxLayout;
   btnRow->addWidget(new QPushButton("Tools"));
-  btnRow->addWidget(new QPushButton("Manage"));
+  auto * saveBtn = new QPushButton("Save");
+  auto * delBtn = new QPushButton("Delete");
+  btnRow->addWidget(saveBtn);
+  btnRow->addWidget(delBtn);
+  QObject::connect(saveBtn, &QPushButton::clicked, [&]{
+    bool okIn = false;
+    QString def = user->text() + "@" + host->text();
+    QString name = QInputDialog::getText(&dlg, "Save session", "Site name:", QLineEdit::Normal, def, &okIn);
+    if (!okIn || name.isEmpty()) return;
+    settings.beginGroup("sites/" + name);
+    settings.setValue("protocol", proto->currentIndex());
+    settings.setValue("host", host->text());
+    settings.setValue("port", port->value());
+    settings.setValue("user", user->text());
+    settings.setValue("pass", pass->text());   // local test tool; stores password
+    settings.endGroup();
+    reloadSites();
+  });
+  QObject::connect(delBtn, &QPushButton::clicked, [&]{
+    auto * it = sites->currentItem();
+    if (!it) return;
+    QString n = it->data(0, Qt::UserRole).toString();
+    if (n.isEmpty()) return;
+    settings.remove("sites/" + n);
+    reloadSites();
+  });
   btnRow->addStretch(1);
   auto * loginBtn = new QPushButton("Login"); loginBtn->setDefault(true);
   auto * closeBtn = new QPushButton("Close");
