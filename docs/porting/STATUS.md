@@ -589,3 +589,17 @@ panel (Upload/Download, Rename, Delete, Create Directory, Properties); the **men
 Verified by offscreen renders (Login dialog + Commander both read as WinSCP). All four protocols are
 now testable end-to-end through the GUI. NEXT GUI: real per-file transfer progress/queue pane,
 drive/bookmark bar, synchronized-browsing, faithful site manager (save sessions).
+
+## Phase 7 GUI — usable WinSCP-faithful file manager (testable end-to-end)
+The Qt GUI is now a working WinSCP Commander, all four protocols exercisable by hand:
+- Login dialog + **Site Manager** (save/load/delete sessions, QSettings).
+- Dual panes, each with a WinSCP nav toolbar (**Back/Forward/Up/Home/Refresh** + path) + history,
+  Name/Size/Changed/Rights/Owner columns (Rights/Owner real for remote), per-panel status.
+- Function-key bar fully wired: **F2 Rename, F5 Copy, F6 Move, F7 Create Directory, F8 Delete,
+  F9 Properties, F10 Quit** (+ shortcuts, + right-click context menu, + menu bar).
+- WinSCP-style **Properties** dialog (rwx grid) and **transfer progress** dialog (engine OnProgress).
+- Session log dock (Ctrl+L), Disconnect, About.
+Verified by offscreen renders incl. a live SFTP connection showing real /config listings with
+rights/owner. Dev affordances: WINSCP_SHOT (render) + WINSCP_AUTOCONNECT (connect-then-render).
+NEXT GUI toward full fidelity: background transfer **queue pane**, synchronized browsing, F3 View /
+F4 Edit, toolbar icons, the remaining WinSCP dialogs (preferences, copy-options, etc).
