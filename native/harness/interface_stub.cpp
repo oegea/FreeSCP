@@ -86,7 +86,5 @@ UnicodeString DecryptPassword(RawByteString Password, UnicodeString /*Key*/, Int
 bool WindowsValidateCertificate(const unsigned char *, size_t, UnicodeString &)
 { return false; }
 
-//--- S3FileSystem.h: S3 env helpers (Phase 4) ---
-UnicodeString __fastcall S3LibDefaultHostName() { return L"s3.amazonaws.com"; }
-UnicodeString S3EnvUserName(const UnicodeString &, UnicodeString * Source, bool)
-{ if (Source != nullptr) *Source = UnicodeString(); return UnicodeString(); }
+//--- S3 env helpers (S3LibDefaultHostName/S3EnvUserName/...) are now provided by the real
+//    S3FileSystem.cpp (Phase 4 winscpcore_neon group). ---

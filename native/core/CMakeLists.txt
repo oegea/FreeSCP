@@ -121,8 +121,7 @@ set(CORE_NEON_NAMES
   NeonIntf.cpp
   Http.cpp
   WebDAVFileSystem.cpp
-  # S3FileSystem.cpp  # COMPILES (System.JSON shim + XML/string adds done); excluded from the link
-  # until libs3 is built natively (curl+libxml2) — it pulls S3_* symbols. Re-enable with libs3.
+  S3FileSystem.cpp
 )
 set(CORE_NEON_GEN_SOURCES "")
 foreach(name ${CORE_NEON_NAMES})

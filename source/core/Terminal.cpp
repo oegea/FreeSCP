@@ -1534,14 +1534,11 @@ void __fastcall TTerminal::Open()
             else if (SessionData->FSProtocol == fsS3)
             {
               FFSProtocol = cfsS3;
-#ifdef _WIN32  // WINSCP-NATIVE-PORT: see above.
+              // WINSCP-NATIVE-PORT: S3 backend (libs3, neon-based) now builds natively (Phase 4).
               FFileSystem = new TS3FileSystem(this);
               FFileSystem->Open();
               Log->AddSeparator();
               LogEvent(L"Using S3 protocol.");
-#else
-              throw Exception(L"S3 protocol is not supported on this build yet.");
-#endif
             }
             else
             {

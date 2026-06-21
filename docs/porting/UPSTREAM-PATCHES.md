@@ -78,3 +78,12 @@ threw "WebDAV protocol is not supported on this build yet") is removed now that 
 builds natively — it unconditionally does `new TWebDAVFileSystem(this); Open()`. The FTP and S3
 branches remain guarded (those backends are not built yet). The Windows build is unaffected (it
 always ran this code). Marked `// WINSCP-NATIVE-PORT`.
+
+## Phase 4 — libs3 + Terminal.cpp S3 (guarded)
+
+- `libs/libs3/src/request.c`: (1) the `SYSTEMTIME`/`GetSystemTime` request-date block (a WinSCP
+  "PuTTY ltime" replacement) is `#ifdef _WIN32`-guarded; the `#else` uses `gmtime_r` (UTC). (2)
+  `neon_read_func` return type changed `int` -> `ssize_t` to match neon's `ne_provide_body` typedef
+  (C++ rejects the mismatch at `ne_set_request_body_provider`; harmless on Windows). Built as C++.
+- `source/core/Terminal.cpp`: S3 branch of TTerminal::Open() un-guarded (TS3FileSystem now builds
+  natively via libs3). FTP branch remains guarded.

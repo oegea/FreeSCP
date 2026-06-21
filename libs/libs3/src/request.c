@@ -202,7 +202,9 @@ static int neon_header_func(void * userdata, ne_request * NeonRequest, const ne_
 
 
 // WINSCP (neon)
-static int neon_read_func(void * userdata, char * buf, size_t len)
+// WINSCP-NATIVE-PORT: return ssize_t to match neon's ne_provide_body typedef (C++ rejects the
+// int-vs-ssize_t return-type mismatch at ne_set_request_body_provider; harmless on Windows).
+static ssize_t neon_read_func(void * userdata, char * buf, size_t len)
 {
     Request *request = (Request *) userdata;
 
@@ -1564,10 +1566,11 @@ static S3Status setup_request(const RequestParams *params,
 
     // WINSCP (inspired by PuTTY ltime())
     // Original time()/gmtime() combination did not work correctly in winter time
-    SYSTEMTIME st;
-    GetSystemTime(&st);
     struct tm gmt;
     memset(&gmt, 0, sizeof(gmt));
+#ifdef _WIN32
+    SYSTEMTIME st;
+    GetSystemTime(&st);
     gmt.tm_sec=st.wSecond;
     gmt.tm_min=st.wMinute;
     gmt.tm_hour=st.wHour;
@@ -1577,6 +1580,11 @@ static S3Status setup_request(const RequestParams *params,
     gmt.tm_wday=st.wDayOfWeek;
     gmt.tm_yday=-1; /* GetSystemTime doesn't tell us */
     gmt.tm_isdst=0; /* GetSystemTime doesn't tell us */
+#else
+    // WINSCP-NATIVE-PORT: no SYSTEMTIME on macOS/Linux; gmtime_r gives UTC directly.
+    time_t now = time(NULL);
+    gmtime_r(&now, &gmt);
+#endif
     strftime(computed->requestDateISO8601, sizeof(computed->requestDateISO8601),
              "%Y%m%dT%H%M%SZ", &gmt);
 

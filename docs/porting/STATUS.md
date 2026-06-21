@@ -535,3 +535,20 @@ THEN: native/libs3/CMakeLists.txt (static libs3, links neon+expat+OpenSSL) like 
 to the engine link; re-enable S3FileSystem.cpp in CORE_NEON_NAMES; un-guard Terminal.cpp Open() S3
 branch; runtime-debug vs MinIO (`docker run -p 9000:9000 minio/minio server /data`). FTP (FileZilla)
 remains last + hardest.
+
+## S3 builds + links + CONNECTS — at the AWS SigV4 frontier (libs3 native)
+libs3 builds natively (native/libs3/CMakeLists.txt -> liblibs3.a, 404 KB; neon+expat-based, compiled
+as C++; 3 guarded request.c edits — UPSTREAM-PATCHES). S3FileSystem.cpp re-enabled in
+winscpcore_neon and LINKS into harness/qt (libs3+neon+expat); Terminal.cpp S3 Open() un-guarded;
+removed the now-duplicate S3 env stubs from interface_stub. Full build + ctest green; SFTP/SCP/WebDAV
+regression clean.
+RUNTIME FRONTIER: `WINSCP_S3=1 ./native/build/harness/winscp-harness 127.0.0.1 9100 minioadmin
+minioadmin123` (MinIO: `docker run -p 9100:9000 -e MINIO_ROOT_USER=minioadmin -e
+MINIO_ROOT_PASSWORD=minioadmin123 minio/minio server /data`, bucket seeded via mc) reaches the
+server and attempts a signed request, then fails: **"Access denied — There were headers present in
+the request which were not signed"** (AWS Signature V4). Next: debug the SigV4 header signing — a
+header is in the HTTP request but absent from SignedHeaders. Suspects: a neon-added default header
+(e.g. our ne adds something WinSCP's didn't), the request-date path, or path-style/region wiring.
+This is the S3 equivalent of the SFTP "userauth frontier" — characterized; needs a focused runtime
+session (use the MinIO server log + a temp trace of the headers libs3 signs vs sends).
+The S3 session uses s3usPath + region us-east-1 + ftpsNone (harness WINSCP_S3).

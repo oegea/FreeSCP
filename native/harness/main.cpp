@@ -61,6 +61,13 @@ int main(int argc, char ** argv)
       Data->FSProtocol = fsWebDAV;   // plain-HTTP WebDAV test server (no TLS)
       Data->Ftps = ftpsNone;
     }
+    else if (::getenv("WINSCP_S3") != nullptr)
+    {
+      Data->FSProtocol = fsS3;       // S3 (MinIO test server)
+      Data->Ftps = ftpsNone;         // plain HTTP
+      Data->S3UrlStyle = s3usPath;   // MinIO needs path-style addressing
+      Data->S3DefaultRegion = L"us-east-1";
+    }
     else
     {
       Data->FSProtocol = (::getenv("WINSCP_SCP") != nullptr) ? fsSCPonly : fsSFTPonly;
