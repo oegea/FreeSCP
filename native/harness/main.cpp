@@ -111,6 +111,31 @@ int main(int argc, char ** argv)
       out(FORMAT(L"[harness] SCP/SFTP DOWNLOAD ok=%d (rf=%d)", ((int)dok, (int)(rf!=NULL))));
     }
 
+    // Optional file-ops self-test (set WINSCP_OPS=1) — mkdir / rename / delete on the current
+    // protocol (SFTP, or SCP via WINSCP_SCP; SCP runs shell mkdir/mv/rm).
+    if (::getenv("WINSCP_OPS") != nullptr)
+    {
+      TRemoteProperties props;
+      Terminal->CreateDirectory(L"/config/optest", &props);
+      Terminal->ReadCurrentDirectory(); Terminal->ReadDirectory(false);
+      TRemoteFile * d = NULL;
+      for (int i = 0; i < Terminal->Files->Count; i++)
+        if (Terminal->Files->Files[i]->FileName == UnicodeString(L"optest")) d = Terminal->Files->Files[i];
+      out(FORMAT(L"[harness] OPS mkdir ok=%d", ((int)(d!=NULL))));
+      if (d) Terminal->RenameFile(d, L"optest2");
+      Terminal->ReadCurrentDirectory(); Terminal->ReadDirectory(false);
+      TRemoteFile * d2 = NULL;
+      for (int i = 0; i < Terminal->Files->Count; i++)
+        if (Terminal->Files->Files[i]->FileName == UnicodeString(L"optest2")) d2 = Terminal->Files->Files[i];
+      out(FORMAT(L"[harness] OPS rename ok=%d", ((int)(d2!=NULL))));
+      if (d2) Terminal->DeleteFile(d2->FullFileName, d2, NULL);
+      Terminal->ReadCurrentDirectory(); Terminal->ReadDirectory(false);
+      bool gone = true;
+      for (int i = 0; i < Terminal->Files->Count; i++)
+        if (Terminal->Files->Files[i]->FileName == UnicodeString(L"optest2")) gone = false;
+      out(FORMAT(L"[harness] OPS delete ok=%d", ((int)gone)));
+    }
+
     Terminal->Close();
     out(L"[harness] Done.");
     return 0;
