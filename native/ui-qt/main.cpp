@@ -719,8 +719,17 @@ int main(int argc, char ** argv)
   window.show();
 
   // Dev affordance: WINSCP_SHOT=path renders the main window to a PNG and quits (UI verification).
+  // WINSCP_AUTOCONNECT=host:port:user:pass:proto connects first (proto: sftp/scp/dav/s3).
   if (!qEnvironmentVariableIsEmpty("WINSCP_SHOT"))
     QMetaObject::invokeMethod(&window, [&]{
+      QString ac = qEnvironmentVariable("WINSCP_AUTOCONNECT");
+      if (!ac.isEmpty()) {
+        QStringList p = ac.split(':');
+        engine::Protocol pr = p[4]=="scp"?engine::Protocol::Scp : p[4]=="dav"?engine::Protocol::WebDav
+                            : p[4]=="s3"?engine::Protocol::S3 : engine::Protocol::Sftp;
+        auto r = engine::connectSftp(s8(p[0]), p[1].toInt(), s8(p[2]), s8(p[3]), pr);
+        if (r.ok) { right->setRemote(QString("%1@%2").arg(p[2]).arg(p[0])); right->navigate(u8(r.currentDir)); }
+      }
       window.grab().save(qEnvironmentVariable("WINSCP_SHOT"));
       app.quit();
     }, Qt::QueuedConnection);
