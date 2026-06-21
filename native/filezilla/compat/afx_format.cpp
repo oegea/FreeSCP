@@ -12,6 +12,20 @@
 static void appendNarrow(std::wstring & out, const char * s)
 { if (s) while (*s) out.push_back((wchar_t)(unsigned char)*s++); }
 
+int fz_vsntprintf(wchar_t * buf, size_t n, const wchar_t * fmt, va_list ap)
+{
+  CString tmp; tmp.FormatV(fmt, ap);
+  const wchar_t * s = (const wchar_t *)tmp;
+  size_t len = (size_t)tmp.GetLength();
+  if (buf && n > 0) { size_t c = len < n - 1 ? len : n - 1; for (size_t i = 0; i < c; ++i) buf[i] = s[i]; buf[c] = 0; }
+  return (int)len;
+}
+
+int fz_sntprintf(wchar_t * buf, size_t n, const wchar_t * fmt, ...)
+{
+  va_list ap; va_start(ap, fmt); int r = fz_vsntprintf(buf, n, fmt, ap); va_end(ap); return r;
+}
+
 void CString::FormatV(const wchar_t * fmt, va_list ap)
 {
   std::wstring out;

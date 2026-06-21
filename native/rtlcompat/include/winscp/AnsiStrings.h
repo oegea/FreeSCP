@@ -53,6 +53,10 @@ public:
   char * Unique() { return &FData[0]; }
   AnsiStringBase SubString(int start, int count) const { if (start<1){count+=start-1;start=1;} if (count<=0||start>Length()) return AnsiStringBase(); return AnsiStringBase(FData.substr(start-1,count)); }
   AnsiStringBase SubString(int start) const { return SubString(start, Length()-start+1); }
+  // Delphi Trim: strip leading/trailing chars <= ' ' (space + control). Returns a copy.
+  AnsiStringBase TrimRight() const { std::string r = FData; size_t i = r.size(); while (i > 0 && (unsigned char)r[i-1] <= ' ') --i; r.erase(i); return AnsiStringBase(r); }
+  AnsiStringBase TrimLeft()  const { std::string r = FData; size_t i = 0; while (i < r.size() && (unsigned char)r[i] <= ' ') ++i; r.erase(0, i); return AnsiStringBase(r); }
+  AnsiStringBase Trim() const { return TrimLeft().TrimRight(); }
   AnsiStringBase & operator=(const char * s) { FData = s ? s : ""; return *this; }
   AnsiStringBase & operator=(const wchar_t * s) { FData.clear(); if (s) while (*s) FData.push_back((char)(*s++)); return *this; }
   AnsiStringBase & operator+=(char c) { FData.push_back(c); return *this; }

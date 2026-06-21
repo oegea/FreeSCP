@@ -19,6 +19,8 @@
 #include <climits>
 #include <string>
 #include <atomic>
+#include <mutex>
+#include <cwctype>
 
 //=== Win32 scalar types ====================================================
 typedef unsigned char       BYTE;
@@ -79,6 +81,21 @@ typedef UINT                WedgeMsg;
 #define LOWORD(l)  ((WORD)((DWORD_PTR)(l) & 0xffff))
 #define HIWORD(l)  ((WORD)(((DWORD_PTR)(l) >> 16) & 0xffff))
 typedef std::uintptr_t DWORD_PTR;
+#define AFX_COMDAT
+#define AFX_DATADEF
+
+//=== CRITICAL_SECTION (recursive mutex) ====================================
+struct CRITICAL_SECTION { std::recursive_mutex m; };
+inline void InitializeCriticalSection(CRITICAL_SECTION *) {}
+inline void DeleteCriticalSection(CRITICAL_SECTION *) {}
+inline void EnterCriticalSection(CRITICAL_SECTION * c) { if (c) c->m.lock(); }
+inline void LeaveCriticalSection(CRITICAL_SECTION * c) { if (c) c->m.unlock(); }
+
+//=== _sntprintf (wide, 2-byte; impl in afx_format.cpp) =====================
+int fz_sntprintf(wchar_t * buf, size_t n, const wchar_t * fmt, ...);
+#define _sntprintf fz_sntprintf
+#define _vsntprintf(b, n, f, a) fz_vsntprintf(b, n, f, a)
+int fz_vsntprintf(wchar_t * buf, size_t n, const wchar_t * fmt, va_list ap);
 
 //=== Debug / assert macros (no-ops in the port) ============================
 #ifndef ASSERT
@@ -101,6 +118,60 @@ inline LONG InterlockedDecrement(LONG * p) { return --*reinterpret_cast<std::ato
 inline char * strlwr(char * s) { for (char * p = s; p && *p; ++p) *p = (char)tolower((unsigned char)*p); return s; }
 inline char * strupr(char * s) { for (char * p = s; p && *p; ++p) *p = (char)toupper((unsigned char)*p); return s; }
 
+//=== TCHAR char-class + conversions (MFC _t* names) ========================
+inline int _istalpha(wchar_t c) { return (c >= L'A' && c <= L'Z') || (c >= L'a' && c <= L'z'); }
+inline int _istdigit(wchar_t c) { return c >= L'0' && c <= L'9'; }
+inline int _istalnum(wchar_t c) { return _istalpha(c) || _istdigit(c); }
+inline int _istspace(wchar_t c) { return c == L' ' || c == L'\t' || c == L'\r' || c == L'\n'; }
+inline int _ttoi(const wchar_t * s) { int v = 0, sign = 1; if (!s) return 0; while (_istspace(*s)) ++s; if (*s == L'-') { sign = -1; ++s; } else if (*s == L'+') ++s; while (_istdigit(*s)) v = v * 10 + (*s++ - L'0'); return v * sign; }
+inline long long _ttoi64(const wchar_t * s) { long long v = 0, sign = 1; if (!s) return 0; while (_istspace(*s)) ++s; if (*s == L'-') { sign = -1; ++s; } else if (*s == L'+') ++s; while (_istdigit(*s)) v = v * 10 + (*s++ - L'0'); return v * sign; }
+inline int strnicmp(const char * a, const char * b, size_t n) { return strncasecmp(a, b, n); }
+#ifndef CP_UTF8
+  #define CP_UTF8 65001
+  #define CP_ACP  0
+#endif
+
+//=== MultiByteToWideChar / WideCharToMultiByte (UTF-8 <-> UTF-16) ==========
+// Minimal: codepage ignored except that UTF-8 is decoded/encoded; dst==NULL or dstLen==0 returns
+// the required length. srcLen==-1 means NUL-terminated (the returned/written count includes NUL).
+inline int MultiByteToWideChar(UINT, DWORD, const char * src, int srcLen, wchar_t * dst, int dstLen)
+{
+  std::wstring out; const unsigned char * p = (const unsigned char *)src;
+  int rem = srcLen; bool nul = (srcLen < 0);
+  while (nul ? (*p != 0) : (rem > 0))
+  {
+    unsigned cp = *p; int adv = 1;
+    if (cp < 0x80) {}
+    else if ((cp >> 5) == 0x6 && (!nul ? rem >= 2 : p[1])) { cp = ((cp & 0x1F) << 6) | (p[1] & 0x3F); adv = 2; }
+    else if ((cp >> 4) == 0xE) { cp = ((cp & 0x0F) << 12) | ((p[1] & 0x3F) << 6) | (p[2] & 0x3F); adv = 3; }
+    else if ((cp >> 3) == 0x1E) { cp = ((cp & 0x07) << 18) | ((p[1] & 0x3F) << 12) | ((p[2] & 0x3F) << 6) | (p[3] & 0x3F); adv = 4; }
+    if (cp >= 0x10000) { cp -= 0x10000; out.push_back((wchar_t)(0xD800 + (cp >> 10))); out.push_back((wchar_t)(0xDC00 + (cp & 0x3FF))); }
+    else out.push_back((wchar_t)cp);
+    p += adv; if (!nul) rem -= adv;
+  }
+  if (nul) out.push_back(L'\0');
+  int need = (int)out.size();
+  if (dst && dstLen > 0) { int c = need < dstLen ? need : dstLen; for (int i = 0; i < c; ++i) dst[i] = out[i]; return c; }
+  return need;
+}
+inline int WideCharToMultiByte(UINT, DWORD, const wchar_t * src, int srcLen, char * dst, int dstLen, const char *, BOOL *)
+{
+  std::string out; int rem = srcLen; bool nul = (srcLen < 0);
+  for (const wchar_t * w = src; nul ? (*w != 0) : (rem > 0); ++w, --rem)
+  {
+    unsigned cp = (unsigned short)*w;
+    if (cp >= 0xD800 && cp <= 0xDBFF) { unsigned lo = (unsigned short)w[1]; cp = 0x10000 + ((cp - 0xD800) << 10) + (lo - 0xDC00); ++w; if (!nul) --rem; }
+    if (cp < 0x80) out.push_back((char)cp);
+    else if (cp < 0x800) { out.push_back((char)(0xC0 | (cp >> 6))); out.push_back((char)(0x80 | (cp & 0x3F))); }
+    else if (cp < 0x10000) { out.push_back((char)(0xE0 | (cp >> 12))); out.push_back((char)(0x80 | ((cp >> 6) & 0x3F))); out.push_back((char)(0x80 | (cp & 0x3F))); }
+    else { out.push_back((char)(0xF0 | (cp >> 18))); out.push_back((char)(0x80 | ((cp >> 12) & 0x3F))); out.push_back((char)(0x80 | ((cp >> 6) & 0x3F))); out.push_back((char)(0x80 | (cp & 0x3F))); }
+  }
+  if (nul) out.push_back('\0');
+  int need = (int)out.size();
+  if (dst && dstLen > 0) { int c = need < dstLen ? need : dstLen; for (int i = 0; i < c; ++i) dst[i] = out[i]; return c; }
+  return need;
+}
+
 //=== CObject ===============================================================
 class CObject
 {
@@ -121,6 +192,7 @@ public:
   CString(const std::wstring & w) : s_(w) {}
   // narrow -> wide (Latin-1/ASCII); FileZilla passes char* literals in a few spots
   CString(const char * p) { if (p) while (*p) s_.push_back((wchar_t)(unsigned char)*p++); }
+  CString(const char * p, int n) { if (p && n > 0) for (int i = 0; i < n; ++i) s_.push_back((wchar_t)(unsigned char)p[i]); }
 
   CString & operator=(const CString & o) { s_ = o.s_; return *this; }
   CString & operator=(const wchar_t * p) { s_ = p ? p : L""; return *this; }
@@ -178,6 +250,9 @@ public:
   void TrimRight() { size_t i = s_.size(); while (i > 0 && iswsp(s_[i - 1])) --i; s_.erase(i); }
   void TrimLeft(wchar_t c)  { size_t i = 0; while (i < s_.size() && s_[i] == c) ++i; s_.erase(0, i); }
   void TrimRight(wchar_t c) { size_t i = s_.size(); while (i > 0 && s_[i - 1] == c) --i; s_.erase(i); }
+  // MFC set-trim: remove leading/trailing chars that appear in the target set.
+  void TrimLeft(const wchar_t * set)  { if (!set) return; std::wstring t = set; size_t i = 0; while (i < s_.size() && t.find(s_[i]) != std::wstring::npos) ++i; s_.erase(0, i); }
+  void TrimRight(const wchar_t * set) { if (!set) return; std::wstring t = set; size_t i = s_.size(); while (i > 0 && t.find(s_[i - 1]) != std::wstring::npos) --i; s_.erase(i); }
 
   int Replace(wchar_t from, wchar_t to) { int n = 0; for (auto & c : s_) if (c == from) { c = to; ++n; } return n; }
   int Replace(const wchar_t * from, const wchar_t * to) {

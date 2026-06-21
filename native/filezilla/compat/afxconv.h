@@ -36,6 +36,9 @@ inline const char * fz_w2a(const wchar_t * w)
 #define T2W(t)   (t)
 #define T2CW(t)  (t)
 #define W2T(w)   (w)
+#define W2CT(w)  (w)
 #define T2OLE(t) (t)
+#define CT2A(t)  fz_w2a(t)
+#define CT2W(t)  (t)
 
 #endif
