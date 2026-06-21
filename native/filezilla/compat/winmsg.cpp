@@ -26,7 +26,9 @@ struct FzWindow { WNDPROC proc = nullptr; INT_PTR userData = 0; };
 std::mutex g_mtx;
 std::condition_variable g_cv;
 std::deque<MSG> g_queue;                       // global message queue (filtered by hwnd on pop)
-std::map<std::wstring, WNDPROC> g_classes;     // RegisterClassEx: class name -> wndproc
+// u16string key (std::wstring is 4-byte-ABI in libc++ under -fshort-wchar -> broken comparisons).
+static std::u16string k16(const wchar_t * p) { std::u16string r; if (p) while (*p) r.push_back((char16_t)*p++); return r; }
+std::map<std::u16string, WNDPROC> g_classes;   // RegisterClassEx: class name -> wndproc
 
 struct SockReg { HWND hwnd; UINT msg; long events; };
 std::map<SOCKET, SockReg> g_sockets;           // WSAAsyncSelect registrations
@@ -133,14 +135,14 @@ unsigned short RegisterClassEx(const WNDCLASSEX * wc)
 {
   if (!wc || !wc->lpszClassName) return 0;
   std::lock_guard<std::mutex> lk(g_mtx);
-  g_classes[wc->lpszClassName] = wc->lpfnWndProc;
+  g_classes[k16(wc->lpszClassName)] = wc->lpfnWndProc;
   return 1;
 }
 
 HWND CreateWindow(const wchar_t * cls, const wchar_t *, DWORD, int, int, int, int, HWND, void *, HINSTANCE, void *)
 {
   auto * w = new FzWindow();
-  if (cls) { std::lock_guard<std::mutex> lk(g_mtx); auto it = g_classes.find(cls); if (it != g_classes.end()) w->proc = it->second; }
+  if (cls) { std::lock_guard<std::mutex> lk(g_mtx); auto it = g_classes.find(k16(cls)); if (it != g_classes.end()) w->proc = it->second; }
   return (HWND)w;
 }
 

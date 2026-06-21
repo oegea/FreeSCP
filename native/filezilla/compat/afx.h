@@ -207,7 +207,7 @@ inline BOOL FindClose(HANDLE h) { (void)h; return TRUE; }
 // the required length. srcLen==-1 means NUL-terminated (the returned/written count includes NUL).
 inline int MultiByteToWideChar(UINT, DWORD, const char * src, int srcLen, wchar_t * dst, int dstLen)
 {
-  std::wstring out; const unsigned char * p = (const unsigned char *)src;
+  std::u16string out; const unsigned char * p = (const unsigned char *)src;   // u16: std::wstring is 4-byte-ABI in libc++
   int rem = srcLen; bool nul = (srcLen < 0);
   while (nul ? (*p != 0) : (rem > 0))
   {
@@ -216,11 +216,11 @@ inline int MultiByteToWideChar(UINT, DWORD, const char * src, int srcLen, wchar_
     else if ((cp >> 5) == 0x6 && (!nul ? rem >= 2 : p[1])) { cp = ((cp & 0x1F) << 6) | (p[1] & 0x3F); adv = 2; }
     else if ((cp >> 4) == 0xE) { cp = ((cp & 0x0F) << 12) | ((p[1] & 0x3F) << 6) | (p[2] & 0x3F); adv = 3; }
     else if ((cp >> 3) == 0x1E) { cp = ((cp & 0x07) << 18) | ((p[1] & 0x3F) << 12) | ((p[2] & 0x3F) << 6) | (p[3] & 0x3F); adv = 4; }
-    if (cp >= 0x10000) { cp -= 0x10000; out.push_back((wchar_t)(0xD800 + (cp >> 10))); out.push_back((wchar_t)(0xDC00 + (cp & 0x3FF))); }
-    else out.push_back((wchar_t)cp);
+    if (cp >= 0x10000) { cp -= 0x10000; out.push_back((char16_t)(0xD800 + (cp >> 10))); out.push_back((char16_t)(0xDC00 + (cp & 0x3FF))); }
+    else out.push_back((char16_t)cp);
     p += adv; if (!nul) rem -= adv;
   }
-  if (nul) out.push_back(L'\0');
+  if (nul) out.push_back(0);
   int need = (int)out.size();
   if (dst && dstLen > 0) { int c = need < dstLen ? need : dstLen; for (int i = 0; i < c; ++i) dst[i] = out[i]; return c; }
   return need;
@@ -254,44 +254,48 @@ public:
 // std::wstring-backed; MFC-ish API limited to what FileZilla uses (see FTP-SCOPE / grep).
 class CString
 {
+  // Backed by std::u16string, NOT std::wstring: libc++'s char_traits<wchar_t> assumes a 4-byte
+  // wchar_t and corrupts strings under -fshort-wchar (e.g. a host "127.0.0.1" came back as "1").
+  // char16_t is reliably 2-byte and its char_traits are correct; wchar_t (2-byte here) is
+  // reinterpreted to/from char16_t at the API boundary. Mutable buffer mirrors s_ for LPTSTR returns.
 public:
   CString() {}
   CString(const CString & o) : s_(o.s_) {}
-  CString(const wchar_t * p) { if (p) s_ = p; }
-  CString(const wchar_t * p, int n) { if (p && n > 0) s_.assign(p, (size_t)n); }
-  CString(wchar_t c, int n = 1) { if (n > 0) s_.assign((size_t)n, c); }
-  CString(const std::wstring & w) : s_(w) {}
+  CString(const wchar_t * p) { s_ = fromW(p); }
+  CString(const wchar_t * p, int n) { if (p && n > 0) s_.assign(reinterpret_cast<const char16_t *>(p), (size_t)n); }
+  CString(wchar_t c, int n = 1) { if (n > 0) s_.assign((size_t)n, (char16_t)c); }
+  CString(const std::u16string & w) : s_(w) {}
   // narrow -> wide (Latin-1/ASCII); FileZilla passes char* literals in a few spots
-  CString(const char * p) { if (p) while (*p) s_.push_back((wchar_t)(unsigned char)*p++); }
-  CString(const char * p, int n) { if (p && n > 0) for (int i = 0; i < n; ++i) s_.push_back((wchar_t)(unsigned char)p[i]); }
+  CString(const char * p) { if (p) while (*p) s_.push_back((char16_t)(unsigned char)*p++); }
+  CString(const char * p, int n) { if (p && n > 0) for (int i = 0; i < n; ++i) s_.push_back((char16_t)(unsigned char)p[i]); }
 
   CString & operator=(const CString & o) { s_ = o.s_; return *this; }
-  CString & operator=(const wchar_t * p) { s_ = p ? p : L""; return *this; }
-  CString & operator=(wchar_t c) { s_.assign(1, c); return *this; }
+  CString & operator=(const wchar_t * p) { s_ = fromW(p); return *this; }
+  CString & operator=(wchar_t c) { s_.assign(1, (char16_t)c); return *this; }
 
-  operator LPCTSTR() const { return s_.c_str(); }
-  const wchar_t * GetString() const { return s_.c_str(); }
+  operator LPCTSTR() const { return reinterpret_cast<const wchar_t *>(s_.c_str()); }
+  const wchar_t * GetString() const { return reinterpret_cast<const wchar_t *>(s_.c_str()); }
 
   int GetLength() const { return (int)s_.size(); }
   bool IsEmpty() const { return s_.empty(); }
   void Empty() { s_.clear(); }
-  wchar_t GetAt(int i) const { return (i >= 0 && i < (int)s_.size()) ? s_[i] : 0; }
+  wchar_t GetAt(int i) const { return (i >= 0 && i < (int)s_.size()) ? (wchar_t)s_[i] : 0; }
   wchar_t operator[](int i) const { return GetAt(i); }
-  void SetAt(int i, wchar_t c) { if (i >= 0 && i < (int)s_.size()) s_[i] = c; }
+  void SetAt(int i, wchar_t c) { if (i >= 0 && i < (int)s_.size()) s_[i] = (char16_t)c; }
 
   CString & operator+=(const CString & o) { s_ += o.s_; return *this; }
-  CString & operator+=(const wchar_t * p) { if (p) s_ += p; return *this; }
-  CString & operator+=(wchar_t c) { s_ += c; return *this; }
+  CString & operator+=(const wchar_t * p) { s_ += fromW(p); return *this; }
+  CString & operator+=(wchar_t c) { s_ += (char16_t)c; return *this; }
 
   friend CString operator+(const CString & a, const CString & b) { CString r(a); r.s_ += b.s_; return r; }
-  friend CString operator+(const CString & a, const wchar_t * b) { CString r(a); if (b) r.s_ += b; return r; }
+  friend CString operator+(const CString & a, const wchar_t * b) { CString r(a); r.s_ += fromW(b); return r; }
   friend CString operator+(const wchar_t * a, const CString & b) { CString r(a); r.s_ += b.s_; return r; }
-  friend CString operator+(const CString & a, wchar_t b) { CString r(a); r.s_ += b; return r; }
+  friend CString operator+(const CString & a, wchar_t b) { CString r(a); r.s_ += (char16_t)b; return r; }
 
   bool operator==(const CString & o) const { return s_ == o.s_; }
   bool operator!=(const CString & o) const { return s_ != o.s_; }
-  bool operator==(const wchar_t * p) const { return s_ == (p ? p : L""); }
-  bool operator!=(const wchar_t * p) const { return s_ != (p ? p : L""); }
+  bool operator==(const wchar_t * p) const { return s_ == fromW(p); }
+  bool operator!=(const wchar_t * p) const { return s_ != fromW(p); }
   bool operator<(const CString & o) const { return s_ < o.s_; }
 
   CString Left(int n) const { if (n < 0) n = 0; return CString(s_.substr(0, (size_t)n)); }
@@ -303,40 +307,40 @@ public:
     return CString(s_.substr((size_t)first, (size_t)n));
   }
 
-  int Find(wchar_t c, int start = 0) const { auto p = s_.find(c, (size_t)(start < 0 ? 0 : start)); return p == std::wstring::npos ? -1 : (int)p; }
-  int Find(const wchar_t * sub, int start = 0) const { if (!sub) return -1; auto p = s_.find(sub, (size_t)(start < 0 ? 0 : start)); return p == std::wstring::npos ? -1 : (int)p; }
-  int ReverseFind(wchar_t c) const { auto p = s_.rfind(c); return p == std::wstring::npos ? -1 : (int)p; }
-  int FindOneOf(const wchar_t * set) const { if (!set) return -1; auto p = s_.find_first_of(set); return p == std::wstring::npos ? -1 : (int)p; }
+  int Find(wchar_t c, int start = 0) const { auto p = s_.find((char16_t)c, (size_t)(start < 0 ? 0 : start)); return p == npos() ? -1 : (int)p; }
+  int Find(const wchar_t * sub, int start = 0) const { if (!sub) return -1; auto p = s_.find(fromW(sub), (size_t)(start < 0 ? 0 : start)); return p == npos() ? -1 : (int)p; }
+  int ReverseFind(wchar_t c) const { auto p = s_.rfind((char16_t)c); return p == npos() ? -1 : (int)p; }
+  int FindOneOf(const wchar_t * set) const { if (!set) return -1; auto p = s_.find_first_of(fromW(set)); return p == npos() ? -1 : (int)p; }
 
-  void MakeLower() { for (auto & c : s_) c = (wchar_t)towlower2(c); }
-  void MakeUpper() { for (auto & c : s_) c = (wchar_t)towupper2(c); }
+  void MakeLower() { for (auto & c : s_) c = towlower2(c); }
+  void MakeUpper() { for (auto & c : s_) c = towupper2(c); }
 
-  int Compare(const wchar_t * p) const { return s_.compare(p ? p : L""); }
+  int Compare(const wchar_t * p) const { return s_.compare(fromW(p)); }
   int CompareNoCase(const wchar_t * p) const {
-    std::wstring a = s_, b = p ? p : L"";
+    std::u16string a = s_, b = fromW(p);
     for (auto & c : a) c = towlower2(c); for (auto & c : b) c = towlower2(c);
     return a.compare(b);
   }
 
   void TrimLeft()  { size_t i = 0; while (i < s_.size() && iswsp(s_[i])) ++i; s_.erase(0, i); }
   void TrimRight() { size_t i = s_.size(); while (i > 0 && iswsp(s_[i - 1])) --i; s_.erase(i); }
-  void TrimLeft(wchar_t c)  { size_t i = 0; while (i < s_.size() && s_[i] == c) ++i; s_.erase(0, i); }
-  void TrimRight(wchar_t c) { size_t i = s_.size(); while (i > 0 && s_[i - 1] == c) --i; s_.erase(i); }
+  void TrimLeft(wchar_t c)  { size_t i = 0; while (i < s_.size() && s_[i] == (char16_t)c) ++i; s_.erase(0, i); }
+  void TrimRight(wchar_t c) { size_t i = s_.size(); while (i > 0 && s_[i - 1] == (char16_t)c) --i; s_.erase(i); }
   // MFC set-trim: remove leading/trailing chars that appear in the target set.
-  void TrimLeft(const wchar_t * set)  { if (!set) return; std::wstring t = set; size_t i = 0; while (i < s_.size() && t.find(s_[i]) != std::wstring::npos) ++i; s_.erase(0, i); }
-  void TrimRight(const wchar_t * set) { if (!set) return; std::wstring t = set; size_t i = s_.size(); while (i > 0 && t.find(s_[i - 1]) != std::wstring::npos) --i; s_.erase(i); }
+  void TrimLeft(const wchar_t * set)  { if (!set) return; std::u16string t = fromW(set); size_t i = 0; while (i < s_.size() && t.find(s_[i]) != npos()) ++i; s_.erase(0, i); }
+  void TrimRight(const wchar_t * set) { if (!set) return; std::u16string t = fromW(set); size_t i = s_.size(); while (i > 0 && t.find(s_[i - 1]) != npos()) --i; s_.erase(i); }
 
-  int Replace(wchar_t from, wchar_t to) { int n = 0; for (auto & c : s_) if (c == from) { c = to; ++n; } return n; }
+  int Replace(wchar_t from, wchar_t to) { int n = 0; for (auto & c : s_) if (c == (char16_t)from) { c = (char16_t)to; ++n; } return n; }
   int Replace(const wchar_t * from, const wchar_t * to) {
-    if (!from || !*from) return 0; std::wstring f = from, t = to ? to : L""; int n = 0;
-    size_t p = 0; while ((p = s_.find(f, p)) != std::wstring::npos) { s_.replace(p, f.size(), t); p += t.size(); ++n; }
+    if (!from || !*from) return 0; std::u16string f = fromW(from), t = fromW(to); int n = 0;
+    size_t p = 0; while ((p = s_.find(f, p)) != npos()) { s_.replace(p, f.size(), t); p += t.size(); ++n; }
     return n;
   }
   void Delete(int i, int n = 1) { if (i >= 0 && i < (int)s_.size() && n > 0) s_.erase((size_t)i, (size_t)n); }
-  void Insert(int i, const wchar_t * p) { if (p && i >= 0 && i <= (int)s_.size()) s_.insert((size_t)i, p); }
+  void Insert(int i, const wchar_t * p) { if (p && i >= 0 && i <= (int)s_.size()) s_.insert((size_t)i, fromW(p)); }
 
-  wchar_t * GetBuffer(int minLen) { if (minLen > (int)s_.size()) s_.resize((size_t)minLen); return &s_[0]; }
-  void ReleaseBuffer(int newLen = -1) { if (newLen < 0) newLen = (int)wcslen2(s_.c_str()); s_.resize((size_t)newLen); }
+  wchar_t * GetBuffer(int minLen) { if (minLen > (int)s_.size()) s_.resize((size_t)minLen); return reinterpret_cast<wchar_t *>(&s_[0]); }
+  void ReleaseBuffer(int newLen = -1) { if (newLen < 0) { newLen = 0; while (newLen < (int)s_.size() && s_[newLen]) ++newLen; } s_.resize((size_t)newLen); }
 
   void Format(const wchar_t * fmt, ...) { va_list ap; va_start(ap, fmt); FormatV(fmt, ap); va_end(ap); }
   // MFC Format(UINT nFormatID, ...) loads the resource then formats; resources absent -> empty fmt.
@@ -344,14 +348,16 @@ public:
   void FormatV(const wchar_t * fmt, va_list ap);
   BOOL LoadString(UINT) { s_.clear(); return FALSE; }   // resource strings not present in the port
 
-  const std::wstring & str() const { return s_; }
+  const std::u16string & str() const { return s_; }
 
 private:
-  std::wstring s_;
-  static size_t wcslen2(const wchar_t * p) { size_t n = 0; if (p) while (p[n]) ++n; return n; }
-  static bool iswsp(wchar_t c) { return c == L' ' || c == L'\t' || c == L'\r' || c == L'\n'; }
-  static wchar_t towlower2(wchar_t c) { return (c >= L'A' && c <= L'Z') ? (wchar_t)(c + 32) : c; }
-  static wchar_t towupper2(wchar_t c) { return (c >= L'a' && c <= L'z') ? (wchar_t)(c - 32) : c; }
+  std::u16string s_;
+  static size_t npos() { return std::u16string::npos; }
+  // Build a u16string from a 2-byte wchar_t* WITHOUT char_traits<wchar_t> (which assumes 4-byte).
+  static std::u16string fromW(const wchar_t * p) { std::u16string r; if (p) while (*p) r.push_back((char16_t)*p++); return r; }
+  static bool iswsp(char16_t c) { return c == u' ' || c == u'\t' || c == u'\r' || c == u'\n'; }
+  static char16_t towlower2(char16_t c) { return (c >= u'A' && c <= u'Z') ? (char16_t)(c + 32) : c; }
+  static char16_t towupper2(char16_t c) { return (c >= u'a' && c <= u'z') ? (char16_t)(c - 32) : c; }
 };
 
 inline bool operator==(const CString & s1, const char * s2) { return s1 == CString(s2); }

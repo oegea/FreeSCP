@@ -201,3 +201,18 @@ the background without freezing the UI (and without crashing):
   immediately); only app-lifetime objects (window, panels, the queue helpers) may be captured by ref.
 - Transfers are serial on the one connection; remote browsing is blocked mid-batch. True parallelism
   needs a second connection (a separate TTerminal) — future work.
+
+## 13. std::wstring is POISONED under -fshort-wchar (libc++ 4-byte instantiation)
+
+libc++ ships an **explicit instantiation** of `std::basic_string<wchar_t>` built with a 4-byte
+wchar_t in the dylib. Under `-fshort-wchar` (wchar_t == 2 bytes) every std::wstring method binds to
+that 4-byte-ABI code and silently corrupts data — e.g. the FileZilla CString (originally
+std::wstring-backed) turned a host "127.0.0.1" into "1", so FTP connected to 0.0.0.1 ("No route to
+host"). This is the std::-library analogue of §1 (the libc wcs* poison) and the reason rtlcompat's
+UnicodeString uses `std::u16string`, never std::wstring.
+- **Rule: NEVER use std::wstring (or anything templated on `char_traits<wchar_t>`) in -fshort-wchar
+  code.** Use `std::u16string` (char16_t — consistent 2-byte everywhere) and reinterpret_cast at the
+  wchar_t* boundary (both 2-byte). Manual element loops (push_back/index) on std::wstring "look" fine
+  but assignment/compare/find/c_str-length go through the 4-byte instantiation and break.
+- Fixed across the FileZilla compat: CString, afxconv A2T/T2A pools, MultiByteToWideChar,
+  CString::FormatV, the winmsg window-class map — all rebacked on std::u16string.

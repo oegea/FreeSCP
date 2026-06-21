@@ -9,8 +9,9 @@
 #include <string>
 #include <cstdio>
 
-static void appendNarrow(std::wstring & out, const char * s)
-{ if (s) while (*s) out.push_back((wchar_t)(unsigned char)*s++); }
+// u16string, not std::wstring: libc++ ships a 4-byte-wchar_t basic_string<wchar_t> instantiation.
+static void appendNarrow(std::u16string & out, const char * s)
+{ if (s) while (*s) out.push_back((char16_t)(unsigned char)*s++); }
 
 int fz_vsntprintf(wchar_t * buf, size_t n, const wchar_t * fmt, va_list ap)
 {
@@ -33,12 +34,12 @@ int fz_stprintf(wchar_t * buf, const wchar_t * fmt, ...)
 
 void CString::FormatV(const wchar_t * fmt, va_list ap)
 {
-  std::wstring out;
+  std::u16string out;
   for (const wchar_t * p = fmt; p && *p; ++p)
   {
-    if (*p != L'%') { out.push_back(*p); continue; }
+    if (*p != L'%') { out.push_back((char16_t)*p); continue; }
     ++p;
-    if (*p == L'%') { out.push_back(L'%'); continue; }
+    if (*p == L'%') { out.push_back((char16_t)'%'); continue; }
 
     // collect flags/width (e.g. "0", "08", "-3", ".3")
     std::string spec = "%";
@@ -59,9 +60,7 @@ void CString::FormatV(const wchar_t * fmt, va_list ap)
       case L's': case L'S':
       {
         // wide string arg (TCHAR*); narrow if preceded by 'h'
-        if (spec == "%" && conv == L's')
-        { const wchar_t * w = va_arg(ap, const wchar_t *); if (w) out += w; }
-        else { const wchar_t * w = va_arg(ap, const wchar_t *); if (w) out += w; }
+        const wchar_t * w = va_arg(ap, const wchar_t *); if (w) while (*w) out.push_back((char16_t)*w++);
         break;
       }
       case L'd': case L'i':
@@ -84,12 +83,12 @@ void CString::FormatV(const wchar_t * fmt, va_list ap)
         else { unsigned v = va_arg(ap, unsigned); spec.push_back((char)conv); std::snprintf(buf, sizeof buf, spec.c_str(), v); }
         appendNarrow(out, buf); break;
       }
-      case L'c': { int v = va_arg(ap, int); out.push_back((wchar_t)v); break; }
+      case L'c': { int v = va_arg(ap, int); out.push_back((char16_t)v); break; }
       case L'p': { void * v = va_arg(ap, void *); std::snprintf(buf, sizeof buf, "%p", v); appendNarrow(out, buf); break; }
-      default: out.push_back(L'%'); if (conv) out.push_back(conv); break;
+      default: out.push_back((char16_t)'%'); if (conv) out.push_back((char16_t)conv); break;
     }
   }
-  *this = out.c_str();
+  *this = reinterpret_cast<const wchar_t *>(out.c_str());
 }
 
 //=== WIN32 file-info shims (POSIX stat) ====================================

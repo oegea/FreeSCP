@@ -84,7 +84,9 @@ typedef struct addrinfo      ADDRINFOT;
 #define SD_BOTH     SHUT_RDWR
 
 inline int  closesocket(SOCKET s) { return ::close(s); }
-inline int  WSAGetLastError() { return errno; }
+// Windows reports a non-blocking connect-in-progress as WSAEWOULDBLOCK; POSIX uses EINPROGRESS.
+// FileZilla's connect path checks for WSAEWOULDBLOCK, so translate it here.
+inline int  WSAGetLastError() { return (errno == EINPROGRESS) ? EWOULDBLOCK : errno; }
 inline void WSASetLastError(int e) { errno = e; }
 #include <sys/ioctl.h>
 inline int  ioctlsocket(SOCKET s, long cmd, unsigned long * argp)
@@ -98,6 +100,20 @@ inline int  ioctlsocket(SOCKET s, long cmd, unsigned long * argp)
   return ::ioctl(s, cmd, argp) < 0 ? SOCKET_ERROR : 0;   // FIONREAD etc
 }
 inline int WSACancelAsyncRequest(HANDLE) { return 0; }
+#include <cstdio>
+#include <cstdlib>
+inline int fz_connect(SOCKET s, const struct sockaddr * a, socklen_t l)
+{ if (getenv("FZ_TRACE")) { char ip[64]={0}; const void*pa = a->sa_family==AF_INET6? (const void*)&((sockaddr_in6*)a)->sin6_addr : (const void*)&((sockaddr_in*)a)->sin_addr; inet_ntop(a->sa_family, pa, ip, sizeof ip); fprintf(stderr, "[fz] connect sock=%d fam=%d len=%d ip=%s port=%d\n", s, a->sa_family, l, ip, ntohs(((sockaddr_in*)a)->sin_port)); }
+  int r = ::connect(s, a, l); if (getenv("FZ_TRACE")) fprintf(stderr, "[fz] connect r=%d errno=%d(%s)\n", r, errno, strerror(errno)); return r; }
+#define connect fz_connect
+inline int fz_bind(SOCKET s, const struct sockaddr * a, socklen_t l)
+{ int r = ::bind(s, a, l); if (getenv("FZ_TRACE")) fprintf(stderr, "[fz] bind sock=%d r=%d errno=%d\n", s, r, errno); return r; }
+#define bind fz_bind
+inline int fz_getaddrinfo(const char * node, const char * svc, const struct addrinfo * hints, struct addrinfo ** res)
+{ int r = ::getaddrinfo(node, svc, hints, res);
+  if (getenv("FZ_TRACE")) { char ip[64]={0}; if (!r && *res) { const void*pa=(*res)->ai_family==AF_INET6?(const void*)&((sockaddr_in6*)(*res)->ai_addr)->sin6_addr:(const void*)&((sockaddr_in*)(*res)->ai_addr)->sin_addr; inet_ntop((*res)->ai_family, pa, ip, sizeof ip);} fprintf(stderr, "[fz] getaddrinfo node=%s svc=%s r=%d fam=%d ip=%s\n", node?node:"(null)", svc?svc:"(null)", r, (!r&&*res)?(*res)->ai_family:-1, ip); }
+  return r; }
+#define getaddrinfo fz_getaddrinfo
 // SIO_IDEAL_SEND_BACKLOG_QUERY is a Windows-only optimization; return error so FileZilla uses its
 // default send buffer logic.
 #define SIO_IDEAL_SEND_BACKLOG_QUERY 0x4004747B
