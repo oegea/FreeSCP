@@ -74,3 +74,22 @@ clashes (identical typedefs). Remaining blockers, in order, found by compiling s
    Provide `native/filezilla/compat/winsock2.h` mapping to BSD sockets + a Windows-layout in6_addr
    (`s6_bytes` union member). Then port `CAsyncSocketEx` (WSAAsyncSelect + helper-window message pump)
    to a select()/poll() event loop dispatching OnReceive/OnSend/OnConnect/OnClose.
+
+## Progress: FTP backend BUILDS, LINKS, WIRED, reaches the server
+The entire FileZilla lib compiles + links into harness/winscp-qt; FtpFileSystem is in winscpcore;
+TTerminal::Open()'s FTP branch is un-guarded; harness `WINSCP_FTP=1` exercises it against
+delfer/alpine-ftp-server. The Win32 message pump + WSAAsyncSelect select-loop emulation
+(winmsg.cpp) runs: the control socket connects and in one run the server logged `OK LOGIN`
+(172.17.0.1) — so connect + async send/recv event delivery + the message loop all function.
+
+Current runtime frontier (not yet a clean session): the control socket is closed early in some
+runs (select -> EBADF; now handled by dropping dead fds), and the engine reports "Connection
+failed". Likely causes to chase next:
+- CREATE_SUSPENDED is ignored (CreateThread starts immediately; ResumeThread is rtlcompat's no-op
+  for our std::thread handle) — possible startup race between the worker's message loop and main
+  thread setup. Consider a real suspended-start gate keyed on the thread handle.
+- immediate connect() success on localhost (no EINPROGRESS) vs FileZilla expecting FD_CONNECT.
+- LoadStr returns empty (no resource strings) -> empty [info] status lines; wire TextsCore strings
+  for readable diagnostics.
+- select-loop edge-trigger semantics (one-shot writable latch, FD_READ dedup) need validation under
+  real traffic. FZ_TRACE=1 prints WSAAsyncSelect/select/post events.

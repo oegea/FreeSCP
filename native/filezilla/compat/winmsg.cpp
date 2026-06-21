@@ -2,6 +2,10 @@
 // winmsg.cpp — Win32 message-pump + WSAAsyncSelect emulation (see winmsg.h).
 //---------------------------------------------------------------------------
 #include "winmsg.h"
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <errno.h>
 
 #include <vector>
 #include <deque>
@@ -65,7 +69,16 @@ void selectLoop()
     }
     timeval tv{ 0, 100000 };   // 100ms
     int r = ::select(maxfd + 1, &rfds, &wfds, nullptr, &tv);
-    if (r < 0) continue;
+    if (r < 0)
+    {
+      if (errno == EBADF)   // a socket was closed without unregistering; drop dead fds to stop spinning
+      {
+        std::lock_guard<std::mutex> lk(g_mtx);
+        for (auto it = g_sockets.begin(); it != g_sockets.end(); )
+          if (::fcntl(it->first, F_GETFD) < 0) { g_posted.erase(it->first); it = g_sockets.erase(it); } else ++it;
+      }
+      continue;
+    }
     if (FD_ISSET(g_wake[0], &rfds)) { char buf[64]; while (::read(g_wake[0], buf, sizeof buf) > 0) {} }
 
     std::lock_guard<std::mutex> lk(g_mtx);
@@ -76,6 +89,7 @@ void selectLoop()
         if (!(reg.events & fd)) return;
         if ((fd == FD_WRITE || fd == FD_CONNECT) && (latch & fd)) return;  // one-shot for writable
         if (queueHas(reg.hwnd, reg.msg, (WPARAM)s)) return;
+        if (getenv("FZ_TRACE")) fprintf(stderr, "[fz] post sock=%d event=0x%lx\n", s, fd);
         postLocked(reg.hwnd, reg.msg, (WPARAM)s, MAKELONG(fd, 0));
         latch |= fd;
       };
@@ -207,6 +221,7 @@ LRESULT DefWindowProc(HWND, UINT, WPARAM, LPARAM) { return 0; }
 
 int WSAAsyncSelect(SOCKET s, HWND hWnd, UINT msg, long lEvent)
 {
+  if (getenv("FZ_TRACE")) fprintf(stderr, "[fz] WSAAsyncSelect sock=%d msg=%u events=0x%lx\n", s, msg, lEvent);
   std::lock_guard<std::mutex> lk(g_mtx);
   if (lEvent == 0) { g_sockets.erase(s); g_posted.erase(s); }
   else { g_sockets[s] = SockReg{ hWnd, msg, lEvent }; g_posted[s] = 0; }

@@ -1513,14 +1513,11 @@ void __fastcall TTerminal::Open()
             if (SessionData->FSProtocol == fsFTP)
             {
               FFSProtocol = cfsFTP;
-#ifdef _WIN32  // WINSCP-NATIVE-PORT: FTP/WebDAV/S3 backends are Phase 4; SFTP/SCP-only for now.
+              // WINSCP-NATIVE-PORT: FTP backend (FileZilla) now builds natively (Phase 8).
               FFileSystem = new TFTPFileSystem(this);
               FFileSystem->Open();
               Log->AddSeparator();
               LogEvent(L"Using FTP protocol.");
-#else
-              throw Exception(L"FTP protocol is not supported on this build yet.");
-#endif
             }
             else if (SessionData->FSProtocol == fsWebDAV)
             {

@@ -56,7 +56,12 @@ int main(int argc, char ** argv)
     Data->PortNumber = Port;
     Data->UserName = User;
     Data->Password = Pass;
-    if (::getenv("WINSCP_DAVS") != nullptr)
+    if (::getenv("WINSCP_FTP") != nullptr)
+    {
+      Data->FSProtocol = fsFTP;          // FileZilla backend (Phase 8)
+      Data->Ftps = ftpsNone;
+    }
+    else if (::getenv("WINSCP_DAVS") != nullptr)
     {
       Data->FSProtocol = fsWebDAV;       // HTTPS WebDAV (TLS)
       Data->Ftps = ftpsImplicit;
