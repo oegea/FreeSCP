@@ -59,6 +59,15 @@ bool remoteConnected();
 std::string remoteCurrentDir();
 // List the remote directory (empty path = current/home). Sorted dirs-first; includes "..".
 std::vector<DirEntry> listRemoteDir(const std::string & utf8Path);
+
+// Transfer a single file over the live SFTP session (TTerminal CopyToRemote/CopyToLocal).
+// localPath/remotePath are full paths; the target is a directory. Returns true on success;
+// on failure `error` (if non-null) gets a human-readable message.
+bool uploadToRemote(const std::string & localPathUtf8, const std::string & remoteDirUtf8,
+                    std::string * error = nullptr);
+bool downloadFromRemote(const std::string & remotePathUtf8, const std::string & localDirUtf8,
+                        std::string * error = nullptr);
+
 void disconnectSftp();
 
 } // namespace engine

@@ -28,6 +28,10 @@ public:
   UnicodeString(const std::u16string & s) : FData(s) {}
   // count defaults to 1 so a lone char (e.g. Delphi's PathDelim) implicitly becomes a string.
   UnicodeString(char16_t c, int count = 1) : FData(static_cast<size_t>(count), c) {}
+  // The engine passes wchar_t literals (e.g. UnixExtractFileName's LastDelimiter(L'/')).
+  // Under -fshort-wchar a wchar_t arg would otherwise integral-PROMOTE to int and hit the
+  // numeric ctor below (L'/' -> "47"); this exact-match ctor makes a 1-char string instead.
+  UnicodeString(wchar_t c, int count = 1) : FData(static_cast<size_t>(count), static_cast<char16_t>(c)) {}
 
   // C++Builder UnicodeString has implicit numeric constructors that render the value as
   // its decimal text (engine relies on int/int64 -> string conversions). Non-explicit to

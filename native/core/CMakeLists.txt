@@ -39,7 +39,9 @@ target_include_directories(winscpcore_flags INTERFACE
   ${LIBS_DIR}/expat/lib     # XML (pulled in via neon)
   ${LIBS_DIR}/libs3/inc     # S3
   ${LIBS_DIR}/openssl/include)  # crypto
-target_compile_options(winscpcore_flags INTERFACE -fms-extensions -Wno-unknown-pragmas)
+target_compile_options(winscpcore_flags INTERFACE -fms-extensions -Wno-unknown-pragmas
+  # 2-byte-wchar_t wcs* shims: libc's wcs* are 4-byte and corrupt our UTF-16 strings (see WcsCompat.h)
+  -include ${CMAKE_CURRENT_SOURCE_DIR}/../rtlcompat/include/winscp/WcsCompat.h)
 
 # --- step 2: ported engine objects ---
 # Each ported .cpp is run through genprops into GEN_DIR and compiled FROM there, so its quoted

@@ -238,16 +238,30 @@ int main(int argc, char ** argv)
     FilePanel * dst = (active == left) ? right : left;
     QStringList files = active->selectedFiles();
     if (files.isEmpty()) { window.statusBar()->showMessage("No files selected"); return; }
-    int ok = 0;
+    if (active->isRemote() && dst->isRemote())
+    { window.statusBar()->showMessage("Remote-to-remote copy not supported yet"); return; }
+
+    int ok = 0; std::string lastErr;
     for (const QString & f : files)
     {
       std::string src = engine::joinPath(s8(active->path()), s8(f));
-      std::string dd = engine::joinPath(s8(dst->path()), s8(f));
-      if (engine::copyFile(src, dd)) ++ok;
+      if (!active->isRemote() && !dst->isRemote())              // local -> local
+      {
+        if (engine::copyFile(src, engine::joinPath(s8(dst->path()), s8(f)))) ++ok;
+      }
+      else if (!active->isRemote() && dst->isRemote())          // upload
+      {
+        if (engine::uploadToRemote(src, s8(dst->path()), &lastErr)) ++ok;
+      }
+      else                                                      // download (remote -> local)
+      {
+        if (engine::downloadFromRemote(src, s8(dst->path()), &lastErr)) ++ok;
+      }
     }
     dst->refresh();
-    window.statusBar()->showMessage(QString("Copied %1/%2 file(s) to %3")
-                                      .arg(ok).arg(files.size()).arg(dst->path()));
+    QString msg = QString("Copied %1/%2 file(s) to %3").arg(ok).arg(files.size()).arg(dst->path());
+    if ((ok < files.size()) && !lastErr.empty()) msg += " — " + u8(lastErr);
+    window.statusBar()->showMessage(msg);
   };
   QObject::connect(actCopy, &QAction::triggered, doCopy);
   auto * f5 = new QAction(&window); f5->setShortcut(Qt::Key_F5);

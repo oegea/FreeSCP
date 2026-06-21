@@ -261,3 +261,24 @@ Fix (rtlcompat only, no source/ edit): bind `Names[]`/`Values[]` to non-shadowab
 accessors `DoGetName`/`DoGetValue`/`DoSetValue` in TStrings (Classes.hpp). Replicates Delphi's
 declaring-class binding; derived shadows can no longer capture the property. Verified: harness
 `ChangeDirectory("/config/testdir")` now lists 3 entries; ctest green. NEXT: remote upload/download.
+
+## Remote upload/download WORKS (F5) — engine transfer path + two wchar/ABI fixes
+TTerminal CopyToRemote/CopyToLocal now run end-to-end over the live SFTP session. Validated via
+the harness (upload /tmp file -> server, download server file -> /tmp, byte-correct) and wired into
+the Qt GUI: doCopy branches local->local (copyFile), local->remote (uploadToRemote), remote->local
+(downloadFromRemote); remote->remote is rejected for now. enginebridge gained uploadToRemote/
+downloadFromRemote (download attaches the TRemoteFile* from the live listing as each entry's Object,
+which TTerminal::ProcessFiles requires — a bare string list yields a NULL File and crashes).
+
+Two root-cause fixes (rtlcompat only, no source/ edits):
+1. **wchar single-char ctor**: `UnicodeString(L'/')` integral-PROMOTED the wchar_t arg to int and hit
+   the numeric ctor -> "47" instead of "/". So UnixExtractFileName's `LastDelimiter(L'/')` returned 0
+   and the download's local name became the full remote path ("/tmp//config/hello.txt"). Added an
+   exact-match `UnicodeString(wchar_t, count=1)` ctor (UnicodeString.h).
+2. **2-byte wcs* shims (WcsCompat.{h,cpp})**: the engine calls libc wcspbrk/wcschr/wcslen/wcscmp/...
+   which were built for 4-byte wchar_t; on our -fshort-wchar 2-byte strings they misread memory.
+   ValidLocalFileName's wcspbrk "matched" garbage and corrupted every download name ("hello.txt" ->
+   "hello.txt01"). Force-included WcsCompat.h (-include via winscpcore_flags) redirects the wcs* names
+   the engine uses to 2-byte-correct implementations in rtlcompat. **Audit class: any libc wide-string
+   function on engine strings is unsafe under -fshort-wchar — route new ones through WcsCompat.**
+ctest green. NEXT: remaining file ops (mkdir/delete/rename/properties) via TTerminal.

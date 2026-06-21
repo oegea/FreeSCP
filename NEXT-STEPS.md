@@ -34,12 +34,19 @@ Expected harness output:
 [harness] Done.
 ```
 
-## >>> THE #1 NEXT TASK: remote upload/download (F5) <<<
+## >>> THE #1 NEXT TASK: remaining remote file ops (mkdir/delete/rename/properties) <<<
 
-Remote directory navigation now WORKS (the nav crash below is FIXED — see STATUS.md
-"Remote directory navigation WORKS"). Next: wire `enginebridge` copy to/from the remote,
-mirroring the local `copyFile` path, so F5 in the GUI transfers files. Then the rest of the
-file ops (mkdir/delete/rename/properties) via TTerminal.
+Remote nav AND remote upload/download (F5) now WORK (see STATUS.md). Next: wire the remaining
+file operations via TTerminal — CreateDirectory, DeleteFile(s), RenameFile/MoveFile,
+ChangeFileProperties (rights/timestamp) — into enginebridge + the Qt GUI. Watch for the same two
+hazards that bit transfers: (a) any TStrings passed to ProcessFiles must carry TRemoteFile* as
+each entry's Object; (b) never call libc wcs* on engine strings — route through WcsCompat.h.
+
+## (DONE) remote upload/download (F5) — WORKS
+
+CopyToRemote/CopyToLocal run end-to-end (harness-validated byte-correct, GUI F5 wired). Fixes:
+UnicodeString(wchar_t) ctor (L'/' was becoming "47"); WcsCompat.{h,cpp} 2-byte wcs* shims
+(libc's 4-byte wcspbrk corrupted download names to "hello.txt01"). See STATUS.md.
 
 ## (DONE) the remote-directory navigation crash — FIXED
 

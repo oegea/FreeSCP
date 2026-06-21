@@ -10,6 +10,7 @@
 #include "Configuration.h"
 #include "SessionData.h"
 #include "Terminal.h"
+#include "CopyParam.h"
 #include "Interface.h"
 #include "RemoteFiles.h"
 #include "Exceptions.h"
@@ -216,6 +217,62 @@ std::vector<DirEntry> listRemoteDir(const std::string & utf8Path)
               return a.name < b.name;
             });
   return result;
+}
+
+namespace {
+// Flatten an engine exception (incl. ExtException MoreMessages chain) to a UTF-8 string.
+std::string ExceptionToU8(Exception & E)
+{
+  UnicodeString msg = E.Message;
+  ExtException * Ext = dynamic_cast<ExtException *>(&E);
+  if ((Ext != nullptr) && (Ext->MoreMessages != nullptr))
+    for (int i = 0; i < Ext->MoreMessages->Count; i++)
+      msg += UnicodeString(L"\n") + Ext->MoreMessages->Strings[i];
+  return std::string(UTF8String(msg).c_str());
+}
+} // namespace
+
+bool uploadToRemote(const std::string & localPathUtf8, const std::string & remoteDirUtf8,
+                    std::string * error)
+{
+  if (!remoteConnected()) { if (error) *error = "not connected"; return false; }
+  try
+  {
+    std::unique_ptr<TStrings> files(new TStringList());
+    files->Add(FromU8(localPathUtf8));
+    TCopyParamType cp; cp.Default();
+    UnicodeString target = UnixIncludeTrailingBackslash(FromU8(remoteDirUtf8));
+    return g_terminal->CopyToRemote(files.get(), target, &cp, cpNoConfirmation, nullptr);
+  }
+  catch (Exception & E) { if (error) *error = ExceptionToU8(E); return false; }
+  catch (...) { if (error) *error = "unknown error"; return false; }
+}
+
+bool downloadFromRemote(const std::string & remotePathUtf8, const std::string & localDirUtf8,
+                        std::string * error)
+{
+  if (!remoteConnected()) { if (error) *error = "not connected"; return false; }
+  try
+  {
+    // CopyToLocal requires each entry's Object to be the TRemoteFile* (ProcessFiles reads
+    // FileList->Objects[Index]); a bare string list yields a NULL File and crashes. Find the
+    // file in the current listing (the panel the user is browsing) and attach it.
+    UnicodeString name = UnixExtractFileName(FromU8(remotePathUtf8));
+    TRemoteFile * rf = nullptr;
+    TRemoteFileList * Files = g_terminal->Files;
+    if (Files != nullptr)
+      for (int i = 0; i < Files->Count; i++)
+        if (Files->Files[i]->FileName == name) { rf = Files->Files[i]; break; }
+    if (rf == nullptr) { if (error) *error = "file not in current listing"; return false; }
+
+    std::unique_ptr<TStrings> files(new TStringList());
+    files->AddObject(rf->FullFileName, rf);
+    TCopyParamType cp; cp.Default();
+    UnicodeString target = IncludeTrailingBackslash(FromU8(localDirUtf8));
+    return g_terminal->CopyToLocal(files.get(), target, &cp, cpNoConfirmation, nullptr);
+  }
+  catch (Exception & E) { if (error) *error = ExceptionToU8(E); return false; }
+  catch (...) { if (error) *error = "unknown error"; return false; }
 }
 
 void disconnectSftp()
