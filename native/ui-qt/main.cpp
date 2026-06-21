@@ -47,6 +47,7 @@
 #include <QUrl>
 #include <QDir>
 #include <QStyle>
+#include <algorithm>
 #include <functional>
 
 #include "enginebridge.h"
@@ -364,6 +365,9 @@ public:
     QObject::connect(homeBtn, &QToolButton::clicked, [this] { if (onHome) onHome(); });
     QObject::connect(FView->selectionModel(), &QItemSelectionModel::selectionChanged,
                      [this] { if (onStatusChanged) onStatusChanged(); });
+    FView->horizontalHeader()->setSectionsClickable(true);
+    QObject::connect(FView->horizontalHeader(), &QHeaderView::sectionClicked,
+                     [this](int col) { sortByColumn(col); });
   }
 
   QString path() const { return FPath; }
@@ -392,10 +396,42 @@ public:
     }
     FPath = path;
     FPathEdit->setText(path);
-    FModel->clear();
-    FModel->setHorizontalHeaderLabels({ "Name", "Size", "Changed", "Rights", "Owner" });
     FEntries = FRemote ? engine::listRemoteDir(s8(path)) : engine::listLocalDir(s8(path));
     FDirs = 0; FFiles = 0;
+    for (const auto & e : FEntries) { if (e.isParent) continue; if (e.isDir) ++FDirs; else ++FFiles; }
+    sortEntries();
+    renderEntries();
+    if (onStatusChanged) onStatusChanged();
+  }
+
+  // Sort FEntries by the active column ("." parent always first), then dirs-first within the
+  // chosen key (WinSCP groups folders), respecting ascending/descending.
+  void sortEntries()
+  {
+    std::stable_sort(FEntries.begin(), FEntries.end(), [this](const engine::DirEntry & a, const engine::DirEntry & b) {
+      if (a.isParent != b.isParent) return a.isParent > b.isParent;     // ".." first
+      if (a.isDir != b.isDir) return a.isDir > b.isDir;                 // dirs before files
+      int c = 0;
+      switch (FSortCol)
+      {
+        case 1: c = (a.size < b.size) ? -1 : (a.size > b.size) ? 1 : 0; break;   // Size
+        case 2: c = QString::compare(u8(a.modified), u8(b.modified)); break;     // Changed
+        case 3: c = QString::compare(u8(a.rights), u8(b.rights)); break;         // Rights
+        case 4: c = QString::compare(u8(a.owner), u8(b.owner)); break;           // Owner
+        default: c = QString::compare(u8(a.name), u8(b.name), Qt::CaseInsensitive); break;  // Name
+      }
+      return FSortAsc ? (c < 0) : (c > 0);
+    });
+  }
+
+  void renderEntries()
+  {
+    FModel->clear();
+    const char * heads[5] = { "Name", "Size", "Changed", "Rights", "Owner" };
+    QStringList hl; for (int i = 0; i < 5; ++i) {
+      QString h = heads[i]; if (i == FSortCol) h += FSortAsc ? "  \xE2\x96\xB2" : "  \xE2\x96\xBC"; hl << h;
+    }
+    FModel->setHorizontalHeaderLabels(hl);
     for (const auto & e : FEntries)
     {
       QList<QStandardItem *> row;
@@ -408,18 +444,21 @@ public:
       row << new QStandardItem(u8(e.rights));
       row << new QStandardItem(u8(e.owner));
       FModel->appendRow(row);
-      if (e.isParent) continue;
-      if (e.isDir) ++FDirs; else ++FFiles;
     }
     auto * hh = FView->horizontalHeader();
     hh->setStretchLastSection(false);
-    hh->setSectionResizeMode(0, QHeaderView::Stretch);     // Name fills
+    hh->setSectionResizeMode(0, QHeaderView::Stretch);
     for (int c = 1; c <= 4; ++c) hh->setSectionResizeMode(c, QHeaderView::Interactive);
-    FView->setColumnWidth(1, 90);    // Size
-    FView->setColumnWidth(2, 150);   // Changed
-    FView->setColumnWidth(3, 95);    // Rights
-    FView->setColumnWidth(4, 120);   // Owner
+    FView->setColumnWidth(1, 90); FView->setColumnWidth(2, 150);
+    FView->setColumnWidth(3, 95); FView->setColumnWidth(4, 120);
     if (FModel->rowCount() > 0) FView->selectRow(0);
+  }
+
+  void sortByColumn(int col)
+  {
+    if (col == FSortCol) FSortAsc = !FSortAsc; else { FSortCol = col; FSortAsc = true; }
+    sortEntries();
+    renderEntries();
     if (onStatusChanged) onStatusChanged();
   }
 
@@ -491,6 +530,7 @@ private:
   bool FActive = false;
   bool FNav = false;
   int FDirs = 0, FFiles = 0;
+  int FSortCol = 0; bool FSortAsc = true;
   QStringList FHistory;
   int FHistIdx = -1;
   std::vector<engine::DirEntry> FEntries;
