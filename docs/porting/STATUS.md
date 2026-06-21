@@ -691,3 +691,12 @@ empty-string statics (_afxDataNilA/_afxPchNilA). Remaining for working FTP: buil
 (FtpFileSystem.cpp + CoreMain.cpp) into winscpcore, link the lib into harness + winscp-qt, wire
 Protocol::Ftp in enginebridge + un-guard the FTP branch of TTerminal::Open(), then runtime-test vs a
 Docker FTP server (and tune the select-loop edge-trigger semantics in winmsg.cpp).
+
+## FTP WORKS: connect + login + directory listing + upload (native FileZilla)
+Native FTP via the ported FileZilla backend now connects, authenticates (server: OK LOGIN), lists
+the remote directory (3 entries with sizes), and uploads a file (verified on the server). The async
+socket emulation is functional: control + PASV data channels connect, the message pump delivers
+events, and the select-loop fires FD_READ (level, drives the FTP state machine) + FD_CLOSE on a real
+peer EOF (peeked with MSG_PEEK|MSG_DONTWAIT to detect end-of-listing without blocking the select
+thread or racing FileZilla's reader). Remaining FTP polish: download + remote ops (mkdir/rename/
+delete) stall after upload — a follow-on data-channel nuance to chase. SFTP/SCP/WebDAV/S3 unaffected.

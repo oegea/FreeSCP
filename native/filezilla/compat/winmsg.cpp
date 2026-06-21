@@ -16,6 +16,7 @@
 #include <thread>
 #include <atomic>
 #include <sys/select.h>
+#include <sys/socket.h>
 
 HINSTANCE afxCurrentResourceHandle = nullptr;
 
@@ -96,7 +97,22 @@ void selectLoop()
         latch |= fd;
       };
       if (FD_ISSET(s, &wfds)) { fire(FD_CONNECT); fire(FD_WRITE); }
-      if (FD_ISSET(s, &rfds)) { fire(FD_READ); fire(FD_ACCEPT); fire(FD_CLOSE); }
+      if (FD_ISSET(s, &rfds))
+      {
+        fire(FD_READ); fire(FD_ACCEPT);
+        // FD_CLOSE on a REAL EOF only (peek==0), latched + bypassing the FD_READ dedup so it always
+        // reaches FileZilla — without it the data channel never signals end-of-listing (it hung).
+        if ((reg.events & FD_CLOSE) && !(latch & FD_CLOSE))
+        {
+          char c;   // MSG_DONTWAIT: never block the select thread if FileZilla already drained the data
+          if (::recv(s, &c, 1, MSG_PEEK | MSG_DONTWAIT) == 0)
+          {
+            if (getenv("FZ_TRACE")) fprintf(stderr, "[fz] post sock=%d event=0x20 (CLOSE/EOF)\n", s);
+            postLocked(reg.hwnd, reg.msg, (WPARAM)s, MAKELONG(FD_CLOSE, 0));
+            latch |= FD_CLOSE;
+          }
+        }
+      }
     }
   }
 }
