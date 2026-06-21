@@ -107,10 +107,9 @@ HANDLE CreateThread(void *, size_t, LPTHREAD_START_ROUTINE fn, void * param, DWO
   h->t.detach();
   return (HANDLE)h;
 }
-DWORD ResumeThread(HANDLE) { return 1; }
-BOOL  SetThreadPriority(HANDLE, int) { return TRUE; }
-DWORD WaitForSingleObject(HANDLE, DWORD) { return WAIT_OBJECT_0; }   // detached threads; no real join
-BOOL  CloseHandle(HANDLE) { return TRUE; }                          // thread handles leak (rare, app-lifetime)
+// ResumeThread / SetThreadPriority / WaitForSingleObject / CloseHandle are provided by rtlcompat
+// (WinThreads/SysExtra). FileZilla's CreateThread returns a detached std::thread handle that those
+// rtlcompat fns don't recognize (Lookup fails -> no-op), which is fine: our threads run immediately.
 BOOL  PostThreadMessage(DWORD, UINT msg, WPARAM w, LPARAM l)
 { std::lock_guard<std::mutex> lk(g_mtx); postLocked(nullptr, msg, w, l); return TRUE; }  // thread msgs: hwnd=NULL
 UINT  RegisterWindowMessage(const wchar_t *)

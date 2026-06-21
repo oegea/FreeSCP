@@ -40,4 +40,5 @@ target_link_libraries(winscp-qt PRIVATE
   Qt6::Widgets enginebridge
   winscpcore winscp_harness puttycore puttyplatform puttycrypto_vs rtlcompat
   neon expat libs3                        # Phase 4: WebDAV + S3 deps, on-demand
+  winscpfilezilla                         # Phase 8: FTP backend
   OpenSSL::SSL OpenSSL::Crypto)

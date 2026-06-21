@@ -35,4 +35,5 @@ endforeach()
 target_link_libraries(winscp-harness PRIVATE
   winscpcore winscp_harness puttycore puttyplatform puttycrypto_vs rtlcompat
   neon expat libs3                        # Phase 4: WebDAV + S3 deps, on-demand
+  winscpfilezilla                         # Phase 8: FTP backend
   OpenSSL::SSL OpenSSL::Crypto)

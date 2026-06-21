@@ -146,6 +146,22 @@ target_include_directories(winscpcore_neon PRIVATE
   ${CMAKE_SOURCE_DIR}/../source/putty)
 target_sources(winscpcore PRIVATE $<TARGET_OBJECTS:winscpcore_neon>)
 
+# --- step 5 (Phase 8): FTP engine object (FtpFileSystem -> FileZilla via TFileZillaIntf) ---
+add_custom_command(
+  OUTPUT ${GEN_DIR}/FtpFileSystem.cpp
+  COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/../tools/genprops.py ${CORE_DIR}/FtpFileSystem.cpp ${GEN_DIR}/FtpFileSystem.cpp
+  DEPENDS ${CORE_DIR}/FtpFileSystem.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../tools/genprops.py
+  COMMENT "genprops FtpFileSystem.cpp")
+add_library(winscpcore_ftp OBJECT ${GEN_DIR}/FtpFileSystem.cpp)
+add_dependencies(winscpcore_ftp winscpcore_genheaders)
+target_link_libraries(winscpcore_ftp PUBLIC winscpcore_flags)
+target_compile_definitions(winscpcore_ftp PRIVATE WINSCP NO_GSSAPI MPEXT)
+target_include_directories(winscpcore_ftp PRIVATE
+  ${CMAKE_SOURCE_DIR}/../source/filezilla   # FileZillaIntf.h (TFileZillaIntf)
+  ${CMAKE_SOURCE_DIR}/putty/include
+  ${CMAKE_SOURCE_DIR}/../source/putty)
+target_sources(winscpcore PRIVATE $<TARGET_OBJECTS:winscpcore_ftp>)
+
 # --- header-parse regression guard: each listed header must compile standalone ---
 # (proves the RTL surface + __property codegen keep covering them as rtlcompat grows)
 # Guard = every core header EXCEPT those that still need the putty backend (Phase 3:
