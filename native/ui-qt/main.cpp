@@ -892,6 +892,8 @@ int main(int argc, char ** argv)
         btnCancel->setEnabled(false);
         to->refresh(); if (isMove) from->refresh();
         window.statusBar()->showMessage(QString("Transferred %1/%2 item(s)").arg(ok).arg(total));
+        if (ok < total) QMessageBox::warning(&window, "Transfer",
+          QString("%1 of %2 item(s) failed. See the Transfer queue for the error.").arg(total - ok).arg(total));
       }, Qt::QueuedConnection);
     }).detach();
   };
@@ -938,6 +940,8 @@ int main(int argc, char ** argv)
       QMetaObject::invokeMethod(&window, [&, ok, total, dest]{
         engine::setProgressSink(nullptr); gTransferRunning = false; btnCancel->setEnabled(false);
         dest->refresh(); window.statusBar()->showMessage(QString("Imported %1/%2 item(s)").arg(ok).arg(total));
+        if (ok < total) QMessageBox::warning(&window, "Import",
+          QString("%1 of %2 item(s) failed. See the Transfer queue for the error.").arg(total - ok).arg(total));
       }, Qt::QueuedConnection);
     }).detach();
   };

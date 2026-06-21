@@ -41,6 +41,7 @@ std::unique_ptr<TSessionData> g_sessionData;
 UnicodeString g_password;
 bool g_engineInited = false;
 std::function<bool(const engine::TransferProgress &)> g_progressCb;
+std::string g_lastTransferError;   // set by OnQueryUser on a qtError so transfers can report it
 
 // Last successful connect params, so we can open additional (parallel) connections to the same server.
 struct ConnParams { std::string host; int port = 0; std::string user, password; engine::Protocol protocol = engine::Protocol::Sftp; bool tls = false; bool valid = false; };
@@ -222,8 +223,18 @@ ConnectResult connectSftp(const std::string & host, int port,
       [](TTerminal *, TPromptKind, UnicodeString, UnicodeString, TStrings *, TStrings * Results, bool & Result, void *)
       { if (Results != nullptr) for (int i = 0; i < Results->Count; i++) Results->Strings[i] = g_password; Result = true; };
     g_terminal->OnQueryUser =
-      [](TObject *, const UnicodeString &, TStrings *, unsigned int Answers, const TQueryParams *, unsigned int & Answer, TQueryType, void *)
-      { Answer = (Answers & qaYes) ? qaYes : ((Answers & qaOK) ? qaOK : Answers); };   // auto-accept host key
+      [](TObject *, const UnicodeString & Query, TStrings *, unsigned int Answers, const TQueryParams *, unsigned int & Answer, TQueryType Type, void *)
+      {
+        // Errors (e.g. "Permission denied" on upload) must NOT be silently skipped -> record the
+        // message and abort so the transfer reports failure instead of a bogus "done".
+        if (Type == qtError)
+        {
+          g_lastTransferError = ToU8(Query);
+          Answer = (Answers & qaAbort) ? qaAbort : ((Answers & qaSkip) ? qaSkip : Answers);
+        }
+        else
+          Answer = (Answers & qaYes) ? qaYes : ((Answers & qaOK) ? qaOK : Answers);   // host key / confirmations
+      };
     g_terminal->OnProgress =
       [](TFileOperationProgressType & P)
       {
@@ -376,8 +387,9 @@ int openParallelConnection(std::string * error)
     c->term.reset(new TTerminal(c->data.get(), Configuration));
     c->term->OnPromptUser = [pw](TTerminal *, TPromptKind, UnicodeString, UnicodeString, TStrings *, TStrings * Results, bool & Result, void *)
       { if (Results) for (int i = 0; i < Results->Count; i++) Results->Strings[i] = pw; Result = true; };
-    c->term->OnQueryUser = [](TObject *, const UnicodeString &, TStrings *, unsigned int Answers, const TQueryParams *, unsigned int & Answer, TQueryType, void *)
-      { Answer = (Answers & qaYes) ? qaYes : ((Answers & qaOK) ? qaOK : Answers); };
+    c->term->OnQueryUser = [](TObject *, const UnicodeString & Query, TStrings *, unsigned int Answers, const TQueryParams *, unsigned int & Answer, TQueryType Type, void *)
+      { if (Type == qtError) { g_lastTransferError = ToU8(Query); Answer = (Answers & qaAbort) ? qaAbort : ((Answers & qaSkip) ? qaSkip : Answers); }
+        else Answer = (Answers & qaYes) ? qaYes : ((Answers & qaOK) ? qaOK : Answers); };
     c->term->OnProgress = [cp](TFileOperationProgressType & P)
       { if (cp->sink) { engine::TransferProgress tp; tp.file = ToU8(P.FileName); tp.transferred = P.TransferredSize; tp.total = P.TransferSize; tp.cps = (std::int64_t)P.CPS(); if (cp->sink(tp)) P.SetCancel(csCancel); } };
     c->term->Open();
@@ -404,9 +416,12 @@ bool uploadVia(int handle, const std::string & localPathUtf8, const std::string 
     std::unique_ptr<TStrings> files(new TStringList());
     files->Add(FromU8(localPathUtf8));
     TCopyParamType cp; cp.Default();
-    return c->term->CopyToRemote(files.get(), UnixIncludeTrailingBackslash(FromU8(remoteDirUtf8)), &cp, cpNoConfirmation, nullptr);
+    g_lastTransferError.clear();
+    bool res = c->term->CopyToRemote(files.get(), UnixIncludeTrailingBackslash(FromU8(remoteDirUtf8)), &cp, cpNoConfirmation, nullptr);
+    if (!g_lastTransferError.empty()) { if (error) *error = g_lastTransferError; return false; }
+    return res;
   }
-  catch (Exception & E) { if (error) *error = ExceptionToU8(E); return false; }
+  catch (Exception & E) { if (error) *error = g_lastTransferError.empty() ? ExceptionToU8(E) : g_lastTransferError; return false; }
   catch (...) { if (error) *error = "unknown error"; return false; }
 }
 
@@ -430,9 +445,12 @@ bool downloadVia(int handle, const std::string & remotePathUtf8, const std::stri
     std::unique_ptr<TStrings> files(new TStringList());
     files->AddObject(rf->FullFileName, rf);
     TCopyParamType cp; cp.Default();
-    return c->term->CopyToLocal(files.get(), IncludeTrailingBackslash(FromU8(localDirUtf8)), &cp, cpNoConfirmation, nullptr);
+    g_lastTransferError.clear();
+    bool res = c->term->CopyToLocal(files.get(), IncludeTrailingBackslash(FromU8(localDirUtf8)), &cp, cpNoConfirmation, nullptr);
+    if (!g_lastTransferError.empty()) { if (error) *error = g_lastTransferError; return false; }
+    return res;
   }
-  catch (Exception & E) { if (error) *error = ExceptionToU8(E); return false; }
+  catch (Exception & E) { if (error) *error = g_lastTransferError.empty() ? ExceptionToU8(E) : g_lastTransferError; return false; }
   catch (...) { if (error) *error = "unknown error"; return false; }
 }
 
@@ -448,15 +466,18 @@ bool uploadToRemote(const std::string & localPathUtf8, const std::string & remot
 {
   ENGINE_LOCK;
   if (!remoteConnected()) { if (error) *error = "not connected"; return false; }
+  g_lastTransferError.clear();
   try
   {
     std::unique_ptr<TStrings> files(new TStringList());
     files->Add(FromU8(localPathUtf8));
     TCopyParamType cp; cp.Default();
     UnicodeString target = UnixIncludeTrailingBackslash(FromU8(remoteDirUtf8));
-    return g_terminal->CopyToRemote(files.get(), target, &cp, cpNoConfirmation, nullptr);
+    bool res = g_terminal->CopyToRemote(files.get(), target, &cp, cpNoConfirmation, nullptr);
+    if (!g_lastTransferError.empty()) { if (error) *error = g_lastTransferError; return false; }  // skipped-on-error
+    return res;
   }
-  catch (Exception & E) { if (error) *error = ExceptionToU8(E); return false; }
+  catch (Exception & E) { if (error) *error = g_lastTransferError.empty() ? ExceptionToU8(E) : g_lastTransferError; return false; }
   catch (...) { if (error) *error = "unknown error"; return false; }
 }
 
@@ -477,9 +498,12 @@ bool downloadFromRemote(const std::string & remotePathUtf8, const std::string & 
     files->AddObject(rf->FullFileName, rf);
     TCopyParamType cp; cp.Default();
     UnicodeString target = IncludeTrailingBackslash(FromU8(localDirUtf8));
-    return g_terminal->CopyToLocal(files.get(), target, &cp, cpNoConfirmation, nullptr);
+    g_lastTransferError.clear();
+    bool res = g_terminal->CopyToLocal(files.get(), target, &cp, cpNoConfirmation, nullptr);
+    if (!g_lastTransferError.empty()) { if (error) *error = g_lastTransferError; return false; }
+    return res;
   }
-  catch (Exception & E) { if (error) *error = ExceptionToU8(E); return false; }
+  catch (Exception & E) { if (error) *error = g_lastTransferError.empty() ? ExceptionToU8(E) : g_lastTransferError; return false; }
   catch (...) { if (error) *error = "unknown error"; return false; }
 }
 
