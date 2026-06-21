@@ -921,7 +921,13 @@ int main(int argc, char ** argv)
         engine::Protocol pr = p[4]=="scp"?engine::Protocol::Scp : p[4]=="dav"?engine::Protocol::WebDav
                             : p[4]=="s3"?engine::Protocol::S3 : engine::Protocol::Sftp;
         auto r = engine::connectSftp(s8(p[0]), p[1].toInt(), s8(p[2]), s8(p[3]), pr);
-        if (r.ok) { right->setRemote(QString("%1@%2").arg(p[2]).arg(p[0])); right->navigate(u8(r.currentDir)); }
+        if (r.ok) { right->setRemote(QString("%1@%2").arg(p[2]).arg(p[0])); right->navigate(u8(r.currentDir));
+          // exercise the queue in the GUI process (proves transfer + queue end-to-end)
+          QString xf = qEnvironmentVariable("WINSCP_AUTOXFER");
+          if (!xf.isEmpty()) { queueDock->show(); int rr = queueAdd("Download", xf, "/tmp");
+            std::string err; bool ok = engine::downloadFromRemote(engine::joinPath(r.currentDir, s8(xf)), "/tmp", &err);
+            queueSet(rr, ok ? "done" : ("failed: " + u8(err))); }
+        }
       }
       window.grab().save(qEnvironmentVariable("WINSCP_SHOT"));
       app.quit();
