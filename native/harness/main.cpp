@@ -127,7 +127,8 @@ int main(int argc, char ** argv)
     if (::getenv("WINSCP_OPS") != nullptr)
     {
       TRemoteProperties props;
-      Terminal->CreateDirectory(L"/config/optest", &props);
+      UnicodeString opsDir = UnixIncludeTrailingBackslash(Terminal->CurrentDirectory);  // protocol-agnostic
+      Terminal->CreateDirectory(opsDir + L"optest", &props);
       Terminal->ReadCurrentDirectory(); Terminal->ReadDirectory(false);
       TRemoteFile * d = NULL;
       for (int i = 0; i < Terminal->Files->Count; i++)

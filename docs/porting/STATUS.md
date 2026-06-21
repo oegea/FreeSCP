@@ -494,3 +494,8 @@ WebDAV file transfer round-trips over neon (harness WINSCP_DAV=1 WINSCP_XFER=1: 
 server, download back byte-identical). The native fd path (_open_osfhandle/_close/SetFilePointer over
 fd-packed-HANDLE) works at runtime. Fixed the harness self-test to target Terminal->CurrentDirectory
 (protocol-agnostic) instead of a hardcoded /config (WebDAV root is /). SFTP+SCP xfer regression clean.
+
+### WebDAV file ops WORK — SFTP/SCP/WebDAV now at feature parity
+WebDAV mkdir/rename/delete (MKCOL/MOVE/DELETE) validated via harness WINSCP_OPS=1. All three
+protocols now pass the same self-tests: connect, list, upload, download, mkdir, rename, delete.
+(Harness WINSCP_OPS uses Terminal->CurrentDirectory too, so it's protocol-agnostic.) ctest green.
