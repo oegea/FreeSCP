@@ -28,12 +28,14 @@ find_package(OpenSSL REQUIRED)
 # whole-archive links the engine (global ctors + cross-refs), the headless Interface stubs, and
 # the PuTTY libs — same set as the winscp-harness.
 add_executable(winscp-qt MACOSX_BUNDLE main.cpp)
-target_link_options(winscp-qt PRIVATE
-  -Wl,-force_load,$<TARGET_FILE:winscpcore>
-  -Wl,-force_load,$<TARGET_FILE:winscp_harness>
-  -Wl,-force_load,$<TARGET_FILE:puttycore>
-  -Wl,-force_load,$<TARGET_FILE:puttyplatform>
-  -Wl,-force_load,$<TARGET_FILE:puttycrypto_vs>)
+# Whole-archive the engine archives (macOS -force_load / GNU-lld --whole-archive). macOS unchanged.
+foreach(lib winscpcore winscp_harness puttycore puttyplatform puttycrypto_vs)
+  if(APPLE)
+    target_link_options(winscp-qt PRIVATE -Wl,-force_load,$<TARGET_FILE:${lib}>)
+  else()
+    target_link_options(winscp-qt PRIVATE "SHELL:-Wl,--whole-archive $<TARGET_FILE:${lib}> -Wl,--no-whole-archive")
+  endif()
+endforeach()
 target_link_libraries(winscp-qt PRIVATE
   Qt6::Widgets enginebridge
   winscpcore winscp_harness puttycore puttyplatform puttycrypto_vs rtlcompat

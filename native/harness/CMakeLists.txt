@@ -23,12 +23,15 @@ target_compile_definitions(winscp-harness PRIVATE WINSCP NO_GSSAPI)
 target_include_directories(winscp-harness PRIVATE
   ${CMAKE_SOURCE_DIR}/putty/include
   ${CMAKE_SOURCE_DIR}/../source/putty)
-target_link_options(winscp-harness PRIVATE
-  -Wl,-force_load,$<TARGET_FILE:winscpcore>
-  -Wl,-force_load,$<TARGET_FILE:winscp_harness>
-  -Wl,-force_load,$<TARGET_FILE:puttycore>
-  -Wl,-force_load,$<TARGET_FILE:puttyplatform>
-  -Wl,-force_load,$<TARGET_FILE:puttycrypto_vs>)
+# Whole-archive the engine archives (global ctors + cross-refs). macOS ld64 uses -force_load;
+# GNU/lld (Linux) uses --whole-archive/--no-whole-archive. macOS path is unchanged.
+foreach(lib winscpcore winscp_harness puttycore puttyplatform puttycrypto_vs)
+  if(APPLE)
+    target_link_options(winscp-harness PRIVATE -Wl,-force_load,$<TARGET_FILE:${lib}>)
+  else()
+    target_link_options(winscp-harness PRIVATE "SHELL:-Wl,--whole-archive $<TARGET_FILE:${lib}> -Wl,--no-whole-archive")
+  endif()
+endforeach()
 target_link_libraries(winscp-harness PRIVATE
   winscpcore winscp_harness puttycore puttyplatform puttycrypto_vs rtlcompat
   neon expat libs3                        # Phase 4: WebDAV + S3 deps, on-demand

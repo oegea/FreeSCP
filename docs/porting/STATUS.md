@@ -649,3 +649,14 @@ process (SFTP/WebDAV download + S3 connect rendered live via WINSCP_AUTOCONNECT/
 Build reproducible from scratch; ctest green; Windows tree untouched. FTP backend is the remaining
 protocol (deferred to last). Other future work: true background (threaded) queue, Linux build,
 remaining WinSCP dialogs.
+
+## Linux-readiness audit (toward the macOS→Linux goal)
+Audited native/ + the putty unix backend for macOS-only APIs. Findings: the platform code is
+already POSIX/__APPLE__/__linux__-clean — getticktime/noise use clock_gettime (portable), ParamStr
+is __APPLE__(_NSGetExecutablePath)/__linux__(/proc/self/exe)-guarded, paths via getenv. One real
+Linux blocker fixed: the harness + winscp-qt whole-archive link used macOS-ld64 `-Wl,-force_load`,
+which GNU ld/lld don't understand — now `if(APPLE) -force_load else --whole-archive/--no-whole-archive`
+(macOS link byte-unchanged + verified; the Linux path is in place but UNTESTED — no Linux box here).
+Remaining for an actual Linux build: build the vendored libs (neon/expat/libs3 already CMake; putty
+already portable) on Linux, install Qt6/OpenSSL, and shake out any link-order issues GNU ld is
+pickier about than ld64. MACOSX_BUNDLE degrades to a normal executable on Linux (harmless).
