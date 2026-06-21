@@ -237,3 +237,15 @@ Porting FileZilla's async engine, the bugs that actually stalled FTP at runtime 
   FileZilla RemoveDir INVALIDPARAM. Fall back to TRemoteFile->FileName.
 - Debug tip: FZ_TRACE=1 (compat wrappers) prints connect/getaddrinfo/send/recv + WSAAsyncSelect/
   post/PostThreadMessage — invaluable for the worker/data-channel choreography.
+
+## 15. The engine tolerates concurrent TTerminal connections (SFTP/WebDAV/S3), FTP does not
+
+Parallel transfers need multiple connections. Each connection = its own TTerminal + TSessionData +
+a per-connection mutex; do NOT route them through the global engine mutex (that re-serializes them).
+With that, 2 concurrent SFTP downloads are byte-perfect and crash-free across repeated runs — the
+PuTTY/neon/OpenSSL globals survive concurrent use for these backends. FTP (FileZilla) is the
+exception: its CMainThread/control-socket state machine is effectively a singleton per process, so a
+2nd concurrent instance fails (0 bytes); gate FTP to serial (parallelSupported()). Pattern: open a
+pool, run N workers pulling from a shared atomic index, each worker sets its connection's own
+progress sink (setProgressSinkVia) keyed to its current queue row; a coordinator thread joins them
+and marshals completion to the UI thread.

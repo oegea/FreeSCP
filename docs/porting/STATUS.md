@@ -712,3 +712,12 @@ FileName when a directory's FullFileName carries a trailing slash (UnixExtractFi
 Full matrix (harness, vs local Docker servers): SFTP/SCP/WebDAV(+TLS)/S3/FTP all connect+list+
 transfer; SFTP/WebDAV/FTP also do mkdir/rename/delete; S3 bucket-level ops. Build from scratch +
 ctest green; Windows tree untouched (FTP source edits #ifdef-guarded, in UPSTREAM-PATCHES).
+
+## Transfer queue: rich + parallel (the "cola + paralelas" milestone)
+The queue dock is now a real WinSCP-style queue: Operation/File/Size/Progress/Speed/Time-left/Status,
+a Cancel button (aborts via the engine progress sink -> SetCancel(csCancel)) and Clear-finished.
+Engine progress sink reports TransferProgress {file, transferred, total, cps} and returns bool to
+cancel. Parallel transfers: a >1-file plain remote copy fans out over 2 concurrent connections
+(enginebridge parallel pool: per-ParConn TTerminal + own mutex, so no global-lock serialization).
+Verified byte-perfect (MD5) for SFTP over 2 connections, repeatable. FTP gated to serial
+(parallelSupported()==false — its single-connection backend can't run concurrent instances).
