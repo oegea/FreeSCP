@@ -160,7 +160,8 @@ std::vector<DirEntry> listLocalDir(const std::string & utf8Path)
 
 //--- remote SFTP session ---------------------------------------------------
 ConnectResult connectSftp(const std::string & host, int port,
-                          const std::string & user, const std::string & password)
+                          const std::string & user, const std::string & password,
+                          Protocol protocol)
 {
   ConnectResult r;
   try
@@ -175,7 +176,7 @@ ConnectResult connectSftp(const std::string & host, int port,
     g_sessionData->PortNumber = port;
     g_sessionData->UserName = FromU8(user);
     g_sessionData->Password = g_password;
-    g_sessionData->FSProtocol = fsSFTPonly;
+    g_sessionData->FSProtocol = (protocol == Protocol::Scp) ? fsSCPonly : fsSFTPonly;
     g_sessionData->FingerprintScan = false;
 
     g_terminal.reset(new TTerminal(g_sessionData.get(), Configuration));

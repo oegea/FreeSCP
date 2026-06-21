@@ -337,3 +337,8 @@ basic_string::__is_long. Implemented TStrings::Assign (clear + copy strings & ob
 virtual interface). This was a LATENT bug affecting ~13 Assign call sites across the engine, not
 just SCP. NEXT: wire SCP into enginebridge/GUI as a protocol choice (engine side proven); then
 Phase 4 (FTP/S3/WebDAV) and Phase 7 (Qt dialogs).
+
+## GUI: protocol choice (SFTP / SCP) in the Connect dialog
+The Connect dialog gained a Protocol dropdown (SFTP default, SCP). enginebridge::connectSftp now
+takes an engine::Protocol and sets FSProtocol = fsSFTPonly / fsSCPonly accordingly. Both engine
+paths are runtime-proven (harness); the GUI now lets the user pick. winscp-qt builds + launches.

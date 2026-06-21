@@ -20,6 +20,7 @@
 #include <QKeyEvent>
 #include <QMessageBox>
 #include <QInputDialog>
+#include <QComboBox>
 #include <QString>
 #include <QDialog>
 #include <QFormLayout>
@@ -205,12 +206,14 @@ int main(int argc, char ** argv)
   // SFTP connect dialog -> right panel becomes the remote session.
   QObject::connect(actConnect, &QAction::triggered, [&] {
     QDialog dlg(&window);
-    dlg.setWindowTitle("Connect to SFTP server");
+    dlg.setWindowTitle("Connect to server");
     auto * form = new QFormLayout(&dlg);
+    auto * proto = new QComboBox; proto->addItem("SFTP"); proto->addItem("SCP");
     auto * host = new QLineEdit("127.0.0.1");
     auto * port = new QSpinBox; port->setRange(1, 65535); port->setValue(2222);
     auto * user = new QLineEdit("winscp");
     auto * pass = new QLineEdit("winscp123"); pass->setEchoMode(QLineEdit::Password);
+    form->addRow("Protocol:", proto);
     form->addRow("Host:", host);
     form->addRow("Port:", port);
     form->addRow("User:", user);
@@ -223,8 +226,9 @@ int main(int argc, char ** argv)
 
     window.statusBar()->showMessage("Connecting…");
     QApplication::processEvents();
+    engine::Protocol pr = (proto->currentIndex() == 1) ? engine::Protocol::Scp : engine::Protocol::Sftp;
     engine::ConnectResult r = engine::connectSftp(
-      s8(host->text()), port->value(), s8(user->text()), s8(pass->text()));
+      s8(host->text()), port->value(), s8(user->text()), s8(pass->text()), pr);
     if (!r.ok)
     {
       QMessageBox::critical(&window, "Connection failed", u8(r.error));

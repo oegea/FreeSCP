@@ -58,9 +58,14 @@ struct ConnectResult
   std::string currentDir;   // resolved home directory on success
 };
 
-// Open an SFTP session (blocking). One session at a time; a new connect replaces the old.
+// File-transfer protocol for a remote session.
+enum class Protocol { Sftp = 0, Scp = 1 };
+
+// Open a remote session (blocking). One session at a time; a new connect replaces the old.
+// `protocol` selects SFTP (default) or SCP — both run over the same SSH transport.
 ConnectResult connectSftp(const std::string & host, int port,
-                          const std::string & user, const std::string & password);
+                          const std::string & user, const std::string & password,
+                          Protocol protocol = Protocol::Sftp);
 bool remoteConnected();
 std::string remoteCurrentDir();
 // List the remote directory (empty path = current/home). Sorted dirs-first; includes "..".
