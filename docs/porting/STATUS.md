@@ -2,7 +2,7 @@
 
 Update this whenever a target starts/stops building. Verify by actually building.
 
-_Last updated: 2026-06-20 — Phase 1 header surface done; Phase 1.5 (.cpp bodies) underway._
+_Last updated: 2026-06-21 — SFTP + SCP fully operational (connect/list/nav/transfer/mkdir/rename/delete/chmod); see entries at bottom._
 
 ## Current phase: 1.5 — compiling engine .cpp bodies (RTL bodies on demand)
 Phase 0 ✅ (foundation). Phase 1 ✅ (35/36 headers parse). Now: compile .cpp into libwinscpcore.
