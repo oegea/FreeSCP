@@ -716,10 +716,16 @@ int main(int argc, char ** argv)
     { QMessageBox::information(&window, "Move", "Remote-to-remote move is not supported yet."); return; }
     if (QMessageBox::question(&window, "Move",
           QString("Move %1 item(s) to %2?").arg(files.size()).arg(dst->path())) != QMessageBox::Yes) return;
-    QApplication::setOverrideCursor(Qt::WaitCursor);
+    queueDock->show();
+    int curRow = -1;
+    engine::setProgressSink([&](const std::string &, int pct) {
+      queueSet(curRow, QString("%1%").arg(pct)); QApplication::processEvents();
+    });
     int ok = 0; std::string err;
     for (const QString & f : files)
     {
+      curRow = queueAdd("Move", f, dst->path());
+      queueSet(curRow, "active"); QApplication::processEvents();
       std::string src = engine::joinPath(s8(active->path()), s8(f));
       bool copied;
       if (!active->isRemote() && !dst->isRemote())
@@ -728,14 +734,14 @@ int main(int argc, char ** argv)
         copied = engine::uploadToRemote(src, s8(dst->path()), &err);
       else
         copied = engine::downloadFromRemote(src, s8(dst->path()), &err);
-      if (!copied) { log("Move (copy step) failed: " + f + " — " + u8(err)); continue; }
-      // delete source after a successful copy
+      if (!copied) { queueSet(curRow, "failed: " + u8(err)); log("Move (copy step) failed: " + f + " — " + u8(err)); continue; }
       bool del = active->isRemote() ? engine::remoteDelete(s8(f), &err)
                                     : engine::localDelete(s8(active->path()), s8(f), &err);
+      queueSet(curRow, del ? "done" : ("copied; delete failed: " + u8(err)));
       if (del) ++ok; else log("Move (delete step) failed: " + f + " — " + u8(err));
     }
+    engine::setProgressSink(nullptr);
     active->refresh(); dst->refresh();
-    QApplication::restoreOverrideCursor();
     window.statusBar()->showMessage(QString("Moved %1/%2 item(s) to %3").arg(ok).arg(files.size()).arg(dst->path()));
   };
   auto doMkdir = [&] {
