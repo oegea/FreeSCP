@@ -116,12 +116,70 @@ int __fastcall MilliSecondOfTheSecond(const TDateTime & DT) { return MilliSecond
 __int64 __fastcall MilliSecondOfTheYear(const TDateTime & DT) { Word y,m,d; DecodeDate(DT,y,m,d);
   return static_cast<__int64>((double)DT - (double)EncodeDate(y,1,1)) * MSecsPerDay + MilliSecondOfTheDay(DT); }
 
-UnicodeString __fastcall FormatDateTime(const UnicodeString &, const TDateTime & DT)
-{ Word y,m,d,h,mi,s,ms; DecodeDate(DT,y,m,d); DecodeTime(DT,h,mi,s,ms);
-  return Format(L"%.4d-%.2d-%.2d %.2d:%.2d:%.2d", ARRAYOFCONST(((int)y,(int)m,(int)d,(int)h,(int)mi,(int)s))); }
-// 3-arg overload (with TFormatSettings). NOTE: like the 2-arg, this does not yet interpret the
-// Delphi format picture (ddd/mmm/etc) — it returns the ISO form. WebDAV's HTTP-date header
-// ("ddd, d mmm yyyy hh:nn:ss 'GMT'") will be wrong until a real picture formatter lands. TODO.
+// Delphi-picture FormatDateTime: yyyy/yy, m/mm/mmm/mmmm (month), d/dd/ddd/dddd (day),
+// h/hh (hour), n/nn (minute), s/ss (second), 'literal'/"literal", am/pm. English names (correct
+// for the WebDAV HTTP-date header and fine for display). An empty picture -> ISO default.
+namespace {
+const char * const kDayShort[7]  = { "Sun","Mon","Tue","Wed","Thu","Fri","Sat" };
+const char * const kDayLong[7]   = { "Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday" };
+const char * const kMonShort[12] = { "Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec" };
+const char * const kMonLong[12]  = { "January","February","March","April","May","June","July","August",
+                                     "September","October","November","December" };
+void appendNum(UnicodeString & out, int v, int width)
+{ UnicodeString s = IntToStr(v); while (s.Length() < width) s = UnicodeString(L"0") + s; out += s; }
+}
+UnicodeString __fastcall FormatDateTime(const UnicodeString & Fmt, const TDateTime & DT)
+{
+  Word y,m,d,h,mi,s,ms; DecodeDate(DT,y,m,d); DecodeTime(DT,h,mi,s,ms);
+  if (Fmt.IsEmpty())
+    return Format(L"%.4d-%.2d-%.2d %.2d:%.2d:%.2d", ARRAYOFCONST(((int)y,(int)m,(int)d,(int)h,(int)mi,(int)s)));
+  int dow = DayOfWeek(DT) - 1; if (dow < 0 || dow > 6) dow = 0;   // 0=Sun
+  bool ampm = false;  // detect am/pm in the picture for 12h hours
+  { UnicodeString lf = Fmt.LowerCase(); ampm = (lf.Pos(L"am/pm") > 0) || (lf.Pos(L"a/p") > 0); }
+  int hour12 = (h % 12); if (hour12 == 0) hour12 = 12;
+  UnicodeString out;
+  int i = 1, n = Fmt.Length();
+  while (i <= n)
+  {
+    wchar_t c = (wchar_t)Fmt[i];
+    if (c == L'\'' || c == L'"')   // quoted literal
+    {
+      wchar_t q = c; ++i;
+      while (i <= n && (wchar_t)Fmt[i] != q) { out += UnicodeString((wchar_t)Fmt[i], 1); ++i; }
+      ++i; continue;
+    }
+    // count a run of the same letter
+    int run = 1; while (i + run <= n && (wchar_t)Fmt[i + run] == c) ++run;
+    wchar_t lc = (wchar_t)towlower(c);
+    bool handled = true;
+    if (lc == L'y') { if (run >= 4) appendNum(out, y, 4); else appendNum(out, y % 100, 2); }
+    else if (lc == L'm') {
+      if (run == 1) out += IntToStr((int)m);
+      else if (run == 2) appendNum(out, (int)m, 2);
+      else if (run == 3) out += UnicodeString(kMonShort[(m>=1&&m<=12)?m-1:0]);
+      else out += UnicodeString(kMonLong[(m>=1&&m<=12)?m-1:0]);
+    }
+    else if (lc == L'd') {
+      if (run == 1) out += IntToStr((int)d);
+      else if (run == 2) appendNum(out, (int)d, 2);
+      else if (run == 3) out += UnicodeString(kDayShort[dow]);
+      else out += UnicodeString(kDayLong[dow]);
+    }
+    else if (lc == L'h') { int hv = ampm ? hour12 : h; if (run >= 2) appendNum(out, hv, 2); else out += IntToStr(hv); }
+    else if (lc == L'n') { if (run >= 2) appendNum(out, (int)mi, 2); else out += IntToStr((int)mi); }
+    else if (lc == L's') { if (run >= 2) appendNum(out, (int)s, 2); else out += IntToStr((int)s); }
+    else if (lc == L'a') {   // am/pm or a/p token
+      UnicodeString rest = Fmt.SubString(i, 5).LowerCase();
+      if (rest == L"am/pm") { out += UnicodeString(h < 12 ? L"AM" : L"PM"); run = 5; }
+      else if (Fmt.SubString(i,3).LowerCase() == L"a/p") { out += UnicodeString(h < 12 ? L"a" : L"p"); run = 3; }
+      else handled = false;
+    }
+    else handled = false;
+    if (!handled) { out += UnicodeString(c, 1); run = 1; }
+    i += run;
+  }
+  return out;
+}
 UnicodeString __fastcall FormatDateTime(const UnicodeString & Fmt, const TDateTime & DT, const TFormatSettings &)
 { return FormatDateTime(Fmt, DT); }
 // File modification time as a TDateTime (SysUtils.FileAge). Returns false if the file is absent.

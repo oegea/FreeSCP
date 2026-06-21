@@ -603,3 +603,11 @@ Verified by offscreen renders incl. a live SFTP connection showing real /config 
 rights/owner. Dev affordances: WINSCP_SHOT (render) + WINSCP_AUTOCONNECT (connect-then-render).
 NEXT GUI toward full fidelity: background transfer **queue pane**, synchronized browsing, F3 View /
 F4 Edit, toolbar icons, the remaining WinSCP dialogs (preferences, copy-options, etc).
+
+## FormatDateTime now interprets the Delphi picture (was an ISO stub)
+Implemented a real Delphi-picture FormatDateTime in rtlcompat (yyyy/yy, m/mm/mmm/mmmm,
+d/dd/ddd/dddd, h/hh, n/nn, s/ss, 'literal', am/pm; English names). Previously it ignored the
+format and always returned ISO — wrong for WebDAV's HTTP-date header
+("ddd, d mmm yyyy hh:nn:ss 'GMT'" -> "Sun, 21 Jun 2026 07:29:07 GMT" now) and for any
+date routed through FormatDateTime (logs/display). Fixes the documented WebDAV upload-timestamp
+TODO. Full build + ctest green; all protocols regression-clean.
