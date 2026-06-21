@@ -21,6 +21,7 @@ enable_testing()
 add_subdirectory(rtlcompat)
 
 add_subdirectory(putty)        # Phase 3: PuTTY core (SSH/SFTP), platform-independent C
+add_subdirectory(expat)        # Phase 4: expat XML parser (neon's WebDAV XML backend)
 add_subdirectory(neon)         # Phase 4: neon WebDAV HTTP/S client (static libneon)
 add_subdirectory(core)         # Phase 1+ ported engine (libwinscpcore), grows leaf-first
 add_subdirectory(harness)      # Phase 3: headless GUI/Interface stubs to link the engine

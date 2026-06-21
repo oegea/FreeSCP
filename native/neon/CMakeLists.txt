@@ -19,5 +19,5 @@ target_include_directories(neon PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}        # neon_config_unix.h (pulled by libs/neon/src/config.h on unix)
   ${NEON_DIR}
   ${LIBS_DIR}/expat/lib)             # expat.h (XML parser)
-target_link_libraries(neon PUBLIC OpenSSL::SSL OpenSSL::Crypto)
+target_link_libraries(neon PUBLIC expat OpenSSL::SSL OpenSSL::Crypto)
 target_compile_options(neon PRIVATE -w -Wno-everything)
