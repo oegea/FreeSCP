@@ -873,6 +873,13 @@ int main(int argc, char ** argv)
   tb->addSeparator();
   auto * actSync = tb->addAction(ic(QStyle::SP_FileDialogContentsView), "Sync browsing"); actSync->setCheckable(true);
   auto * actTree = tb->addAction(ic(QStyle::SP_DirIcon), "Directory tree"); actTree->setCheckable(true);
+  tb->addSeparator();
+  auto * tbNewDir = tb->addAction(ic(QStyle::SP_FileDialogNewFolder), "New folder");
+  auto * tbDelete = tb->addAction(ic(QStyle::SP_TrashIcon), "Delete");
+  auto * tbProps  = tb->addAction(ic(QStyle::SP_FileDialogInfoView), "Properties");
+  tb->addSeparator();
+  auto * tbQueue  = tb->addAction(ic(QStyle::SP_FileDialogDetailedView), "Queue"); tbQueue->setCheckable(true);
+  auto * tbLog    = tb->addAction(ic(QStyle::SP_FileDialogListView), "Log"); tbLog->setCheckable(true);
 
   // Panels.
   auto * splitter = new QSplitter(Qt::Horizontal);
@@ -1732,6 +1739,13 @@ int main(int argc, char ** argv)
   //--- toolbar / shortcuts ------------------------------------------------
   QObject::connect(actConnect, &QAction::triggered, doConnect);
   QObject::connect(newTabBtn, &QToolButton::clicked, doConnect);   // "+" tab = open another session
+  QObject::connect(tbNewDir, &QAction::triggered, doMkdir);
+  QObject::connect(tbDelete, &QAction::triggered, doDelete);
+  QObject::connect(tbProps,  &QAction::triggered, doProps);
+  QObject::connect(tbQueue, &QAction::toggled, [&](bool v){ queueDock->setVisible(v); });
+  QObject::connect(tbLog,   &QAction::toggled, [&](bool v){ logDock->setVisible(v); });
+  QObject::connect(queueDock, &QDockWidget::visibilityChanged, [tbQueue](bool v){ tbQueue->setChecked(v); });
+  QObject::connect(logDock,   &QDockWidget::visibilityChanged, [tbLog](bool v){ tbLog->setChecked(v); });
   QObject::connect(actDisconnect, &QAction::triggered, doDisconnect);
   QObject::connect(actHome, &QAction::triggered, [&] { if (!active->isRemote()) active->navigate(u8(engine::homeDir())); });
   QObject::connect(actRefresh, &QAction::triggered, [&] { active->refresh(); });
