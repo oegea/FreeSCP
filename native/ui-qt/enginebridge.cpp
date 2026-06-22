@@ -239,6 +239,15 @@ ConnectResult connectSftp(const std::string & host, int port,
   {
     EnsureEngineInited();
     disconnectSftp();
+    // Optional full SSH/SFTP protocol log (heavy — every packet). Off by default; set
+    // WINSCP_SESSIONLOG=1 to capture /tmp/winscp-session.log for diagnosing protocol issues.
+    if (getenv("WINSCP_SESSIONLOG"))
+    {
+      Configuration->LogProtocol = 2;
+      Configuration->LogFileName = FromU8("/tmp/winscp-session.log");
+      Configuration->Logging = true;
+      LogLine("protocol log -> /tmp/winscp-session.log");
+    }
     g_password = FromU8(password);
 
     g_sessionData.reset(new TSessionData(L""));

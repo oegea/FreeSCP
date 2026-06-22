@@ -108,12 +108,18 @@ static void set_nonblock(int fd) { int fl = fcntl(fd, F_GETFL, 0); fcntl(fd, F_S
 
 static void ns_try_flush(NetSocket *s)
 {
+    size_t before = bufchain_size(&s->output);
     while (bufchain_size(&s->output) > 0) {
         ptrlen pl = bufchain_prefix(&s->output);
         ssize_t n = send(s->fd, pl.ptr, pl.len, 0);
         if (n > 0) bufchain_consume(&s->output, n);
         else break;   /* EAGAIN or error: stop, wait for writable */
     }
+    size_t after = bufchain_size(&s->output);
+    /* If the send backlog shrank, notify the upper layer (ssh_sent): it unthrottles and queues the
+     * next chunk of output. Without this, once the socket backlogs (slow network) the transfer
+     * stalls after the first burst — ssh never learns the buffer drained. */
+    if (after < before && s->plug) plug_sent(s->plug, after);
 }
 
 static Plug *ns_plug(Socket *ss, Plug *p) { NetSocket *s = (NetSocket *)ss; Plug *old = s->plug; if (p) s->plug = p; return old; }

@@ -110,4 +110,22 @@ portable spelling. Needed because POSIX `struct in_addr` has no `S_un` union mem
   relies on it being NULL (there's a `DebugAssert(FOperationProgress == NULL)` before the first set) but
   never initializes it in the ctor — latent bug, masked on Windows by allocator zeroing / luck. Setting
   it NULL is what upstream already expects, so Windows behavior is unchanged.
+- **source/core/SessionInfo.cpp** — (1) `TSessionLog::DoAddStartupInfo` now null-checks
+  `GetGlobalOptions()` before `->LogOptions()`. On the native build `GetGlobalOptions()` returns NULL
+  (no command-line options parser — interface_stub.cpp), so enabling session logging
+  (`Configuration->Logging`) SIGSEGV'd on connect inside DoAddStartupInfo. Null is impossible on
+  Windows (real options object), so unchanged there. (2) Added `fflush` after each log-line `fwrite`
+  under `#ifndef _WIN32` so a stalled/killed session still leaves a complete log on disk.
 All keep the Windows build intact.
+
+## Native platform-layer fixes (native/putty/src — not upstream source/)
+
+- **native/putty/src/uxnet.c `ns_try_flush`** — now calls `plug_sent(s->plug, bufchain_size)` after
+  the send backlog shrinks. PuTTY's `ssh_sent` (the plug `sent` callback) unthrottles the connection
+  AND queues the next chunk of BPP output; without it, once the socket's send buffer backlogs (any
+  real/slow network) the transfer sent its first burst and then stalled forever — "Timeout waiting
+  for server to respond" at ~3%. It never reproduced on localhost because the loopback send buffer is
+  huge + fast, so the socket never backlogged and `plug_sent` was never needed. Reproduced locally by
+  forcing a tiny `SO_SNDBUF`. THE upload-stall bug.
+- **native/rtlcompat/src/Threading.cpp `WaitForMultipleObjects`** — `INFINITE` timeout was computed as
+  1 ms (so infinite waits returned spuriously after 1 ms). Now loops without a deadline when INFINITE.

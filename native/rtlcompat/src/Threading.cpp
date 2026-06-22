@@ -99,12 +99,13 @@ DWORD __fastcall WaitForMultipleObjects(DWORD Count, const HANDLE * Handles, BOO
   // Simplified: WaitAll waits each in turn; else poll until one signals or timeout.
   if (WaitAll)
   { for (DWORD i = 0; i < Count; ++i) { WaitObject * o = Lookup(Handles[i]); if (!o || !o->Wait(Milliseconds)) return WAIT_TIMEOUT; } return WAIT_OBJECT_0; }
-  auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(Milliseconds == INFINITE ? 1 : Milliseconds);
+  const bool infinite = (Milliseconds == INFINITE);
+  auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(infinite ? 0 : Milliseconds);
   for (;;)
   {
     winscp_pump_socket_events();   // wake FSocketEvent when its socket becomes ready (WinSock.cpp)
     for (DWORD i = 0; i < Count; ++i) { WaitObject * o = Lookup(Handles[i]); if (o && o->Wait(0)) return WAIT_OBJECT_0 + i; }
-    if (Milliseconds != INFINITE && std::chrono::steady_clock::now() >= deadline) return WAIT_TIMEOUT;
+    if (!infinite && std::chrono::steady_clock::now() >= deadline) return WAIT_TIMEOUT;
     std::this_thread::sleep_for(std::chrono::milliseconds(2));
   }
 }

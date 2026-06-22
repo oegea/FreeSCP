@@ -855,6 +855,9 @@ void __fastcall TSessionLog::DoAddToSelf(TLogLineType Type, const UnicodeString 
       int Writing = UtfLine.Length();
       CheckSize(Writing);
       FCurrentFileSize += fwrite(UtfLine.c_str(), 1, Writing, (FILE *)FFile);
+#ifndef _WIN32
+      fflush((FILE *)FFile);   // flush every line so a stalled/killed session still leaves a usable log
+#endif
     }
   }
 }
@@ -1194,7 +1197,7 @@ void __fastcall TSessionLog::DoAddStartupInfo(TAddLogEntryEvent AddLogEntry, TCo
     ACmdLine = GetCmdLineLog(AConfiguration);
   }
   ADF(L"Command-line: %s", (ACmdLine));
-  if (AConfiguration->ActualLogProtocol >= 1)
+  if ((AConfiguration->ActualLogProtocol >= 1) && (GetGlobalOptions() != NULL))   // NULL on the native build (no CLI options parser)
   {
     GetGlobalOptions()->LogOptions(AddLogEntry);
   }
