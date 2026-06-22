@@ -33,6 +33,7 @@
 #include <QFileDialog>
 #include <QClipboard>
 #include <QTreeView>
+#include <QTabBar>
 #include <QSplitter>
 #include <QRegularExpression>
 #include <QFileSystemWatcher>
@@ -884,6 +885,13 @@ int main(int argc, char ** argv)
   auto * centralLay = new QVBoxLayout(central);
   centralLay->setContentsMargins(0, 0, 0, 0);
   centralLay->setSpacing(0);
+  // Session tab bar (one tab per open connection); hidden until the first connect.
+  auto * tabBar = new QTabBar;
+  tabBar->setTabsClosable(true);
+  tabBar->setExpanding(false);
+  tabBar->setDrawBase(false);
+  tabBar->hide();
+  centralLay->addWidget(tabBar);
   centralLay->addWidget(splitter, 1);
 
   // Bottom function-key bar (the iconic WinSCP/Norton-Commander row).
@@ -1191,6 +1199,51 @@ int main(int argc, char ** argv)
                                 QMessageBox::Yes | QMessageBox::No, QMessageBox::No) == QMessageBox::Yes;
   });
 
+  //--- session tabs -------------------------------------------------------
+  static int curTab = -1;        // previously-active tab (for save-on-switch)
+  static bool tabSwitching = false;
+  // After a successful connect: add a tab for the new (already-active) bridge session.
+  auto addSessionTab = [&](const QString & label) {
+    tabSwitching = true;
+    int i = tabBar->addTab(label);
+    tabBar->setTabData(i, QStringList{ right->path(), left->path() });   // [remote, local]
+    tabBar->setCurrentIndex(i);
+    curTab = i;
+    tabBar->setVisible(true);
+    tabSwitching = false;
+  };
+  // Switch panels to reflect tab i (assumes engine session i is/should be active).
+  auto activateTab = [&](int i) {
+    engine::switchSession(i);
+    right->setRemote(tabBar->tabText(i));
+    QStringList st = tabBar->tabData(i).toStringList();
+    if (st.size() >= 1 && !st[0].isEmpty()) right->navigate(st[0]);
+    if (st.size() >= 2 && !st[1].isEmpty()) left->navigate(st[1]);
+    curTab = i;
+  };
+  QObject::connect(tabBar, &QTabBar::currentChanged, [&](int i) {
+    if (tabSwitching || i < 0) return;
+    if (curTab >= 0 && curTab < tabBar->count())                         // save outgoing tab's paths
+      tabBar->setTabData(curTab, QStringList{ right->path(), left->path() });
+    tabSwitching = true; activateTab(i); tabSwitching = false;
+  });
+  auto closeTab = [&](int i) {
+    if (busy() || i < 0 || i >= tabBar->count()) return;
+    tabSwitching = true;
+    engine::closeSession(i);
+    tabBar->removeTab(i);
+    if (tabBar->count() == 0) {
+      tabBar->hide(); curTab = -1;
+      right->setLocal(); right->navigate(u8(engine::homeDir()));
+      actDisconnect->setEnabled(false); window.setWindowTitle("WinSCP");
+    } else {
+      int ni = qMin(i, tabBar->count() - 1);
+      tabBar->setCurrentIndex(ni); activateTab(ni);
+    }
+    tabSwitching = false;
+  };
+  QObject::connect(tabBar, &QTabBar::tabCloseRequested, [&](int i) { closeTab(i); });
+
   //--- operations ---------------------------------------------------------
   auto doConnect = [&] {
     if (busy()) return;
@@ -1221,9 +1274,11 @@ int main(int argc, char ** argv)
     actDisconnect->setEnabled(true);
     window.setWindowTitle(QString("%1@%2 \xE2\x80\x94 WinSCP").arg(lp.user).arg(lp.host));
     log("Connected. Remote directory: " + u8(r.currentDir));
+    addSessionTab(QString("%1@%2").arg(lp.user).arg(lp.host));   // open a tab for this session
   };
   auto doDisconnect = [&] {
     if (busy()) return;
+    if (tabBar->count() > 0) { closeTab(tabBar->currentIndex()); window.statusBar()->showMessage("Disconnected"); log("Disconnected."); return; }
     engine::disconnectSftp();
     right->setLocal();
     right->navigate(u8(engine::homeDir()));
@@ -1709,6 +1764,7 @@ int main(int argc, char ** argv)
                             : p[4]=="s3"?engine::Protocol::S3 : p[4]=="ftp"?engine::Protocol::Ftp : engine::Protocol::Sftp;
         auto r = engine::connectSftp(s8(p[0]), p[1].toInt(), s8(p[2]), s8(p[3]), pr, false, p.size() > 5 ? s8(p[5]) : std::string());
         if (r.ok) { right->setRemote(QString("%1@%2").arg(p[2]).arg(p[0])); remoteHome = u8(r.currentDir); right->navigate(u8(r.currentDir));
+          addSessionTab(QString("%1@%2").arg(p[2]).arg(p[0]));
           // exercise the BACKGROUND transfer queue end-to-end (multi-file, on the worker thread)
           QString xf = qEnvironmentVariable("WINSCP_AUTOXFER");
           if (!xf.isEmpty()) {

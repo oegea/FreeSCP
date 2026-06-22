@@ -117,7 +117,14 @@ std::string remoteFileOctal(const std::string & nameUtf8);
 // Set remote permissions from an octal string. Returns true on success.
 bool remoteChmod(const std::string & nameUtf8, const std::string & octalUtf8, bool recursive = false, std::string * error = nullptr);
 
-void disconnectSftp();
+void disconnectSftp();   // closes + removes the active session (tab)
+
+//--- session tabs (multiple concurrent connections) ---
+int sessionCount();                 // number of open sessions
+int activeSession();                // index of the active session (-1 if none)
+std::string sessionLabel(int i);    // "user@host" for tab i
+void switchSession(int i);          // make session i active (subsequent remote calls target it)
+void closeSession(int i);           // close + remove session i
 
 //--- parallel-transfer connection pool (extra connections to the same server) ---
 // Open an additional connection to the primary's server. Returns a handle (>=1) or 0 on failure.

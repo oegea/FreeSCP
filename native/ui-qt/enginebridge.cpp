@@ -68,9 +68,34 @@ public:
   virtual UnicodeString TemporaryDir(bool = false) { return UnicodeString(L"/tmp/"); }
 };
 
-std::unique_ptr<TTerminal> g_terminal;
-std::unique_ptr<TSessionData> g_sessionData;
-UnicodeString g_password;
+// Last successful connect params, so we can open additional (parallel) connections to the same server.
+struct ConnParams { std::string host; int port = 0; std::string user, password; engine::Protocol protocol = engine::Protocol::Sftp; bool tls = false; bool valid = false; };
+
+// One open session = one tab. The active session's members are reached via the g_terminal/g_sessionData/
+// g_password/g_lastParams macros below, so the ~70 existing call sites are unchanged. When no session
+// is active, AS() returns a static empty Sess (null term) so remoteConnected() is simply false.
+struct Sess {
+  std::unique_ptr<TTerminal> term;
+  std::unique_ptr<TSessionData> data;
+  UnicodeString password;
+  ConnParams params;
+  std::string label;
+};
+std::vector<std::unique_ptr<Sess>> g_sess;
+int g_active = -1;
+Sess & AS() { static Sess empty; return (g_active >= 0 && g_active < (int)g_sess.size()) ? *g_sess[g_active] : empty; }
+void DropActiveSession() {
+  if (g_active < 0 || g_active >= (int)g_sess.size()) return;
+  Sess * s = g_sess[g_active].get();
+  if (s->term) { try { if (s->term->Active) s->term->Close(); } catch (...) {} }
+  g_sess.erase(g_sess.begin() + g_active);
+  g_active = g_sess.empty() ? -1 : (g_active >= (int)g_sess.size() ? (int)g_sess.size() - 1 : g_active);
+}
+#define g_terminal    (AS().term)
+#define g_sessionData (AS().data)
+#define g_password    (AS().password)
+#define g_lastParams  (AS().params)
+
 bool g_engineInited = false;
 std::function<bool(const engine::TransferProgress &)> g_progressCb;
 std::string g_lastTransferError;   // set by OnQueryUser on a qtError so transfers can report it
@@ -80,10 +105,6 @@ std::function<bool(const std::string &)> g_confirmCb;
 // True only while connectSftp runs (the UI thread). g_confirmCb shows a modal dialog, so it must
 // NEVER be called from a transfer worker thread (Qt GUI off the main thread = crash/deadlock).
 bool g_connecting = false;
-
-// Last successful connect params, so we can open additional (parallel) connections to the same server.
-struct ConnParams { std::string host; int port = 0; std::string user, password; engine::Protocol protocol = engine::Protocol::Sftp; bool tls = false; bool valid = false; };
-ConnParams g_lastParams;
 
 // Serializes ALL engine access. The engine + single TTerminal are not thread-safe; the GUI runs
 // transfers on a worker thread, so every public entry point takes this (recursive: some call each
@@ -238,7 +259,10 @@ ConnectResult connectSftp(const std::string & host, int port,
   try
   {
     EnsureEngineInited();
-    disconnectSftp();
+    // Open a NEW session (tab). Each connect adds a tab; closing is via disconnectSftp/closeSession.
+    g_sess.push_back(std::unique_ptr<Sess>(new Sess()));
+    g_active = (int)g_sess.size() - 1;
+    AS().label = user + "@" + host;
     // Optional full SSH/SFTP protocol log (heavy — every packet). Off by default; set
     // WINSCP_SESSIONLOG=1 to capture /tmp/winscp-session.log for diagnosing protocol issues.
     if (getenv("WINSCP_SESSIONLOG"))
@@ -346,10 +370,10 @@ ConnectResult connectSftp(const std::string & host, int port,
     if ((Ext != nullptr) && (Ext->MoreMessages != nullptr))
       for (int i = 0; i < Ext->MoreMessages->Count; i++) msg += UnicodeString(L"\n") + Ext->MoreMessages->Strings[i];
     r.error = ToU8(msg);
-    g_terminal.reset();
+    DropActiveSession();   // remove the failed tab
     LogLine("  connect: FAILED: " + r.error);
   }
-  catch (...) { g_connecting = false; r.error = "unknown error"; g_terminal.reset(); LogLine("  connect: unknown exception"); }
+  catch (...) { g_connecting = false; r.error = "unknown error"; DropActiveSession(); LogLine("  connect: unknown exception"); }
   return r;
 }
 
@@ -745,15 +769,27 @@ bool synchronizeApply(std::string * error)
 
 void synchronizeRelease() { delete g_checklist; g_checklist = nullptr; }
 
-void disconnectSftp()
+void disconnectSftp()   // closes + removes the ACTIVE session (tab)
 {
   ENGINE_LOCK;
-  if (g_terminal)
-  {
-    try { if (g_terminal->Active) g_terminal->Close(); } catch (...) {}
-    g_terminal.reset();
-  }
-  g_sessionData.reset();
+  DropActiveSession();
+}
+
+//--- session tabs ---
+int sessionCount() { ENGINE_LOCK; return (int)g_sess.size(); }
+int activeSession() { ENGINE_LOCK; return g_active; }
+std::string sessionLabel(int i) { ENGINE_LOCK; return (i >= 0 && i < (int)g_sess.size()) ? g_sess[i]->label : std::string(); }
+void switchSession(int i) { ENGINE_LOCK; if (i >= 0 && i < (int)g_sess.size()) g_active = i; }
+void closeSession(int i)
+{
+  ENGINE_LOCK;
+  if (i < 0 || i >= (int)g_sess.size()) return;
+  Sess * s = g_sess[i].get();
+  if (s->term) { try { if (s->term->Active) s->term->Close(); } catch (...) {} }
+  g_sess.erase(g_sess.begin() + i);
+  if (g_sess.empty()) g_active = -1;
+  else if (g_active > i) g_active--;
+  else if (g_active == i) g_active = std::min(i, (int)g_sess.size() - 1);
 }
 
 } // namespace engine
