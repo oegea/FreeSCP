@@ -31,6 +31,8 @@
 #include <QMessageBox>
 #include <QInputDialog>
 #include <QFileDialog>
+#include <QClipboard>
+#include <QRegularExpression>
 #include <QFileSystemWatcher>
 #include <QProcess>
 #include <QStandardPaths>
@@ -569,6 +571,18 @@ public:
     return out;
   }
 
+  // Select (or deselect) all entries matching a wildcard mask (e.g. "*.txt") — WinSCP Ctrl+Num+/-.
+  void selectByMask(const QString & mask, bool sel) {
+    QItemSelectionModel * sm = FView->selectionModel(); if (!sm) return;
+    QRegularExpression re(QRegularExpression::wildcardToRegularExpression(mask), QRegularExpression::CaseInsensitiveOption);
+    for (int r = 0; r < (int)FEntries.size(); ++r) {
+      if (FEntries[r].isParent) continue;
+      if (re.match(u8(FEntries[r].name)).hasMatch())
+        sm->select(QItemSelection(FModel->index(r, 0), FModel->index(r, 4)),
+                   sel ? QItemSelectionModel::Select : QItemSelectionModel::Deselect);
+    }
+    if (onStatusChanged) onStatusChanged();
+  }
   void setStatusLine(const QString & s) { FStatus->setText(s); }
   // Native icon for an entry: folder icon for dirs, "up" for "..", file-type icon (by extension) for
   // files. Cached per extension so listing stays fast.
@@ -1188,6 +1202,46 @@ int main(int argc, char ** argv)
     active->refresh();
     window.statusBar()->showMessage(ok ? "Created " + name : "Create folder failed — " + u8(err));
   };
+
+  // Select files by wildcard mask (Ctrl+Num+) / deselect (Ctrl+Num-).
+  auto doSelectMask = [&](bool sel) {
+    bool okIn = false;
+    QString mask = QInputDialog::getText(&window, sel ? "Select files" : "Unselect files",
+                                         "File mask (e.g. *.txt):", QLineEdit::Normal, "*", &okIn);
+    if (okIn && !mask.isEmpty()) active->selectByMask(mask, sel);
+  };
+
+  // Create a new empty file (Shift+F4) — WinSCP's "New > File".
+  auto doNewFile = [&] {
+    if (active->isRemote() && busy()) return;
+    bool okIn = false;
+    QString name = QInputDialog::getText(&window, "Create file", "New file name:", QLineEdit::Normal, "", &okIn);
+    if (!okIn || name.isEmpty()) return;
+    bool ok; std::string err;
+    if (active->isRemote()) {
+      QString tmp = QDir::tempPath() + "/winscp-new/" + name; QDir().mkpath(QDir::tempPath() + "/winscp-new");
+      { QFile f(tmp); f.open(QIODevice::WriteOnly); f.close(); }
+      ok = engine::uploadToRemote(s8(tmp), s8(active->path()), &err);
+    } else {
+      QFile f(active->path() + "/" + name); ok = f.open(QIODevice::WriteOnly); if (ok) f.close(); else err = "cannot create";
+    }
+    active->refresh();
+    window.statusBar()->showMessage(ok ? "Created " + name : "Create file failed — " + u8(err));
+  };
+
+  // Copy the selected entries' full path(s) to the clipboard (and, for remote, an sftp:// URL).
+  auto doCopyPath = [&] {
+    QStringList sel = active->selectedItems(); if (sel.isEmpty()) return;
+    QStringList paths;
+    for (const QString & f : sel) {
+      QString full = active->path() + (active->path().endsWith('/') ? "" : "/") + f;
+      if (active->isRemote() && connSsh && !connHost.isEmpty())
+        paths << QString("sftp://%1@%2:%3%4").arg(connUser, connHost).arg(connPort).arg(full);
+      else paths << full;
+    }
+    QApplication::clipboard()->setText(paths.join("\n"));
+    window.statusBar()->showMessage(QString("Copied %1 path(s) to clipboard").arg(paths.size()));
+  };
   auto doRename = [&] {
     if (busy()) return;
     QStringList sel = active->selectedItems();
@@ -1374,6 +1428,11 @@ int main(int argc, char ** argv)
     mFiles->addAction("&Properties\tF9", doProps);
     mFiles->addSeparator();
     mFiles->addAction("Create &Directory\tF7", doMkdir);
+    mFiles->addAction("Create &File\tShift+F4", doNewFile);
+    mFiles->addSeparator();
+    mFiles->addAction("&Select files\xE2\x80\xA6\tCtrl++", [&]{ doSelectMask(true); });
+    mFiles->addAction("&Unselect files\xE2\x80\xA6\tCtrl+-", [&]{ doSelectMask(false); });
+    mFiles->addAction("Copy &path to clipboard\tCtrl+Shift+C", doCopyPath);
     auto * mSession = window.menuBar()->addMenu("&Session");
     mSession->addAction("&Login\xE2\x80\xA6", doConnect);
     mSession->addAction("&Disconnect", doDisconnect);
@@ -1502,6 +1561,11 @@ int main(int argc, char ** argv)
   shortcut(Qt::ALT | Qt::Key_Up,    [&]{ active->goUp(); });               // parent dir
   shortcut(Qt::CTRL | Qt::Key_N, [&]{ doConnect(); });                     // new session
   shortcut(Qt::CTRL | Qt::Key_T, doOpenTerminal);                          // open ssh terminal
+  shortcut(Qt::SHIFT | Qt::Key_F4, doNewFile);                             // new empty file
+  shortcut(Qt::CTRL | Qt::Key_Plus,  [&]{ doSelectMask(true); });          // select by mask
+  shortcut(Qt::CTRL | Qt::Key_Equal, [&]{ doSelectMask(true); });          // (same key without shift)
+  shortcut(Qt::CTRL | Qt::Key_Minus, [&]{ doSelectMask(false); });         // unselect by mask
+  shortcut(Qt::CTRL | Qt::SHIFT | Qt::Key_C, doCopyPath);                  // copy path/URL
   shortcut(Qt::Key_Insert, [&]{ active->toggleSelectAndAdvance(); });      // Norton select + advance
   shortcut(Qt::Key_F1, [&]{ QMessageBox::about(&window, "About WinSCP",
     "WinSCP \xE2\x80\x94 native port (Mac/Linux)\nSFTP / SCP / FTP / WebDAV / S3"); });
