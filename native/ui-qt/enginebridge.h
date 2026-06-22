@@ -115,7 +115,7 @@ bool remoteRename(const std::string & oldNameUtf8, const std::string & newNameUt
 // Current unix permissions of a remote entry as an octal string (e.g. "644"), empty if unknown.
 std::string remoteFileOctal(const std::string & nameUtf8);
 // Set remote permissions from an octal string. Returns true on success.
-bool remoteChmod(const std::string & nameUtf8, const std::string & octalUtf8, std::string * error = nullptr);
+bool remoteChmod(const std::string & nameUtf8, const std::string & octalUtf8, bool recursive = false, std::string * error = nullptr);
 
 void disconnectSftp();
 

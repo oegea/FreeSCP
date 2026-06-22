@@ -666,7 +666,7 @@ std::string remoteFileOctal(const std::string & nameUtf8)
   return ToU8(rf->Rights->Octal);
 }
 
-bool remoteChmod(const std::string & nameUtf8, const std::string & octalUtf8, std::string * error)
+bool remoteChmod(const std::string & nameUtf8, const std::string & octalUtf8, bool recursive, std::string * error)
 {
   ENGINE_LOCK;
   if (!remoteConnected()) { if (error) *error = "not connected"; return false; }
@@ -677,7 +677,10 @@ bool remoteChmod(const std::string & nameUtf8, const std::string & octalUtf8, st
     TRemoteProperties props;
     props.Valid = TValidProperties() << vpRights;
     props.Rights.Octal = FromU8(octalUtf8);
+    props.Recursive = recursive;   // apply to a directory's contents too
+    g_lastTransferError.clear();
     g_terminal->ChangeFileProperties(rf->FullFileName, rf, &props);
+    if (!g_lastTransferError.empty()) { if (error) *error = g_lastTransferError; return false; }
     return true;
   }
   catch (Exception & E) { if (error) *error = ExceptionToU8(E); return false; }

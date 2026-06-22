@@ -270,12 +270,14 @@ static LoginParams showLoginDialog(QWidget * parent)
 // Properties dialog — WinSCP-style permissions grid (Owner/Group/Others x R/W/X) with a synced
 // octal field. Returns the chosen octal string, or empty if cancelled.
 //===========================================================================
-static QString showPropertiesDialog(QWidget * parent, const QString & name, const QString & curOctal)
+static QString showPropertiesDialog(QWidget * parent, const QString & name, const QString & curOctal,
+                                    const QString & info, bool isDir, bool * recursiveOut)
 {
   QDialog dlg(parent);
   dlg.setWindowTitle(name + " — Properties");
 
   auto * outer = new QVBoxLayout(&dlg);
+  if (!info.isEmpty()) { auto * il = new QLabel(info); il->setTextInteractionFlags(Qt::TextSelectableByMouse); outer->addWidget(il); }
   auto * grp = new QGroupBox("Permissions");
   auto * g = new QGridLayout(grp);
   g->addWidget(new QLabel("R"), 0, 1, Qt::AlignHCenter);
@@ -321,12 +323,17 @@ static QString showPropertiesDialog(QWidget * parent, const QString & name, cons
   QObject::connect(octEdit, &QLineEdit::textEdited, syncBoxesFromOctal);
   syncOctalFromBoxes();
 
+  auto * cbRec = new QCheckBox("Set recursively (apply to directory contents)");
+  cbRec->setVisible(isDir);
+  outer->addWidget(cbRec);
+
   auto * bb = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
   outer->addWidget(bb);
   QObject::connect(bb, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
   QObject::connect(bb, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
 
   if (dlg.exec() != QDialog::Accepted) return QString();
+  if (recursiveOut) *recursiveOut = cbRec->isChecked();
   return octEdit->text();
 }
 
@@ -439,6 +446,12 @@ public:
     std::string n = s8(name);
     for (const auto & e : FEntries) if (!e.isDir && e.name == n) return (qint64)e.size;
     return 0;
+  }
+  // Entry metadata by name (nullptr if not in the current listing).
+  const engine::DirEntry * entryNamed(const QString & name) const {
+    std::string n = s8(name);
+    for (const auto & e : FEntries) if (e.name == n) return &e;
+    return nullptr;
   }
   // Does the current listing already contain this name (for overwrite confirmation)?
   bool contains(const QString & name) const {
@@ -1302,13 +1315,26 @@ int main(int argc, char ** argv)
     QStringList sel = active->selectedItems();
     if (sel.size() != 1) { window.statusBar()->showMessage("Select exactly one item"); return; }
     if (!active->isRemote()) { QMessageBox::information(&window, "Properties", "Properties (permissions) apply to remote files."); return; }
-    std::string cur = engine::remoteFileOctal(s8(sel.first()));
-    QString oct = showPropertiesDialog(&window, sel.first(), cur.empty() ? "644" : u8(cur));
+    QString name = sel.first();
+    std::string cur = engine::remoteFileOctal(s8(name));
+    const engine::DirEntry * e = active->entryNamed(name);
+    QString info;
+    if (e) {
+      info = QString("Type: %1\nSize: %2\nOwner: %3\nModified: %4")
+        .arg(e->isDir ? "Directory" : "File")
+        .arg(e->isDir ? QString("—") : u8(engine::formatSize(e->size)))
+        .arg(e->owner.empty() ? QString("—") : u8(e->owner))
+        .arg(e->modified.empty() ? QString("—") : u8(e->modified));
+    }
+    bool recursive = false;
+    QString oct = showPropertiesDialog(&window, name, cur.empty() ? "644" : u8(cur),
+                                       info, e && e->isDir, &recursive);
     if (oct.isEmpty()) return;
     std::string err;
-    bool ok = engine::remoteChmod(s8(sel.first()), s8(oct), &err);
+    bool ok = engine::remoteChmod(s8(name), s8(oct), recursive, &err);
     active->refresh();
-    window.statusBar()->showMessage(ok ? "Set " + oct : "chmod failed — " + u8(err));
+    window.statusBar()->showMessage(ok ? (recursive ? "Set " + oct + " recursively" : "Set " + oct)
+                                       : "chmod failed — " + u8(err));
   };
   auto doOpen = [&] {
     if (active->isRemote() && busy()) return;
