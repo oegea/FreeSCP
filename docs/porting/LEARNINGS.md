@@ -249,3 +249,44 @@ exception: its CMainThread/control-socket state machine is effectively a singlet
 pool, run N workers pulling from a shared atomic index, each worker sets its connection's own
 progress sink (setProgressSinkVia) keyed to its current queue row; a coordinator thread joins them
 and marshals completion to the UI thread.
+
+## 16. Uninitialized member → nondeterministic crash: TTerminal::FOperationProgress
+
+`TTerminal::FOperationProgress` is assigned only during an operation (set in DoStartOperation,
+cleared after) and is **never initialized in the constructor**. The first `StartOperationWithFile`
+(delete, chmod/SetProperties, remote move, calculate size) calls `TryStartOperationWithFile`, which
+reads `OperationProgress` and, if non-NULL, dereferences `->Operation`. Uninitialized = garbage =
+sometimes 0 ("works"), sometimes not (SIGSEGV) — a classic "deletes a file and sometimes the app just
+closes". Upstream relies on it being NULL (there's a `DebugAssert(FOperationProgress == NULL)` before
+the first set) but never sets it in the ctor; on Windows it's masked by allocator zeroing / luck.
+Fix: `FOperationProgress = NULL;` in the ctor (UPSTREAM-PATCHES). **Audit class**: any engine member
+read before its first explicit assignment is a latent nondeterministic crash on a non-zeroing alloc.
+
+## 17. PuTTY socket flow-control: ns_try_flush MUST call plug_sent (the upload-stall bug)
+
+PuTTY's socket backend has a two-way contract: the upper layer pushes data via `sk_write` (our
+`ns_write` → bufchain + `ns_try_flush`), and when the OS send buffer **drains** the backend must call
+`plug_sent(plug, backlog)` back up. `ssh_sent` (the SSH plug's `sent` handler) does two essential
+things on drain: unthrottle the connection AND `queue_idempotent_callback(ic_out_raw)` to push the
+NEXT chunk of BPP output. If the platform `ns_try_flush` omits `plug_sent`, then the moment the
+socket send buffer backlogs — which happens on ANY real/slow network once you outrun the link — the
+first burst goes out and nothing more is ever queued: the transfer freezes and the engine eventually
+reports "Timeout waiting for server to respond" (often ~3%, the size of one socket buffer + SSH
+window). **It never reproduces on localhost** because the loopback send buffer is huge and instant —
+`send()` never returns EAGAIN, the socket never backlogs, so `plug_sent` is never needed. Reproduce
+locally by forcing a tiny `SO_SNDBUF` on the connect fd. Fix: in `ns_try_flush`, after sending, if
+the backlog shrank call `plug_sent(s->plug, bufchain_size(&s->output))`. **Audit class**: any
+hand-written PuTTY platform vtable (network, also the handle/pipe backends) must honor every callback
+the upper layers expect on state change, not just the happy-path data move — the bugs only surface
+under backpressure/latency that localhost never produces.
+
+## 18. Diagnostics that survive a hard failure
+
+Two failure modes here (a SIGSEGV that closes the app, a transfer that hangs then times out) were
+undebuggable from the UI. What cracked them: (a) a file logger that **fflushes every line** (stdio is
+block-buffered; on kill -9 or a crash the buffer is lost — the header appeared but the smoking-gun
+lines didn't until per-line flush); (b) a **SIGSEGV/SIGABRT/SIGBUS handler** that `backtrace()`s to
+that log before re-raising — the backtrace named `TryStartOperationWithFile` and `ns_try_flush`
+directly. The engine's own session log (`Configuration->Logging`, LogProtocol=2) is the protocol-level
+truth but is heavy (100k+ lines/transfer) and crashed on native until `GetGlobalOptions()` was
+null-guarded (it's NULL with no CLI parser) — keep it opt-in (WINSCP_SESSIONLOG=1).

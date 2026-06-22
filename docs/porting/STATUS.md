@@ -2,7 +2,7 @@
 
 Update this whenever a target starts/stops building. Verify by actually building.
 
-_Last updated: 2026-06-21 — SFTP + SCP fully operational (connect/list/nav/transfer/mkdir/rename/delete/chmod); see entries at bottom._
+_Last updated: 2026-06-22 — all 5 protocols operational; GUI is a usable WinSCP Commander (drag&drop, transfer queue, parallel transfers, internal editor + edit-and-watch, key auth, host-key prompt, overwrite confirm). Two critical real-world bugs fixed this round (delete crash, upload stall). See entries at bottom._
 
 ## Current phase: 1.5 — compiling engine .cpp bodies (RTL bodies on demand)
 Phase 0 ✅ (foundation). Phase 1 ✅ (35/36 headers parse). Now: compile .cpp into libwinscpcore.
@@ -721,3 +721,43 @@ cancel. Parallel transfers: a >1-file plain remote copy fans out over 2 concurre
 (enginebridge parallel pool: per-ParConn TTerminal + own mutex, so no global-lock serialization).
 Verified byte-perfect (MD5) for SFTP over 2 connections, repeatable. FTP gated to serial
 (parallelSupported()==false — its single-connection backend can't run concurrent instances).
+
+## GUI polish + real-world hardening (drag&drop, editor, auth, and two critical crash/stall fixes)
+The GUI is now a daily-usable WinSCP Commander, and two bugs that only appeared against REAL servers
+(invisible on localhost) were tracked down and fixed.
+
+GUI/features this round:
+- **Drag & drop**: inter-panel (copy/upload) AND external Finder→panel (import local files/folders,
+  recursive). Resizable+persistent table columns (set once, render only swaps rows). Native file-type
+  icons (QFileIconProvider). Compact transfer-queue rows. Status bar shows selected count + size.
+- **Internal editor** (the classic WinSCP notepad): Find (Ctrl+F), Ln/Col, word-wrap, Save&Close,
+  unsaved-changes prompt. Double-click a file opens it (F3 = OS editor). **Edit-and-watch**: opening
+  a remote file in any editor watches the temp copy (QFileSystemWatcher) and auto-re-uploads on save,
+  shown in the transfer queue. Folder upload (recursive) via drag.
+- **Auth**: SSH **public-key** login (Login key picker; OpenSSH keys auto-converted to .ppk via
+  PuttyTools, temp deleted after connect; password field = passphrase). **Host-key verification**
+  prompt (fingerprint Yes/No, was auto-accepting). **Overwrite confirmation** before transfers
+  (Overwrite/Skip/Cancel). Transfer/delete/mkdir/rename failures now reported (were silent "done").
+- **Open Terminal** (Ctrl+T) launches the system terminal with `ssh user@host -p port`.
+- **Diagnostics**: always-on per-op log /tmp/winscp-native.log + SIGSEGV/SIGABRT crash handler with
+  backtrace (Options > Open diagnostics log file). Opt-in full SSH/SFTP protocol log via
+  WINSCP_SESSIONLOG=1 -> /tmp/winscp-session.log.
+
+Two critical fixes (both localhost-invisible, found via the new logging):
+1. **Random delete/chmod crash** — `TTerminal::FOperationProgress` was never initialized in the
+   constructor; `TryStartOperationWithFile` (delete/chmod/move/calc-size) dereferenced the garbage
+   pointer -> nondeterministic SIGSEGV. Init to NULL in the ctor (UPSTREAM-PATCHES; upstream relies on
+   NULL via a DebugAssert but never sets it).
+2. **Upload stalls at ~3% then "Timeout waiting for server to respond"** — native/putty/src/uxnet.c
+   `ns_try_flush` never called `plug_sent`. PuTTY's `ssh_sent` unthrottles AND queues the next output
+   chunk when the socket send backlog drains; without it, once the socket backlogs (any real/slow
+   network) the first burst went out and the rest never did. Never reproduced on localhost (loopback
+   never backlogs); reproduced by forcing a tiny SO_SNDBUF, fixed, verified byte-perfect (MD5).
+Supporting: GetGlobalOptions() null-guard (logging crashed on native), WaitForMultipleObjects INFINITE
+bug (1ms -> real infinite), g_confirmCb gated to connect-only (no GUI calls from worker threads),
+TSessionLog per-line fflush. Full build + ctest green; Windows tree untouched (source edits guarded
+or correct-everywhere, in UPSTREAM-PATCHES.md).
+
+NEXT: WinSCP feature/UI fidelity batch — dark theme, file-mask filter + select-by-mask, clipboard
+(copy path/URL), new file + duplicate, recursive chmod + richer Properties, swap panels, free space
+in status bar; then tree view, tabs, the F5/F6 copy dialog (target + transfer mode binary/text).
