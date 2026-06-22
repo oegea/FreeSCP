@@ -1,0 +1,14 @@
+# FreeSCP native port — build output & local cruft (the upstream Windows tree manages its own).
+native/build/
+native/**/build/
+*.app/
+*.dSYM/
+
+# macOS
+.DS_Store
+
+# signing / notarization secrets — never commit
+.env.notarize
+*.p12
+*.cer
+*.provisionprofile
