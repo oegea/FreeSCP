@@ -123,7 +123,7 @@ static LoginParams showLoginDialog(QWidget * parent)
   auto * newSite = new QTreeWidgetItem(sites, QStringList("\xF0\x9F\x96\xA5  New Site"));
   top->addWidget(sites);
 
-  QSettings settings("WinSCP-native-port", "WinSCP");
+  QSettings settings;
   auto reloadSites = [&] {
     while (sites->topLevelItemCount() > 1) delete sites->takeTopLevelItem(1);
     settings.beginGroup("sites");
@@ -842,8 +842,12 @@ int main(int argc, char ** argv)
 {
   engine::installCrashHandler();   // dump a backtrace to the log on a hard crash (BEFORE anything else)
   QApplication app(argc, argv);
+  // QSettings scope. Headless/offscreen test runs use an ISOLATED org so they never read or wipe the
+  // user's real saved sites/prefs. Every QSettings() default-ctor below inherits this org + app name.
+  QCoreApplication::setOrganizationName(qgetenv("QT_QPA_PLATFORM") == "offscreen" ? "WinSCP-native-port-test"
+                                                                                  : "WinSCP-native-port");
   app.setApplicationName("WinSCP");
-  { QSettings s("WinSCP-native-port", "WinSCP");
+  { QSettings s;
     gShowHidden = s.value("prefs/showHidden", true).toBool();
     gConfirmDelete = s.value("prefs/confirmDelete", true).toBool();
     gConfirmOverwrite = s.value("prefs/confirmOverwrite", true).toBool();
@@ -853,7 +857,7 @@ int main(int argc, char ** argv)
   QMainWindow window;
   window.setWindowTitle("WinSCP");
   window.resize(1100, 720);
-  { QSettings s("WinSCP-native-port", "WinSCP");
+  { QSettings s;
     if (s.contains("win/geometry")) window.restoreGeometry(s.value("win/geometry").toByteArray()); }
 
   // Main toolbar (native icons, WinSCP-style text-beside-icon).
@@ -878,7 +882,7 @@ int main(int argc, char ** argv)
   right->setLocal();
   splitter->addWidget(left);
   splitter->addWidget(right);
-  { QSettings s("WinSCP-native-port", "WinSCP");
+  { QSettings s;
     if (s.contains("win/splitter")) splitter->restoreState(s.value("win/splitter").toByteArray());
     else splitter->setSizes({ 550, 550 }); }
 
@@ -1625,7 +1629,7 @@ int main(int argc, char ** argv)
     auto * actHidden = mOptions->addAction("Show &hidden files"); actHidden->setCheckable(true); actHidden->setChecked(gShowHidden);
     actHidden->setShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_H));
     QObject::connect(actHidden, &QAction::toggled, [&](bool on){ gShowHidden = on; left->refresh(); right->refresh();
-      QSettings("WinSCP-native-port","WinSCP").setValue("prefs/showHidden", on); });
+      QSettings().setValue("prefs/showHidden", on); });
     mOptions->addSeparator();
     mOptions->addAction("&Preferences\xE2\x80\xA6", [&]{
       QDialog d(&window); d.setWindowTitle("Preferences"); d.resize(520, 360);
@@ -1662,7 +1666,7 @@ int main(int argc, char ** argv)
       gShowHidden = cbHidden->isChecked(); gConfirmDelete = cbDel->isChecked();
       gConfirmOverwrite = cbOvr->isChecked(); gParallelMax = spinPar->value(); gAltColors = cbAlt->isChecked();
       actHidden->setChecked(gShowHidden);
-      QSettings s("WinSCP-native-port","WinSCP");
+      QSettings s;
       s.setValue("prefs/showHidden", gShowHidden); s.setValue("prefs/confirmDelete", gConfirmDelete);
       s.setValue("prefs/confirmOverwrite", gConfirmOverwrite); s.setValue("prefs/parallelMax", gParallelMax);
       s.setValue("prefs/altColors", gAltColors);
@@ -1754,7 +1758,7 @@ int main(int argc, char ** argv)
 
   // Persist window geometry + splitter on quit.
   QObject::connect(&app, &QApplication::aboutToQuit, [&]{
-    QSettings s("WinSCP-native-port", "WinSCP");
+    QSettings s;
     s.setValue("win/geometry", window.saveGeometry());
     s.setValue("win/splitter", splitter->saveState());
   });
