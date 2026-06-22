@@ -88,6 +88,23 @@ static int  gParallelMax = 2;          // max concurrent connections for queue p
 static bool gAltColors = true;         // alternating row colors in panels
 static std::atomic<bool> gTransferRunning{false};  // a background transfer batch is in flight
 
+// App-branded message box: shows the FreeSCP icon (like a native macOS NSAlert) instead of a generic
+// severity icon, so alerts never look empty/unbranded. Returns the clicked button.
+static QMessageBox::StandardButton appMessage(
+    QWidget * parent, const QString & title, const QString & text,
+    QMessageBox::StandardButtons buttons = QMessageBox::Ok,
+    QMessageBox::StandardButton def = QMessageBox::NoButton)
+{
+  QMessageBox box(parent);
+  box.setWindowTitle(title);
+  box.setText(text);
+  box.setStandardButtons(buttons);
+  if (def != QMessageBox::NoButton) box.setDefaultButton(def);
+  QPixmap p(":/winscp.png");
+  if (!p.isNull()) box.setIconPixmap(p.scaled(64, 64, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+  return static_cast<QMessageBox::StandardButton>(box.exec());
+}
+
 //===========================================================================
 // Login dialog — faithful to WinSCP: a sites tree on the left, a "Session" form on the right
 // (File protocol, Host name + Port, User name, Password), Tools/Manage + Login/Close buttons.
@@ -834,8 +851,8 @@ protected:
   {
     if (te->document()->isModified())
     {
-      auto r = QMessageBox::question(this, "Editor", "Save changes before closing?",
-                                     QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel);
+      auto r = appMessage(this, "Editor", "Save changes before closing?",
+                          QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel, QMessageBox::Save);
       if (r == QMessageBox::Cancel) { e->ignore(); return; }
       if (r == QMessageBox::Save && !doSave()) { e->ignore(); return; }
     }
@@ -1075,7 +1092,7 @@ int main(int argc, char ** argv)
   auto startTransfer = [&](FilePanel * from, FilePanel * to, QStringList files, bool isMove) {
     if (files.isEmpty()) { window.statusBar()->showMessage("No files selected"); return; }
     if (from->isRemote() && to->isRemote())
-    { QMessageBox::information(&window, "Transfer", "Remote-to-remote is not supported yet."); return; }
+    { appMessage(&window, "Transfer", "Remote-to-remote is not supported yet."); return; }
     if (busy()) return;
     files = confirmOverwrite(to, files);
     if (files.isEmpty()) { window.statusBar()->showMessage("Transfer cancelled"); return; }
@@ -1157,7 +1174,7 @@ int main(int argc, char ** argv)
         btnCancel->setEnabled(false);
         to->refresh(); if (isMove) from->refresh();
         window.statusBar()->showMessage(QString("Transferred %1/%2 item(s)").arg(ok).arg(total));
-        if (ok < total) QMessageBox::warning(&window, "Transfer",
+        if (ok < total) appMessage(&window, "Transfer",
           QString("%1 of %2 item(s) failed. See the Transfer queue for the error.").arg(total - ok).arg(total));
       }, Qt::QueuedConnection);
     }).detach();
@@ -1210,7 +1227,7 @@ int main(int argc, char ** argv)
       QMetaObject::invokeMethod(&window, [&, ok, total, dest]{
         engine::setProgressSink(nullptr); gTransferRunning = false; btnCancel->setEnabled(false);
         dest->refresh(); window.statusBar()->showMessage(QString("Imported %1/%2 item(s)").arg(ok).arg(total));
-        if (ok < total) QMessageBox::warning(&window, "Import",
+        if (ok < total) appMessage(&window, "Import",
           QString("%1 of %2 item(s) failed. See the Transfer queue for the error.").arg(total - ok).arg(total));
       }, Qt::QueuedConnection);
     }).detach();
@@ -1232,7 +1249,7 @@ int main(int argc, char ** argv)
   // Host-key verification: show the engine's message (fingerprint) + Yes/No instead of auto-accepting.
   engine::setConfirmCallback([&](const std::string & msg) -> bool {
     if (qgetenv("QT_QPA_PLATFORM") == "offscreen") return true;   // headless tests: auto-accept
-    return QMessageBox::warning(&window, "Host key verification", u8(msg),
+    return appMessage(&window, "Host key verification", u8(msg),
                                 QMessageBox::Yes | QMessageBox::No, QMessageBox::No) == QMessageBox::Yes;
   });
 
@@ -1286,7 +1303,7 @@ int main(int argc, char ** argv)
     if (busy()) return;
     LoginParams lp = showLoginDialog(&window);
     if (!lp.ok) return;
-    if (lp.host.trimmed().isEmpty()) { QMessageBox::warning(&window, "Login", "Please enter a host name."); return; }
+    if (lp.host.trimmed().isEmpty()) { appMessage(&window, "Login", "Please enter a host name."); return; }
     window.statusBar()->showMessage("Connecting\xE2\x80\xA6");
     log(QString("Connecting to %1:%2 \xE2\x80\xA6").arg(lp.host).arg(lp.port));
     QApplication::processEvents();
@@ -1295,7 +1312,7 @@ int main(int argc, char ** argv)
     {
       log("FAILED: " + u8(r.error));
       logDock->show();
-      QMessageBox::critical(&window, "Login", u8(r.error));
+      appMessage(&window, "Login", u8(r.error));
       window.statusBar()->showMessage("Connection failed");
       return;
     }
@@ -1365,7 +1382,7 @@ int main(int argc, char ** argv)
     QStringList files = active->selectedItems();
     if (files.isEmpty()) { window.statusBar()->showMessage("No files selected"); return; }
     if (active->isRemote() && dst->isRemote())
-    { QMessageBox::information(&window, "Copy", "Remote-to-remote copy is not supported yet."); return; }
+    { appMessage(&window, "Copy", "Remote-to-remote copy is not supported yet."); return; }
     if (busy()) return;
     QString target = showCopyDialog("Copy", files.size(), dst->path());
     if (target.isEmpty()) return;
@@ -1377,7 +1394,7 @@ int main(int argc, char ** argv)
     QStringList files = active->selectedItems();
     if (files.isEmpty()) { window.statusBar()->showMessage("No files selected"); return; }
     if (active->isRemote() && dst->isRemote())
-    { QMessageBox::information(&window, "Move", "Remote-to-remote move is not supported yet."); return; }
+    { appMessage(&window, "Move", "Remote-to-remote move is not supported yet."); return; }
     if (busy()) return;
     QString target = showCopyDialog("Move", files.size(), dst->path());
     if (target.isEmpty()) return;
@@ -1452,7 +1469,8 @@ int main(int argc, char ** argv)
     if (busy()) return;
     QStringList sel = active->selectedItems();
     if (sel.isEmpty()) { window.statusBar()->showMessage("No files selected"); return; }
-    if (gConfirmDelete && QMessageBox::question(&window, "Delete", QString("Delete %1 item(s)?").arg(sel.size())) != QMessageBox::Yes) return;
+    if (gConfirmDelete && appMessage(&window, "Delete", QString("Delete %1 item(s)?").arg(sel.size()),
+                                     QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes) return;
     engine::logLine("[ui] doDelete: " + std::to_string(sel.size()) + " item(s) remote=" + (active->isRemote() ? "1" : "0") + " in '" + s8(active->path()) + "'");
     int ok = 0; std::string err, lastErr;
     for (const QString & f : sel) {
@@ -1462,13 +1480,13 @@ int main(int argc, char ** argv)
     engine::logLine("[ui] doDelete done: " + std::to_string(ok) + "/" + std::to_string(sel.size()) + (lastErr.empty() ? "" : (" lastErr=" + lastErr)));
     active->refresh();
     window.statusBar()->showMessage(QString("Deleted %1/%2 item(s)").arg(ok).arg(sel.size()));
-    if (ok < sel.size()) QMessageBox::warning(&window, "Delete", "Some items could not be deleted:\n" + u8(lastErr));
+    if (ok < sel.size()) appMessage(&window, "Delete", "Some items could not be deleted:\n" + u8(lastErr));
   };
   auto doProps = [&] {
     if (busy()) return;
     QStringList sel = active->selectedItems();
     if (sel.size() != 1) { window.statusBar()->showMessage("Select exactly one item"); return; }
-    if (!active->isRemote()) { QMessageBox::information(&window, "Properties", "Properties (permissions) apply to remote files."); return; }
+    if (!active->isRemote()) { appMessage(&window, "Properties", "Properties (permissions) apply to remote files."); return; }
     QString name = sel.first();
     std::string cur = engine::remoteFileOctal(s8(name));
     const engine::DirEntry * e = active->entryNamed(name);
@@ -1504,7 +1522,7 @@ int main(int argc, char ** argv)
       window.statusBar()->showMessage("Opening " + f + "\xE2\x80\xA6");
       QApplication::processEvents();
       if (!engine::downloadFromRemote(engine::joinPath(s8(active->path()), s8(f)), s8(tmp), &err))
-      { QMessageBox::warning(&window, "Open", "Could not download: " + u8(err)); return; }
+      { appMessage(&window, "Open", "Could not download: " + u8(err)); return; }
       localPath = tmp + "/" + f;
       // watch the temp copy: any save (this app's editor or an external one) re-uploads it
       (*watchRemoteDir)[localPath] = active->path();
@@ -1529,20 +1547,20 @@ int main(int argc, char ** argv)
       QString tmp = QDir::tempPath() + "/winscp-edit"; QDir().mkpath(tmp);
       std::string err;
       if (!engine::downloadFromRemote(engine::joinPath(s8(remoteDir), s8(f)), s8(tmp), &err))
-      { QMessageBox::warning(&window, "Edit", "Could not download: " + u8(err)); return; }
+      { appMessage(&window, "Edit", "Could not download: " + u8(err)); return; }
       localPath = tmp + "/" + f;
     }
     else localPath = active->path() + "/" + f;
 
     QFile file(localPath);
-    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) { QMessageBox::warning(&window, "Edit", "Cannot open file"); return; }
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) { appMessage(&window, "Edit", "Cannot open file"); return; }
     QString text = QString::fromUtf8(file.readAll()); file.close();
 
     auto * ed = new EditorWindow(&window, f + (remote ? "  \xE2\x80\x94  " + remoteDir + " (remote)" : ""), text);
     auto * te = ed->te;
     ed->onSave = [te, localPath, remote, remoteDir, f, &window, &left, enqueueUpload]() -> bool {
       QFile out(localPath);
-      if (!out.open(QIODevice::WriteOnly | QIODevice::Text)) { QMessageBox::warning(&window, "Save", "Cannot write file"); return false; }
+      if (!out.open(QIODevice::WriteOnly | QIODevice::Text)) { appMessage(&window, "Save", "Cannot write file"); return false; }
       out.write(te->toPlainText().toUtf8()); out.close();
       if (remote) enqueueUpload(localPath, remoteDir, "Edit-upload");   // shows in the transfer queue
       else { window.statusBar()->showMessage("Saved " + f); left->refresh(); }
@@ -1556,7 +1574,7 @@ int main(int argc, char ** argv)
   auto doSync = [&] {
     FilePanel * lp = left->isRemote() ? right : left;
     FilePanel * rp = left->isRemote() ? left : right;
-    if (!rp->isRemote()) { QMessageBox::information(&window, "Synchronize", "Connect a remote session first."); return; }
+    if (!rp->isRemote()) { appMessage(&window, "Synchronize", "Connect a remote session first."); return; }
     if (busy()) return;
     QDialog dlg(&window); dlg.setWindowTitle("Synchronize"); dlg.resize(600, 420);
     auto * v = new QVBoxLayout(&dlg);
@@ -1582,7 +1600,7 @@ int main(int argc, char ** argv)
       lm->removeRows(0, lm->rowCount());
       std::string err;
       auto items = engine::synchronizeCollect(s8(lp->path()), s8(rp->path()), dir->currentIndex(), cbDel->isChecked(), &err);
-      if (!err.empty()) { QMessageBox::warning(&dlg, "Synchronize", u8(err)); return; }
+      if (!err.empty()) { appMessage(&dlg, "Synchronize", u8(err)); return; }
       for (const auto & it : items) {
         QList<QStandardItem *> row;
         row << new QStandardItem(u8(it.action)) << new QStandardItem(u8(it.name))
@@ -1596,7 +1614,7 @@ int main(int argc, char ** argv)
       std::string err;
       bool ok = engine::synchronizeApply(&err);
       engine::synchronizeRelease();
-      if (!ok) QMessageBox::warning(&dlg, "Synchronize", u8(err));
+      if (!ok) appMessage(&dlg, "Synchronize", u8(err));
       dlg.accept();
     });
     dlg.exec();
