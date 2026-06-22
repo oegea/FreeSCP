@@ -2,7 +2,7 @@
 
 Update this whenever a target starts/stops building. Verify by actually building.
 
-_Last updated: 2026-06-22 — all 5 protocols operational; GUI is a usable WinSCP Commander (drag&drop, transfer queue, parallel transfers, internal editor + edit-and-watch, key auth, host-key prompt, overwrite confirm). Two critical real-world bugs fixed this round (delete crash, upload stall). See entries at bottom._
+_Last updated: 2026-06-22 — branded **FreeSCP** (native macOS/Linux port of WinSCP). All 5 protocols operational; GUI now has session tabs, directory tree, bookmarks, Copy/Move dialog, richer toolbar, app icon. See entries at bottom._
 
 ## Current phase: 1.5 — compiling engine .cpp bodies (RTL bodies on demand)
 Phase 0 ✅ (foundation). Phase 1 ✅ (35/36 headers parse). Now: compile .cpp into libwinscpcore.
@@ -761,3 +761,28 @@ or correct-everywhere, in UPSTREAM-PATCHES.md).
 NEXT: WinSCP feature/UI fidelity batch — dark theme, file-mask filter + select-by-mask, clipboard
 (copy path/URL), new file + duplicate, recursive chmod + richer Properties, swap panels, free space
 in status bar; then tree view, tabs, the F5/F6 copy dialog (target + transfer mode binary/text).
+
+## Branding + GUI fidelity batch (FreeSCP, tabs, tree, bookmarks, toolbar, icon)
+The app is now branded **FreeSCP** (a native macOS/Linux port of WinSCP) and gained the remaining
+high-visibility WinSCP UI:
+- **Session tabs** — multi-session: the bridge went from a single TTerminal to a vector of sessions
+  with an active index (call sites unchanged via g_terminal/g_sessionData/g_password/g_lastParams
+  macros resolving to AS(), the active session). connectSftp pushes a new session/tab; a QTabBar (with
+  a "+" button) switches/closes them, saving+restoring each tab's remote+local paths.
+- **Directory tree** — toggleable, lazy-loaded per panel; remote tree restores the session CWD after
+  probing a subdir; off by default (matches WinSCP Commander).
+- **Bookmarks** menu (Ctrl+B add, jump, remove; persisted).
+- **Copy/Move dialog** (editable target before transfer); **Properties** shows type/size/owner/
+  modified + **recursive chmod**; **select-by-mask** (Ctrl++/-), **create file** (Shift+F4),
+  **copy path/URL** (Ctrl+Shift+C).
+- **Richer toolbar** (New folder / Delete / Properties / Queue+Log toggles).
+- **App icon**: cleaned icon.png (black corners/border flood-filled to transparent) -> winscp.icns,
+  bundled via CMake; CFBundleName=FreeSCP.
+- **Settings**: all QSettings use the default ctor + an org chosen at startup (offscreen/test runs use
+  an isolated "WinSCP-native-port-test" org) so headless test runs can never wipe the user's real
+  saved sites; site Save syncs immediately. Visible strings say FreeSCP; internal names (QSettings
+  org/app, logs, protocols) unchanged so saved sites/prefs keep working.
+
+README.md rewritten for FreeSCP (the gap it fills, ported-engine-vs-rewritten-GUI explanation, build/
+run). NEXT: drag OUT to Finder (export remote by dragging out — macOS file promises), recent-dirs
+dropdown, dark theme, Find files.
