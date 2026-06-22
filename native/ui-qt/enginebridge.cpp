@@ -7,6 +7,7 @@
 #include <vcl.h>              // ported RTL + platform layer (rtlcompat): UnicodeString,
                               // FindFirst/TSearchRec, path helpers, GetEnvironmentVariable.
 #include "CoreMain.h"         // engine globals (Configuration, ApplicationLog, ...)
+#include "PuttyTools.h"       // KeyType/LoadKey/SaveKey (OpenSSH -> .ppk conversion)
 #include "Configuration.h"
 #include "SessionData.h"
 #include "Terminal.h"
@@ -187,7 +188,7 @@ std::vector<DirEntry> listLocalDir(const std::string & utf8Path)
 //--- remote SFTP session ---------------------------------------------------
 ConnectResult connectSftp(const std::string & host, int port,
                           const std::string & user, const std::string & password,
-                          Protocol protocol, bool tls)
+                          Protocol protocol, bool tls, const std::string & keyFile)
 {
   ENGINE_LOCK;
   ConnectResult r;
@@ -214,6 +215,25 @@ ConnectResult connectSftp(const std::string & host, int port,
       case Protocol::Ftp:    g_sessionData->FSProtocol = fsFTP;
                              g_sessionData->Ftps = tls ? ftpsImplicit : ftpsNone; break;
       default:               g_sessionData->FSProtocol = fsSFTPonly; break;
+    }
+    if (!keyFile.empty())   // public-key auth: the password field is the key passphrase
+    {
+      UnicodeString kf = FromU8(keyFile);
+      TKeyType kt = KeyType(kf);
+      // PuTTY's auth only uses .ppk private keys; convert OpenSSH/SSHCom keys to a temp .ppk first.
+      if (kt == ktOpenSSHPEM || kt == ktOpenSSHNew || kt == ktSSHCom)
+      {
+        TPrivateKey * pk = LoadKey(kt, kf, g_password);   // throws on bad passphrase
+        UnicodeString ppk = FromU8("/tmp/.winscp-tmpkey.ppk");
+        SaveKey(ktSSH2, ppk, UnicodeString(), pk);        // unencrypted temp ppk
+        FreeKey(pk);
+        g_sessionData->PublicKeyFile = ppk;               // no passphrase needed for the temp
+      }
+      else
+      {
+        g_sessionData->PublicKeyFile = kf;
+        g_sessionData->Passphrase = g_password;           // .ppk: password field = its passphrase
+      }
     }
     g_sessionData->FingerprintScan = false;
     // Always read fresh listings: with the cache on, a panel refresh after an upload/op could show a
@@ -255,6 +275,8 @@ ConnectResult connectSftp(const std::string & host, int port,
       };
 
     g_terminal->Open();
+    if (!g_sessionData->PublicKeyFile.IsEmpty() && g_sessionData->PublicKeyFile == FromU8("/tmp/.winscp-tmpkey.ppk"))
+      ::remove("/tmp/.winscp-tmpkey.ppk");   // don't leave the unencrypted converted key on disk
     r.ok = true;
     r.currentDir = ToU8(g_terminal->CurrentDirectory);
     g_lastParams = ConnParams{ host, port, user, password, protocol, tls, true };  // for parallel connections

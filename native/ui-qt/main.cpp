@@ -30,6 +30,7 @@
 #include <QDropEvent>
 #include <QMessageBox>
 #include <QInputDialog>
+#include <QFileDialog>
 #include <QComboBox>
 #include <QTabWidget>
 #include <QString>
@@ -90,6 +91,7 @@ struct LoginParams
   QString host, user, pass;
   int port = 22;
   bool tls = false;
+  QString keyFile;   // SSH private key (optional); pass = its passphrase
 };
 
 static LoginParams showLoginDialog(QWidget * parent)
@@ -152,10 +154,26 @@ static LoginParams showLoginDialog(QWidget * parent)
   auto * encLabel = new QLabel("Encryption:");
   grid->addWidget(encLabel, 3, 0);
   grid->addWidget(enc, 3, 1);
+  // Private key (SSH public-key auth): file picker; the Password field becomes its passphrase.
+  auto * keyEdit = new QLineEdit; keyEdit->setPlaceholderText("(optional) SSH private key");
+  auto * keyBtn = new QToolButton; keyBtn->setText("\xE2\x80\xA6");
+  auto * keyLabel = new QLabel("Private key:");
+  auto * keyRow = new QWidget; auto * keyLay = new QHBoxLayout(keyRow); keyLay->setContentsMargins(0, 0, 0, 0);
+  keyLay->addWidget(keyEdit, 1); keyLay->addWidget(keyBtn);
+  grid->addWidget(keyLabel, 3, 2);
+  grid->addWidget(keyRow, 3, 3);
+  QObject::connect(keyBtn, &QToolButton::clicked, [&]{
+    QString f = QFileDialog::getOpenFileName(&dlg, "Select SSH private key", QDir::homePath() + "/.ssh");
+    if (!f.isEmpty()) keyEdit->setText(f);
+  });
   grid->setRowStretch(4, 1);
   top->addWidget(session, 1);
-  // Encryption only applies to WebDAV/S3 (HTTP-based); hide for SFTP/SCP/FTP.
-  auto updateEnc = [&](int i) { bool http = (i == 3 || i == 4); encLabel->setVisible(http); enc->setVisible(http); };
+  // Encryption only applies to WebDAV/S3; private key only to SFTP/SCP. Toggle per protocol.
+  auto updateEnc = [&](int i) {
+    bool http = (i == 3 || i == 4), ssh = (i == 0 || i == 1);
+    encLabel->setVisible(http); enc->setVisible(http);
+    keyLabel->setVisible(ssh); keyRow->setVisible(ssh);
+  };
   QObject::connect(proto, &QComboBox::currentIndexChanged, updateEnc);
   updateEnc(proto->currentIndex());
 
@@ -175,6 +193,7 @@ static LoginParams showLoginDialog(QWidget * parent)
     port->setValue(settings.value("port", 22).toInt());
     user->setText(settings.value("user").toString());
     pass->setText(settings.value("pass").toString());
+    keyEdit->setText(settings.value("keyFile").toString());
     settings.endGroup();
   };
   QObject::connect(sites, &QTreeWidget::currentItemChanged, [&](QTreeWidgetItem * cur, QTreeWidgetItem *) {
@@ -202,6 +221,7 @@ static LoginParams showLoginDialog(QWidget * parent)
     settings.setValue("port", port->value());
     settings.setValue("user", user->text());
     settings.setValue("pass", pass->text());   // local test tool; stores password
+    settings.setValue("keyFile", keyEdit->text());
     settings.endGroup();
     reloadSites();
   });
@@ -237,6 +257,7 @@ static LoginParams showLoginDialog(QWidget * parent)
   p.host = host->text(); p.port = port->value();
   p.user = user->text(); p.pass = pass->text();
   p.tls = (enc->currentIndex() == 1);
+  p.keyFile = keyEdit->text();
   return p;
 }
 
@@ -1056,7 +1077,7 @@ int main(int argc, char ** argv)
     window.statusBar()->showMessage("Connecting\xE2\x80\xA6");
     log(QString("Connecting to %1:%2 \xE2\x80\xA6").arg(lp.host).arg(lp.port));
     QApplication::processEvents();
-    engine::ConnectResult r = engine::connectSftp(s8(lp.host), lp.port, s8(lp.user), s8(lp.pass), lp.protocol, lp.tls);
+    engine::ConnectResult r = engine::connectSftp(s8(lp.host), lp.port, s8(lp.user), s8(lp.pass), lp.protocol, lp.tls, s8(lp.keyFile));
     if (!r.ok)
     {
       log("FAILED: " + u8(r.error));
@@ -1447,7 +1468,8 @@ int main(int argc, char ** argv)
         QStringList p = ac.split(':');
         engine::Protocol pr = p[4]=="scp"?engine::Protocol::Scp : p[4]=="dav"?engine::Protocol::WebDav
                             : p[4]=="s3"?engine::Protocol::S3 : p[4]=="ftp"?engine::Protocol::Ftp : engine::Protocol::Sftp;
-        auto r = engine::connectSftp(s8(p[0]), p[1].toInt(), s8(p[2]), s8(p[3]), pr);
+        auto r = engine::connectSftp(s8(p[0]), p[1].toInt(), s8(p[2]), s8(p[3]), pr, false, p.size() > 5 ? s8(p[5]) : std::string());
+        if (!r.ok) fprintf(stderr, "[autoconnect] FAILED: %s\n", r.error.c_str());
         if (r.ok) { right->setRemote(QString("%1@%2").arg(p[2]).arg(p[0])); remoteHome = u8(r.currentDir); right->navigate(u8(r.currentDir));
           // exercise the BACKGROUND transfer queue end-to-end (multi-file, on the worker thread)
           QString xf = qEnvironmentVariable("WINSCP_AUTOXFER");
