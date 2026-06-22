@@ -143,10 +143,10 @@ static LoginParams showLoginDialog(QWidget * parent)
   auto * proto = new QComboBox;
   proto->addItem("SFTP"); proto->addItem("SCP"); proto->addItem("FTP");
   proto->addItem("WebDAV"); proto->addItem("Amazon S3");
-  auto * host = new QLineEdit("127.0.0.1");
-  auto * port = new QSpinBox; port->setRange(1, 65535); port->setValue(2222);
-  auto * user = new QLineEdit("winscp");
-  auto * pass = new QLineEdit("winscp123"); pass->setEchoMode(QLineEdit::Password);
+  auto * host = new QLineEdit; host->setPlaceholderText("hostname or IP");
+  auto * port = new QSpinBox; port->setRange(1, 65535); port->setValue(22);
+  auto * user = new QLineEdit; user->setPlaceholderText("username");
+  auto * pass = new QLineEdit; pass->setEchoMode(QLineEdit::Password); pass->setPlaceholderText("password (or key passphrase)");
 
   grid->addWidget(new QLabel("File protocol:"), 0, 0);
   grid->addWidget(proto, 0, 1, 1, 3);
@@ -188,7 +188,7 @@ static LoginParams showLoginDialog(QWidget * parent)
   // Test-friendly: map protocol -> the local Docker test server's port.
   QObject::connect(proto, &QComboBox::currentIndexChanged, [&](int i) {
     bool ftp = (i == 2);
-    int dp = (i == 3) ? 8086 : (i == 4) ? 9100 : ftp ? 21 : 2222;
+    int dp = (i == 3) ? 80 : (i == 4) ? 443 : ftp ? 21 : 22;   // WebDAV / S3 / FTP / SSH defaults
     port->setValue(dp);
     // FTP not supported yet — disable Login is handled below via the protocol check.
   });

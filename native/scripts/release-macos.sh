@@ -16,7 +16,9 @@ APP_SRC="$ROOT/native/build/ui-qt/winscp-qt.app"
 STAGE="$ROOT/native/build/release"
 APP="$STAGE/FreeSCP.app"
 ENTITLEMENTS="$ROOT/native/ui-qt/entitlements.mac.plist"
-IDENTITY="Developer ID Application: Oriol Egea (3GZ8VZ8D2Y)"
+# Signing identity — override with SIGN_IDENTITY env. (A Team ID is not secret; it's embedded in every
+# signed/notarized binary. Set your own to build your own signed copy.)
+IDENTITY="${SIGN_IDENTITY:-Developer ID Application: Oriol Egea (3GZ8VZ8D2Y)}"
 ENVFILE="${ENVFILE:-$ROOT/../roBrowserLegacy/applications/electron/.env.notarize}"
 MACDEPLOYQT="$(brew --prefix qt)/bin/macdeployqt"
 
