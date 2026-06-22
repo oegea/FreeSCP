@@ -892,7 +892,6 @@ int main(int argc, char ** argv)
   tabBar->setExpanding(false);
   tabBar->setDrawBase(false);
   tabBar->setDocumentMode(true);          // left-aligns tabs (macOS centers them otherwise)
-  tabBar->hide();
   auto * tabRow = new QWidget;
   auto * tabRowLay = new QHBoxLayout(tabRow);
   tabRowLay->setContentsMargins(0, 0, 0, 0); tabRowLay->setSpacing(0);
