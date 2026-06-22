@@ -878,6 +878,23 @@ int main(int argc, char ** argv)
   auto queueCell = [&](int r, int c, const QString & v) { if (r >= 0 && r < queueModel->rowCount()) queueModel->item(r, c)->setText(v); };
   auto queueStatus = [&](int r, const QString & s) { queueCell(r, 6, s); };
 
+  // Single-file upload that shows in the transfer queue (used by editor save + edit-and-watch).
+  // Runs on a worker so the UI stays responsive; refreshes the remote panel on success.
+  auto enqueueUpload = [&](const QString & localPath, const QString & remoteDir, const QString & opName) {
+    queueDock->show();
+    int row = queueAdd(opName, QFileInfo(localPath).fileName(), QFileInfo(localPath).size());
+    queueStatus(row, "active");
+    std::string lp = s8(localPath), rd = s8(remoteDir);
+    std::thread([&, row, lp, rd]{
+      std::string err; bool ok = engine::uploadToRemote(lp, rd, &err);
+      QMetaObject::invokeMethod(&window, [&, row, ok, err]{
+        queueStatus(row, ok ? "done" : ("failed: " + u8(err)));
+        if (ok) { queueCell(row, 3, "100%"); window.statusBar()->showMessage("Uploaded " + queueModel->item(row, 1)->text()); if (right->isRemote()) right->refresh(); }
+        else window.statusBar()->showMessage("Upload failed: " + u8(err));
+      }, Qt::QueuedConnection);
+    }).detach();
+  };
+
   // Cancel flag for the currently-running batch (Cancel button -> sink returns true -> engine aborts).
   auto currentCancel = std::make_shared<std::shared_ptr<std::atomic<bool>>>();
   QObject::connect(btnCancel, &QPushButton::clicked, [&, currentCancel]{
@@ -1070,12 +1087,7 @@ int main(int argc, char ** argv)
   auto reupload = [&, watcher, watchRemoteDir](const QString & localPath) {
     auto it = watchRemoteDir->find(localPath);
     if (it == watchRemoteDir->end()) return;
-    QString remoteDir = it.value();
-    std::string err;
-    bool ok = engine::uploadToRemote(s8(localPath), s8(remoteDir), &err);
-    if (ok)
-    { window.statusBar()->showMessage("Re-uploaded " + QFileInfo(localPath).fileName() + " \xE2\x86\x92 " + remoteDir); if (right->isRemote()) right->refresh(); }
-    else window.statusBar()->showMessage("Re-upload failed: " + u8(err));
+    enqueueUpload(localPath, it.value(), "Edit-upload");   // shows in the transfer queue
     if (QFileInfo::exists(localPath) && !watcher->files().contains(localPath)) watcher->addPath(localPath);  // editors that save-by-rename drop the watch
   };
   QObject::connect(watcher, &QFileSystemWatcher::fileChanged, &window, [reupload](const QString & p) { reupload(p); });
@@ -1240,17 +1252,11 @@ int main(int argc, char ** argv)
 
     auto * ed = new EditorWindow(&window, f + (remote ? "  \xE2\x80\x94  " + remoteDir + " (remote)" : ""), text);
     auto * te = ed->te;
-    ed->onSave = [te, localPath, remote, remoteDir, f, &window, &left, &right]() -> bool {
+    ed->onSave = [te, localPath, remote, remoteDir, f, &window, &left, enqueueUpload]() -> bool {
       QFile out(localPath);
       if (!out.open(QIODevice::WriteOnly | QIODevice::Text)) { QMessageBox::warning(&window, "Save", "Cannot write file"); return false; }
       out.write(te->toPlainText().toUtf8()); out.close();
-      if (remote)
-      {
-        std::string err;
-        if (!engine::uploadToRemote(s8(localPath), s8(remoteDir), &err))
-        { QMessageBox::warning(&window, "Save", "Upload failed: " + u8(err)); return false; }
-        window.statusBar()->showMessage("Saved + uploaded " + f); if (right->isRemote()) right->refresh();
-      }
+      if (remote) enqueueUpload(localPath, remoteDir, "Edit-upload");   // shows in the transfer queue
       else { window.statusBar()->showMessage("Saved " + f); left->refresh(); }
       return true;
     };
@@ -1439,7 +1445,7 @@ int main(int argc, char ** argv)
   shortcut(Qt::Key_F3, doOpen);
   shortcut(Qt::Key_F4, doEdit);
   shortcut(Qt::Key_F5, doCopy);
-  left->onFileOpen = doOpen; right->onFileOpen = doOpen;
+  left->onFileOpen = doEdit; right->onFileOpen = doEdit;   // double-click a file -> internal editor (F3 = OS editor)
   shortcut(Qt::Key_F6, doMove);
   shortcut(Qt::Key_F7, doMkdir);
   shortcut(Qt::Key_F8, doDelete);
