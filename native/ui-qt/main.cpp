@@ -32,6 +32,8 @@
 #include <QInputDialog>
 #include <QFileDialog>
 #include <QFileSystemWatcher>
+#include <QProcess>
+#include <QStandardPaths>
 #include <QComboBox>
 #include <QTabWidget>
 #include <QString>
@@ -817,6 +819,7 @@ int main(int argc, char ** argv)
   left->onActivated = [&] { active = left; left->setActive(true); right->setActive(false); updateStatuses(); };
   right->onActivated = [&] { active = right; right->setActive(true); left->setActive(false); updateStatuses(); };
   static QString remoteHome = "/";
+  static QString connHost, connUser; static int connPort = 22; static bool connSsh = false;  // for Open Terminal
   left->onHome  = [&] { left->navigate(u8(engine::homeDir())); };
   right->onHome = [&] { right->navigate(right->isRemote() ? remoteHome : u8(engine::homeDir())); };
   // Synchronized browsing: entering/leaving a dir in one panel mirrors to the other.
@@ -1122,6 +1125,8 @@ int main(int argc, char ** argv)
                     : lp.protocol == engine::Protocol::Ftp ? "FTP" : "SFTP";
     right->setRemote(QString("%1@%2 \xE2\x80\x94 %3").arg(lp.user).arg(lp.host).arg(pn));
     remoteHome = u8(r.currentDir);
+    connHost = lp.host; connUser = lp.user; connPort = lp.port;
+    connSsh = (lp.protocol == engine::Protocol::Sftp || lp.protocol == engine::Protocol::Scp);
     right->navigate(u8(r.currentDir));
     right->onActivated();
     actDisconnect->setEnabled(true);
@@ -1137,6 +1142,23 @@ int main(int argc, char ** argv)
     window.setWindowTitle("WinSCP");
     window.statusBar()->showMessage("Disconnected");
     log("Disconnected.");
+  };
+
+  // Open a system terminal with an ssh command to the current server (the "open in PuTTY" of Windows).
+  auto doOpenTerminal = [&] {
+    if (!engine::remoteConnected() || !connSsh)
+    { window.statusBar()->showMessage("Open Terminal needs an active SFTP/SCP session"); return; }
+    QString sshCmd = QString("ssh %1@%2 -p %3").arg(connUser, connHost).arg(connPort);
+#ifdef Q_OS_MACOS
+    QString script = QString("tell application \"Terminal\"\nactivate\ndo script \"%1\"\nend tell").arg(sshCmd);
+    QProcess::startDetached("osascript", { "-e", script });
+#else
+    // Linux: try the common terminal emulators with an ssh command.
+    for (const QString & term : { QString("x-terminal-emulator"), QString("gnome-terminal"), QString("konsole"), QString("xterm") })
+      if (QStandardPaths::findExecutable(term).size())
+      { QProcess::startDetached(term, term == "gnome-terminal" ? QStringList{ "--", "bash", "-c", sshCmd + "; exec bash" } : QStringList{ "-e", sshCmd }); break; }
+#endif
+    window.statusBar()->showMessage("Opened terminal: " + sshCmd);
   };
 
   auto doCopy = [&] {
@@ -1402,6 +1424,7 @@ int main(int argc, char ** argv)
       left->refresh(); right->refresh();
     });
     auto * mCommands = window.menuBar()->addMenu("&Commands");
+    mCommands->addAction("Open &Terminal\tCtrl+T", doOpenTerminal);
     mCommands->addAction("&Synchronize\xE2\x80\xA6\tCtrl+S", doSync);
     { auto * a = new QAction(&window); a->setShortcut(Qt::CTRL | Qt::Key_S);
       QObject::connect(a, &QAction::triggered, doSync); window.addAction(a); }
@@ -1467,6 +1490,7 @@ int main(int argc, char ** argv)
   shortcut(Qt::ALT | Qt::Key_Right, [&]{ active->goForward(); });          // history forward
   shortcut(Qt::ALT | Qt::Key_Up,    [&]{ active->goUp(); });               // parent dir
   shortcut(Qt::CTRL | Qt::Key_N, [&]{ doConnect(); });                     // new session
+  shortcut(Qt::CTRL | Qt::Key_T, doOpenTerminal);                          // open ssh terminal
   shortcut(Qt::Key_Insert, [&]{ active->toggleSelectAndAdvance(); });      // Norton select + advance
   shortcut(Qt::Key_F1, [&]{ QMessageBox::about(&window, "About WinSCP",
     "WinSCP \xE2\x80\x94 native port (Mac/Linux)\nSFTP / SCP / FTP / WebDAV / S3"); });

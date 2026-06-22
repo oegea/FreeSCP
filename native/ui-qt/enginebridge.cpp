@@ -46,6 +46,9 @@ std::string g_lastTransferError;   // set by OnQueryUser on a qtError so transfe
 // Confirmation callback (host-key verification). Returns true to accept. If unset, auto-accept.
 // Connect runs on the caller (UI) thread, so the GUI can show a modal dialog from here.
 std::function<bool(const std::string &)> g_confirmCb;
+// True only while connectSftp runs (the UI thread). g_confirmCb shows a modal dialog, so it must
+// NEVER be called from a transfer worker thread (Qt GUI off the main thread = crash/deadlock).
+bool g_connecting = false;
 
 // Last successful connect params, so we can open additional (parallel) connections to the same server.
 struct ConnParams { std::string host; int port = 0; std::string user, password; engine::Protocol protocol = engine::Protocol::Sftp; bool tls = false; bool valid = false; };
@@ -256,10 +259,10 @@ ConnectResult connectSftp(const std::string & host, int port,
           if (Answers & qaYes) Answer = qaYes;
           else { g_lastTransferError = ToU8(Query); Answer = (Answers & qaSkip) ? qaSkip : ((Answers & qaAbort) ? qaAbort : Answers); }
         }
-        else if ((Answers & qaYes) && (Answers & qaNo) && g_confirmCb)   // a Yes/No confirmation (host key)
+        else if ((Answers & qaYes) && (Answers & qaNo) && g_confirmCb && g_connecting)   // host key (connect, UI thread only)
           Answer = g_confirmCb(ToU8(Query)) ? qaYes : qaNo;
         else
-          Answer = (Answers & qaYes) ? qaYes : ((Answers & qaOK) ? qaOK : Answers);
+          Answer = (Answers & qaYes) ? qaYes : ((Answers & qaOK) ? qaOK : Answers);   // transfer-time confirmations: proceed
       };
     g_terminal->OnProgress =
       [](TFileOperationProgressType & P)
@@ -275,7 +278,9 @@ ConnectResult connectSftp(const std::string & host, int port,
         }
       };
 
-    g_terminal->Open();
+    g_connecting = true;            // host-key prompt may fire inside Open() (UI thread)
+    try { g_terminal->Open(); } catch (...) { g_connecting = false; throw; }
+    g_connecting = false;
     if (!g_sessionData->PublicKeyFile.IsEmpty() && g_sessionData->PublicKeyFile == FromU8("/tmp/.winscp-tmpkey.ppk"))
       ::remove("/tmp/.winscp-tmpkey.ppk");   // don't leave the unencrypted converted key on disk
     r.ok = true;
@@ -544,7 +549,9 @@ bool remoteMakeDir(const std::string & nameUtf8, std::string * error)
   {
     UnicodeString dir = UnixIncludeTrailingBackslash(g_terminal->CurrentDirectory) + FromU8(nameUtf8);
     TRemoteProperties props;   // CreateDirectory asserts non-null; empty Valid = no extra props
+    g_lastTransferError.clear();
     g_terminal->CreateDirectory(dir, &props);
+    if (!g_lastTransferError.empty()) { if (error) *error = g_lastTransferError; return false; }
     return true;
   }
   catch (Exception & E) { if (error) *error = ExceptionToU8(E); return false; }
@@ -559,7 +566,9 @@ bool remoteDelete(const std::string & nameUtf8, std::string * error)
   {
     TRemoteFile * rf = FindInListing(FromU8(nameUtf8));
     if (rf == nullptr) { if (error) *error = "file not in current listing"; return false; }
+    g_lastTransferError.clear();
     g_terminal->DeleteFile(rf->FullFileName, rf, nullptr);
+    if (!g_lastTransferError.empty()) { if (error) *error = g_lastTransferError; return false; }   // e.g. permission denied
     return true;
   }
   catch (Exception & E) { if (error) *error = ExceptionToU8(E); return false; }
@@ -574,7 +583,9 @@ bool remoteRename(const std::string & oldNameUtf8, const std::string & newNameUt
   {
     TRemoteFile * rf = FindInListing(FromU8(oldNameUtf8));
     if (rf == nullptr) { if (error) *error = "file not in current listing"; return false; }
+    g_lastTransferError.clear();
     g_terminal->RenameFile(rf, FromU8(newNameUtf8));
+    if (!g_lastTransferError.empty()) { if (error) *error = g_lastTransferError; return false; }
     return true;
   }
   catch (Exception & E) { if (error) *error = ExceptionToU8(E); return false; }
