@@ -32,6 +32,8 @@
 #include <QInputDialog>
 #include <QFileDialog>
 #include <QClipboard>
+#include <QTreeView>
+#include <QSplitter>
 #include <QRegularExpression>
 #include <QFileSystemWatcher>
 #include <QProcess>
@@ -363,6 +365,45 @@ public:
   }
   void upOne() { navigate(u8(engine::parentDir(s8(FPath)))); }
 
+  //--- directory tree (lazy, click-to-navigate) ---
+  void setTreeVisible(bool v) { FTree->setVisible(v); if (v && FTreeModel->rowCount() == 0) treeReload(); }
+  bool treeVisible() const { return FTree->isVisible(); }
+  void treeReload() {
+    FTreePopulating = true;
+    FTreeModel->clear();
+    auto * root = makeTreeNode("/", "/");
+    FTreeModel->appendRow(root);
+    populateTreeNode(root);
+    FTree->expand(root->index());
+    FTreePopulating = false;
+  }
+  QStandardItem * makeTreeNode(const QString & label, const QString & path) {
+    auto * it = new QStandardItem(qApp->style()->standardIcon(QStyle::SP_DirIcon), label);
+    it->setData(path, Qt::UserRole + 1);     // full path
+    it->setData(false, Qt::UserRole + 2);    // populated?
+    return it;
+  }
+  void populateTreeNode(QStandardItem * node) {
+    if (node->data(Qt::UserRole + 2).toBool()) return;
+    node->setData(true, Qt::UserRole + 2);
+    node->removeRows(0, node->rowCount());   // drop the placeholder
+    QString path = node->data(Qt::UserRole + 1).toString();
+    for (const QString & name : subdirsOf(path)) {
+      auto * child = makeTreeNode(name, u8(engine::joinPath(s8(path), s8(name))));
+      child->appendRow(new QStandardItem());  // placeholder -> shows the expand arrow
+      node->appendRow(child);
+    }
+  }
+  void treeExpand(const QModelIndex & ix) { if (auto * n = FTreeModel->itemFromIndex(ix)) populateTreeNode(n); }
+  QStringList subdirsOf(const QString & path) {
+    QStringList dirs;
+    if (FRemote && gTransferRunning.load()) return dirs;   // don't disturb the session mid-transfer
+    auto entries = FRemote ? engine::listRemoteDir(s8(path)) : engine::listLocalDir(s8(path));
+    for (const auto & e : entries) if (e.isDir && !e.isParent) dirs << u8(e.name);
+    if (FRemote && path != FPath) engine::listRemoteDir(s8(FPath));  // restore session CWD + the panel's listing
+    return dirs;
+  }
+
   explicit FilePanel(QWidget * parent = nullptr) : QWidget(parent)
   {
     auto * layout = new QVBoxLayout(this);
@@ -409,9 +450,24 @@ public:
     FStatus = new QLabel;
     FStatus->setStyleSheet("padding:2px 6px; background:palette(window); border-top:1px solid palette(mid);");
 
+    // Optional directory tree (WinSCP-style), hidden by default; lazy-loaded, click navigates.
+    FTree = new QTreeView; FTreeModel = new QStandardItemModel(this);
+    FTree->setModel(FTreeModel); FTree->setHeaderHidden(true); FTree->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    FTree->hide();
+    QObject::connect(FTree, &QTreeView::expanded, this, [this](const QModelIndex & ix){ treeExpand(ix); });
+    QObject::connect(FTree, &QTreeView::clicked, this, [this](const QModelIndex & ix){
+      if (FTreePopulating) return;
+      QString p = ix.data(Qt::UserRole + 1).toString();
+      if (!p.isEmpty() && p != FPath) navigate(p);
+    });
+    auto * split = new QSplitter(Qt::Horizontal);
+    split->addWidget(FTree); split->addWidget(FView);
+    split->setStretchFactor(0, 0); split->setStretchFactor(1, 1);
+    split->setSizes({ 200, 600 });
+
     layout->addWidget(FHeader);
     layout->addWidget(addr);
-    layout->addWidget(FView, 1);
+    layout->addWidget(split, 1);
     layout->addWidget(FStatus);
 
     QObject::connect(FView, &QTableView::doubleClicked,
@@ -702,6 +758,9 @@ private:
   QTableView * FView;
   QStandardItemModel * FModel;
   QLabel * FStatus;
+  QTreeView * FTree = nullptr;
+  QStandardItemModel * FTreeModel = nullptr;
+  bool FTreePopulating = false;
   QString FPath;
   bool FRemote = false;
   bool FActive = false;
@@ -807,6 +866,7 @@ int main(int argc, char ** argv)
   auto * actDisconnect = tb->addAction(ic(QStyle::SP_DialogCloseButton), "Disconnect"); actDisconnect->setEnabled(false);
   tb->addSeparator();
   auto * actSync = tb->addAction(ic(QStyle::SP_FileDialogContentsView), "Sync browsing"); actSync->setCheckable(true);
+  auto * actTree = tb->addAction(ic(QStyle::SP_DirIcon), "Directory tree"); actTree->setCheckable(true);
 
   // Panels.
   auto * splitter = new QSplitter(Qt::Horizontal);
@@ -855,6 +915,7 @@ int main(int argc, char ** argv)
   left->onLeaveDir  = [&] { if (actSync->isChecked()) right->upOne(); };
   right->onEnterDir = [&](const QString & n) { if (actSync->isChecked()) left->enterSubdir(n); };
   right->onLeaveDir = [&] { if (actSync->isChecked()) left->upOne(); };
+  QObject::connect(actTree, &QAction::toggled, [&](bool v){ left->setTreeVisible(v); right->setTreeVisible(v); });
   left->onSwitchPanel  = [&] { right->view()->setFocus(); };
   right->onSwitchPanel = [&] { left->view()->setFocus(); };
 
