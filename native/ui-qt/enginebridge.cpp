@@ -256,6 +256,7 @@ ConnectResult connectSftp(const std::string & host, int port,
   LogLine("connectSftp(" + user + "@" + host + ":" + std::to_string(port) + " proto=" + std::to_string((int)protocol) + " key=" + (keyFile.empty() ? "no" : "yes") + ") ...");
   ENGINE_LOCK;
   ConnectResult r;
+  if (host.empty()) { r.error = "Host name is empty."; LogLine("  connect: empty host"); return r; }   // engine produces a garbage message for an empty host
   try
   {
     EnsureEngineInited();

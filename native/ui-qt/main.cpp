@@ -1286,6 +1286,7 @@ int main(int argc, char ** argv)
     if (busy()) return;
     LoginParams lp = showLoginDialog(&window);
     if (!lp.ok) return;
+    if (lp.host.trimmed().isEmpty()) { QMessageBox::warning(&window, "Login", "Please enter a host name."); return; }
     window.statusBar()->showMessage("Connecting\xE2\x80\xA6");
     log(QString("Connecting to %1:%2 \xE2\x80\xA6").arg(lp.host).arg(lp.port));
     QApplication::processEvents();
