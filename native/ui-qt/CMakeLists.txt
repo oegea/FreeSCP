@@ -28,7 +28,8 @@ find_package(OpenSSL REQUIRED)
 # whole-archive links the engine (global ctors + cross-refs), the headless Interface stubs, and
 # the PuTTY libs — same set as the winscp-harness.
 set(WINSCP_ICNS ${CMAKE_CURRENT_SOURCE_DIR}/winscp.icns)
-add_executable(winscp-qt MACOSX_BUNDLE main.cpp ${WINSCP_ICNS})
+set(CMAKE_AUTORCC ON)
+add_executable(winscp-qt MACOSX_BUNDLE main.cpp resources.qrc ${WINSCP_ICNS})
 if(APPLE)
   set_source_files_properties(${WINSCP_ICNS} PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
   set_target_properties(winscp-qt PROPERTIES

@@ -847,6 +847,7 @@ int main(int argc, char ** argv)
   QCoreApplication::setOrganizationName(qgetenv("QT_QPA_PLATFORM") == "offscreen" ? "WinSCP-native-port-test"
                                                                                   : "WinSCP-native-port");
   app.setApplicationName("WinSCP");
+  app.setWindowIcon(QIcon(":/winscp.png"));
   { QSettings s;
     gShowHidden = s.value("prefs/showHidden", true).toBool();
     gConfirmDelete = s.value("prefs/confirmDelete", true).toBool();
@@ -1603,6 +1604,33 @@ int main(int argc, char ** argv)
   installContextMenu(left);
   installContextMenu(right);
 
+  // About dialog: icon on top, GPLv3, repo link, credit to WinSCP.
+  auto showAbout = [&]{
+    QDialog d(&window); d.setWindowTitle("About FreeSCP");
+    auto * lay = new QVBoxLayout(&d);
+    auto * icon = new QLabel; icon->setAlignment(Qt::AlignHCenter);
+    icon->setPixmap(QPixmap(":/winscp.png").scaled(96, 96, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+    lay->addWidget(icon);
+    auto * body = new QLabel(
+      "<div align='center'>"
+      "<h2 style='margin:4px'>FreeSCP</h2>"
+      "<p style='margin:2px'>A native macOS &amp; Linux port of WinSCP.</p>"
+      "<p style='margin:2px'>SFTP · SCP · FTP · WebDAV · S3</p>"
+      "<p style='margin:8px 2px 2px'><a href='https://github.com/oegea/FreeSCP'>github.com/oegea/FreeSCP</a></p>"
+      "<p style='margin:2px;color:gray'>Free software under the GPLv3 — project started by Oriol Egea.</p>"
+      "<p style='margin:10px 8px 2px;color:gray'>With gratitude to Martin Přikryl and the WinSCP "
+      "contributors. WinSCP has been a fantastic tool on Windows for many years; FreeSCP simply "
+      "brings it to other platforms, using AI to help with the port. No ownership of their work is "
+      "claimed.</p>"
+      "</div>");
+    body->setTextFormat(Qt::RichText); body->setOpenExternalLinks(true); body->setWordWrap(true);
+    body->setMaximumWidth(420);
+    lay->addWidget(body);
+    auto * bb = new QDialogButtonBox(QDialogButtonBox::Ok); lay->addWidget(bb);
+    QObject::connect(bb, &QDialogButtonBox::accepted, &d, &QDialog::accept);
+    d.exec();
+  };
+
   // Menu bar (WinSCP layout; actions wired to the same ops as the toolbar/F-keys).
   {
     auto * mLocal = window.menuBar()->addMenu("&Local");
@@ -1713,10 +1741,7 @@ int main(int argc, char ** argv)
     { auto * a = new QAction(&window); a->setShortcut(Qt::CTRL | Qt::Key_B);
       QObject::connect(a, &QAction::triggered, addBookmark); window.addAction(a); }
     auto * mHelp = window.menuBar()->addMenu("&Help");
-    mHelp->addAction("&About FreeSCP", [&]{
-      QMessageBox::about(&window, "About",
-        "FreeSCP — a native macOS/Linux port of WinSCP\n\nPorted engine (RTL compat + platform layer) + Qt 6 GUI.\n"
-        "Protocols: SFTP, SCP, FTP, WebDAV, S3."); });
+    mHelp->addAction("&About FreeSCP", showAbout);
   }
 
   //--- function-key bar buttons ------------------------------------------
@@ -1787,8 +1812,7 @@ int main(int argc, char ** argv)
   shortcut(Qt::CTRL | Qt::Key_Minus, [&]{ doSelectMask(false); });         // unselect by mask
   shortcut(Qt::CTRL | Qt::SHIFT | Qt::Key_C, doCopyPath);                  // copy path/URL
   shortcut(Qt::Key_Insert, [&]{ active->toggleSelectAndAdvance(); });      // Norton select + advance
-  shortcut(Qt::Key_F1, [&]{ QMessageBox::about(&window, "About FreeSCP",
-    "FreeSCP \xE2\x80\x94 a native macOS/Linux port of WinSCP\nSFTP / SCP / FTP / WebDAV / S3"); });
+  shortcut(Qt::Key_F1, showAbout);
 
   left->setActive(true);
   left->navigate(u8(engine::homeDir()));
