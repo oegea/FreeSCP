@@ -1072,7 +1072,8 @@ int main(int argc, char ** argv)
     if (it == watchRemoteDir->end()) return;
     QString remoteDir = it.value();
     std::string err;
-    if (engine::uploadToRemote(s8(localPath), s8(remoteDir), &err))
+    bool ok = engine::uploadToRemote(s8(localPath), s8(remoteDir), &err);
+    if (ok)
     { window.statusBar()->showMessage("Re-uploaded " + QFileInfo(localPath).fileName() + " \xE2\x86\x92 " + remoteDir); if (right->isRemote()) right->refresh(); }
     else window.statusBar()->showMessage("Re-upload failed: " + u8(err));
     if (QFileInfo::exists(localPath) && !watcher->files().contains(localPath)) watcher->addPath(localPath);  // editors that save-by-rename drop the watch
@@ -1489,7 +1490,6 @@ int main(int argc, char ** argv)
         engine::Protocol pr = p[4]=="scp"?engine::Protocol::Scp : p[4]=="dav"?engine::Protocol::WebDav
                             : p[4]=="s3"?engine::Protocol::S3 : p[4]=="ftp"?engine::Protocol::Ftp : engine::Protocol::Sftp;
         auto r = engine::connectSftp(s8(p[0]), p[1].toInt(), s8(p[2]), s8(p[3]), pr, false, p.size() > 5 ? s8(p[5]) : std::string());
-        if (!r.ok) fprintf(stderr, "[autoconnect] FAILED: %s\n", r.error.c_str());
         if (r.ok) { right->setRemote(QString("%1@%2").arg(p[2]).arg(p[0])); remoteHome = u8(r.currentDir); right->navigate(u8(r.currentDir));
           // exercise the BACKGROUND transfer queue end-to-end (multi-file, on the worker thread)
           QString xf = qEnvironmentVariable("WINSCP_AUTOXFER");

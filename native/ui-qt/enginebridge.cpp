@@ -248,12 +248,13 @@ ConnectResult connectSftp(const std::string & host, int port,
     g_terminal->OnQueryUser =
       [](TObject *, const UnicodeString & Query, TStrings *, unsigned int Answers, const TQueryParams *, unsigned int & Answer, TQueryType Type, void *)
       {
-        // Errors (e.g. "Permission denied" on upload) must NOT be silently skipped -> record the
-        // message and abort so the transfer reports failure instead of a bogus "done".
         if (Type == qtError)
         {
-          g_lastTransferError = ToU8(Query);
-          Answer = (Answers & qaAbort) ? qaAbort : ((Answers & qaSkip) ? qaSkip : Answers);
+          // qaYes here is a recoverable action (e.g. "Delete & recreate" to overwrite a file the
+          // server won't truncate) -> take it. Otherwise it's a real failure (permission denied,
+          // disk full): record the message and skip so the transfer reports "failed" not "done".
+          if (Answers & qaYes) Answer = qaYes;
+          else { g_lastTransferError = ToU8(Query); Answer = (Answers & qaSkip) ? qaSkip : ((Answers & qaAbort) ? qaAbort : Answers); }
         }
         else if ((Answers & qaYes) && (Answers & qaNo) && g_confirmCb)   // a Yes/No confirmation (host key)
           Answer = g_confirmCb(ToU8(Query)) ? qaYes : qaNo;
@@ -416,7 +417,7 @@ int openParallelConnection(std::string * error)
     c->term->OnPromptUser = [pw](TTerminal *, TPromptKind, UnicodeString, UnicodeString, TStrings *, TStrings * Results, bool & Result, void *)
       { if (Results) for (int i = 0; i < Results->Count; i++) Results->Strings[i] = pw; Result = true; };
     c->term->OnQueryUser = [](TObject *, const UnicodeString & Query, TStrings *, unsigned int Answers, const TQueryParams *, unsigned int & Answer, TQueryType Type, void *)
-      { if (Type == qtError) { g_lastTransferError = ToU8(Query); Answer = (Answers & qaAbort) ? qaAbort : ((Answers & qaSkip) ? qaSkip : Answers); }
+      { if (Type == qtError) { if (Answers & qaYes) Answer = qaYes; else { g_lastTransferError = ToU8(Query); Answer = (Answers & qaSkip) ? qaSkip : ((Answers & qaAbort) ? qaAbort : Answers); } }
         else Answer = (Answers & qaYes) ? qaYes : ((Answers & qaOK) ? qaOK : Answers); };
     c->term->OnProgress = [cp](TFileOperationProgressType & P)
       { if (cp->sink) { engine::TransferProgress tp; tp.file = ToU8(P.FileName); tp.transferred = P.TransferredSize; tp.total = P.TransferSize; tp.cps = (std::int64_t)P.CPS(); if (cp->sink(tp)) P.SetCancel(csCancel); } };
