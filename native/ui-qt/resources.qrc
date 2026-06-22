@@ -1,5 +1,0 @@
-<RCC>
-  <qresource prefix="/">
-    <file alias="winscp.png">winscp.png</file>
-  </qresource>
-</RCC>

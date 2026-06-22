@@ -1,4 +1,0 @@
-#ifndef WINSCP_RTLCOMPAT_COMPTHREAD_HPP
-#define WINSCP_RTLCOMPAT_COMPTHREAD_HPP
-#include "Classes.hpp"
-#endif

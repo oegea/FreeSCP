@@ -1,4 +1,0 @@
-#ifndef WINSCP_RTLCOMPAT_LMCONS_H
-#define WINSCP_RTLCOMPAT_LMCONS_H
-#define UNLEN 256
-#endif
