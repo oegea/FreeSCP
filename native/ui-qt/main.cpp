@@ -231,6 +231,7 @@ static LoginParams showLoginDialog(QWidget * parent)
     settings.setValue("pass", pass->text());   // local test tool; stores password
     settings.setValue("keyFile", keyEdit->text());
     settings.endGroup();
+    settings.sync();        // persist immediately (survives an abrupt close)
     reloadSites();
   });
   QObject::connect(delBtn, &QPushButton::clicked, [&]{
@@ -890,8 +891,14 @@ int main(int argc, char ** argv)
   tabBar->setTabsClosable(true);
   tabBar->setExpanding(false);
   tabBar->setDrawBase(false);
+  tabBar->setDocumentMode(true);          // left-aligns tabs (macOS centers them otherwise)
   tabBar->hide();
-  centralLay->addWidget(tabBar);
+  auto * tabRow = new QWidget;
+  auto * tabRowLay = new QHBoxLayout(tabRow);
+  tabRowLay->setContentsMargins(0, 0, 0, 0); tabRowLay->setSpacing(0);
+  tabRowLay->addWidget(tabBar); tabRowLay->addStretch(1);   // push the tabs to the left
+  tabRow->hide();
+  centralLay->addWidget(tabRow);
   centralLay->addWidget(splitter, 1);
 
   // Bottom function-key bar (the iconic WinSCP/Norton-Commander row).
@@ -1209,7 +1216,7 @@ int main(int argc, char ** argv)
     tabBar->setTabData(i, QStringList{ right->path(), left->path() });   // [remote, local]
     tabBar->setCurrentIndex(i);
     curTab = i;
-    tabBar->setVisible(true);
+    tabRow->setVisible(true);
     tabSwitching = false;
   };
   // Switch panels to reflect tab i (assumes engine session i is/should be active).
@@ -1233,7 +1240,7 @@ int main(int argc, char ** argv)
     engine::closeSession(i);
     tabBar->removeTab(i);
     if (tabBar->count() == 0) {
-      tabBar->hide(); curTab = -1;
+      tabRow->hide(); curTab = -1;
       right->setLocal(); right->navigate(u8(engine::homeDir()));
       actDisconnect->setEnabled(false); window.setWindowTitle("WinSCP");
     } else {
