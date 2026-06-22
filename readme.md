@@ -6,6 +6,11 @@
 
 <p align="center"><b>A native macOS &amp; Linux port of WinSCP.</b></p>
 
+<p align="center">
+  🌐 <a href="https://oegea.github.io/FreeSCP/">Website</a> ·
+  ⬇️ <a href="https://github.com/oegea/FreeSCP/releases/latest">Download (macOS, signed &amp; notarized)</a>
+</p>
+
 ---
 
 ## Why
