@@ -31,6 +31,7 @@
 #include <QMessageBox>
 #include <QInputDialog>
 #include <QFileDialog>
+#include <QFileSystemWatcher>
 #include <QComboBox>
 #include <QTabWidget>
 #include <QString>
@@ -1062,6 +1063,22 @@ int main(int argc, char ** argv)
   };
   left->onDropExternal = importFiles; right->onDropExternal = importFiles;
 
+  // Edit-and-watch: a remote file opened in an (external) editor is downloaded to temp and watched;
+  // saving re-uploads it automatically — the classic WinSCP "edit remote in your editor" magic.
+  auto * watcher = new QFileSystemWatcher(&window);
+  auto * watchRemoteDir = new QHash<QString, QString>;   // localTempPath -> remote dir
+  auto reupload = [&, watcher, watchRemoteDir](const QString & localPath) {
+    auto it = watchRemoteDir->find(localPath);
+    if (it == watchRemoteDir->end()) return;
+    QString remoteDir = it.value();
+    std::string err;
+    if (engine::uploadToRemote(s8(localPath), s8(remoteDir), &err))
+    { window.statusBar()->showMessage("Re-uploaded " + QFileInfo(localPath).fileName() + " \xE2\x86\x92 " + remoteDir); if (right->isRemote()) right->refresh(); }
+    else window.statusBar()->showMessage("Re-upload failed: " + u8(err));
+    if (QFileInfo::exists(localPath) && !watcher->files().contains(localPath)) watcher->addPath(localPath);  // editors that save-by-rename drop the watch
+  };
+  QObject::connect(watcher, &QFileSystemWatcher::fileChanged, &window, [reupload](const QString & p) { reupload(p); });
+
   // Host-key verification: show the engine's message (fingerprint) + Yes/No instead of auto-accepting.
   engine::setConfirmCallback([&](const std::string & msg) -> bool {
     if (qgetenv("QT_QPA_PLATFORM") == "offscreen") return true;   // headless tests: auto-accept
@@ -1188,10 +1205,13 @@ int main(int argc, char ** argv)
       if (!engine::downloadFromRemote(engine::joinPath(s8(active->path()), s8(f)), s8(tmp), &err))
       { QMessageBox::warning(&window, "Open", "Could not download: " + u8(err)); return; }
       localPath = tmp + "/" + f;
+      // watch the temp copy: any save (this app's editor or an external one) re-uploads it
+      (*watchRemoteDir)[localPath] = active->path();
+      if (!watcher->files().contains(localPath)) watcher->addPath(localPath);
     }
     else localPath = active->path() + "/" + f;
     QDesktopServices::openUrl(QUrl::fromLocalFile(localPath));
-    window.statusBar()->showMessage("Opened " + f);
+    window.statusBar()->showMessage(active->isRemote() ? ("Opened " + f + " (auto-uploads on save)") : ("Opened " + f));
   };
   // Internal editor (F4): download a remote file to temp, edit in a built-in text editor; Save writes
   // it back (re-uploads for remote). Local files are edited in place.
