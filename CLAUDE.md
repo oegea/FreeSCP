@@ -55,7 +55,9 @@ native/            >>> ALL PORT WORK LIVES HERE <<<
   ui-qt/           Qt 6 Widgets GUI
   cmake/           shared CMake modules
   CMakeLists.txt   top-level native build
-docs/porting/      PLAN.md (roadmap), STATUS.md (progress), UPSTREAM-PATCHES.md
+docs/porting/      PLAN.md (roadmap), STATUS.md (progress), ROADMAP.md (WinSCP fidelity TODO),
+                   UPSTREAM-PATCHES.md (guarded source edits), UPSTREAM-SYNC.md (fork base
+                   74a8c03f4 + how to pull newer WinSCP), LEARNINGS.md
 ```
 
 ## The core porting challenge (read this)
