@@ -2,7 +2,7 @@
 
 Update this whenever a target starts/stops building. Verify by actually building.
 
-_Last updated: 2026-06-22 — branded **FreeSCP** (native macOS/Linux port of WinSCP). All 5 protocols operational; GUI now has session tabs, directory tree, bookmarks, Copy/Move dialog, richer toolbar, app icon. See entries at bottom._
+_Last updated: 2026-06-22 (v0.1.0 public) — branded **FreeSCP** (native macOS/Linux port of WinSCP). All 5 protocols operational; GUI now has session tabs, directory tree, bookmarks, Copy/Move dialog, richer toolbar, app icon. See entries at bottom._
 
 ## Current phase: 1.5 — compiling engine .cpp bodies (RTL bodies on demand)
 Phase 0 ✅ (foundation). Phase 1 ✅ (35/36 headers parse). Now: compile .cpp into libwinscpcore.
@@ -786,3 +786,23 @@ high-visibility WinSCP UI:
 README.md rewritten for FreeSCP (the gap it fills, ported-engine-vs-rewritten-GUI explanation, build/
 run). NEXT: drag OUT to Finder (export remote by dragging out — macOS file promises), recent-dirs
 dropdown, dark theme, Find files.
+
+## Public release: v0.1.0 (signed + notarized), public repo, website
+FreeSCP shipped its first public macOS build and went public.
+- **Release v0.1.0** — signed (Developer ID) + **notarized** + stapled; stable asset
+  `FreeSCP-macOS-arm64.zip` at `releases/latest/download/...`. Build via
+  `native/scripts/release-macos.sh` (macdeployqt bundles Qt, deep hardened-runtime codesign,
+  notarytool, staple, zip). Self-contained .app.
+- **Repo public** (github.com/oegea/FreeSCP, GPLv3) — LICENSE (GPLv3 + AI-icon exception),
+  CONTRIBUTING (issues yes / code PRs no), .gitignore (build + signing secrets). Secret audit clean
+  (tracked + history): no creds/keys/personal paths; only OpenSSL upstream test fixtures + public
+  Team ID/authorship.
+- **Website** (GitHub Pages, `gh-pages` branch) — https://oegea.github.io/FreeSCP/ — WinSCP-inspired
+  landing: hero, Download-for-macOS (latest), Linux coming-soon, generic-content screenshot, features.
+- **App polish** — app icon (cleaned, bundled, CFBundleName=FreeSCP), branded message boxes
+  (FreeSCP icon, no empty icons), custom About (icon/repo/GPLv3/credit), drag-OUT to Finder (files),
+  empty-host connect error fixed (was garbage), Login test-cred prefill removed, QSettings isolated so
+  test runs can't wipe real sites.
+
+Tomorrow: continue ROADMAP.md (drag-out of folders, recent-dirs dropdown, find files, transfer
+settings binary/text, SSH tunnel). Engine/protocol parity is done; remaining work is GUI/UX + auth.

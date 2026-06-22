@@ -9,11 +9,13 @@ session tabs · directory tree · background queue + parallel transfers · drag&
 · edit-remote-in-any-editor (watch+reupload) · internal editor · public-key auth (OpenSSH auto-convert)
 · host-key verification · overwrite confirmation · Copy/Move dialog · recursive chmod · Properties info
 · bookmarks · select-by-mask · copy path/URL · create file · Open Terminal · sync browsing ·
-synchronize (collect/apply) · Site Manager (save/load) · preferences · column sort · hidden-files toggle.
+synchronize (collect/apply) · Site Manager (save/load) · preferences · column sort · hidden-files toggle
+· **drag OUT to Finder** (files) · app icon · branded alerts · custom About (icon/repo/credit) · richer
+toolbar · **signed + notarized macOS release** (v0.1.0) · public repo · **GitHub Pages website**.
 
 ## High value, next
-- ⬜ **Drag OUT to Finder** — drag remote files out to download (local: real URLs; remote: download to
-  temp then provide URLs, or macOS file promises). *In progress next.*
+- 🟡 **Drag OUT of folders** — drag-out works for files; remote *directories* aren't exported yet
+  (needs recursive temp download or macOS file promises).
 - ⬜ **Recent directories** dropdown in the address bar (per panel, persisted).
 - ⬜ **Find files** — recursive remote search (TTerminal search / per-dir walk).
 - ⬜ **Calculate directory sizes** (Space on a dir; show total in the panel).
