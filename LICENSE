@@ -2,33 +2,24 @@ FreeSCP — a native macOS/Linux port of WinSCP
 Copyright (C) 2026 Oriol Egea and contributors
 Portions Copyright (C) Martin Přikryl (WinSCP) and its contributors.
 
-FreeSCP is free software licensed under the GNU General Public License version 3
-(GPLv3), the same license as the upstream WinSCP project it is derived from. The
-full text of the GPLv3 follows below.
+FreeSCP reuses the WinSCP engine source and is free software licensed under the GNU General Public
+License version 3 (GPLv3) — the same license as upstream WinSCP. The full GPLv3 text follows below.
+
+FreeSCP is an independent project and is NOT affiliated with, sponsored by, or endorsed by Martin
+Přikryl or the WinSCP project. "WinSCP" is used only descriptively to identify the software this is
+derived from. All trademarks belong to their respective owners.
 
 ----------------------------------------------------------------------------
-Asset / icon exception
+Application icon
 ----------------------------------------------------------------------------
 The application icon (icon.png, native/ui-qt/winscp.png, native/ui-qt/winscp.icns,
-docs/freescp-icon.png) was generated with an AI tool (ChatGPT), prompted to resemble
-the WinSCP icon. The author claims NO copyright over it and asserts none: it may be
-used, copied, modified and redistributed freely by anyone, for any purpose, without
-restriction or attribution. It is provided "as is", without warranty.
-
-FreeSCP is an independent project and is not affiliated with, sponsored by, or
-endorsed by Martin Přikryl or the WinSCP project. "WinSCP" is the name of the
-upstream project from which the engine is derived.
+docs/freescp-icon.png and the website assets) was generated with an AI tool (ChatGPT), prompted to
+resemble the WinSCP icon. No copyright is claimed over it: it may be used, copied, modified and
+redistributed freely by anyone, for any purpose, without restriction or attribution, and is provided
+"as is" without warranty.
 
 ============================================================================
-                    GNU GENERAL PUBLIC LICENSE (v3)
-============================================================================
 
-  A. GNU General Public License
-  B. License of WinSCP Icon Set
-  C. Privacy Policy
-
-
-  A. GNU GENERAL PUBLIC LICENSE
   Version 3, 29 June 2007
 
   Copyright (C) 2007 Free Software Foundation, Inc. <https://www.fsf.org/>
@@ -717,30 +708,3 @@ display this graphical media royalty-free in WinSCP software applications,
 web design, presentations, and multimedia projects that WinSCP creates and/or
 distributes.
 
-
-  C. WinSCP Privacy Policy
-
-Please take time to read WinSCP Privacy policy at
-https://winscp.net/eng/docs/privacy
-
-WinSCP includes functionality to collect and send non-personal WinSCP
-Usage statistics and to automatically check for application updates. The only
-potentially personal information sent to WinSCP is IP addresses. Users can
-opt-out from using this functionality in the installer or anytime later
-in WinSCP Preferences. WinSCP Usage statistics help improve future versions
-of WinSCP. Once sent, usage statistics are stored for analysis (except
-IP addresses) and made available to the core WinSCP team only.
-
-Before disabling WinSCP Usage statistics, be so kind and consider that it
-plays very important role in the WinSCP development. We work very hard
-to make WinSCP reliable and useful. We also love improving WinSCP with every
-release. And last but not least, we provide WinSCP application to you
-for free and we want this to stay so! However our resources and time are
-unfortunately very limited. We want to focus our effort on improving
-the right features for you. That is why we need to learn more about how you
-use WinSCP.
-
-If you still want to disable WinSCP Usage statistics already during
-installation, you may do so using Custom installation.
-
-Thank you!

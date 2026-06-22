@@ -18,8 +18,3 @@ FreeSCP is largely a personal, "vibe-coded" project. To keep it coherent and eas
 closed — it's nothing about you or the change.
 
 You're of course free to **fork** it (it's GPLv3) and take it wherever you like.
-
-## Privacy
-
-There is no privacy policy and no data collection — FreeSCP is a local desktop app and a personal
-project. It talks only to the servers you connect to.
