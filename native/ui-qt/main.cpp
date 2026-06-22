@@ -896,7 +896,9 @@ int main(int argc, char ** argv)
   auto * tabRow = new QWidget;
   auto * tabRowLay = new QHBoxLayout(tabRow);
   tabRowLay->setContentsMargins(0, 0, 0, 0); tabRowLay->setSpacing(0);
-  tabRowLay->addWidget(tabBar); tabRowLay->addStretch(1);   // push the tabs to the left
+  auto * newTabBtn = new QToolButton; newTabBtn->setText("+"); newTabBtn->setToolTip("New session (Ctrl+N)");
+  newTabBtn->setAutoRaise(true);
+  tabRowLay->addWidget(tabBar); tabRowLay->addWidget(newTabBtn); tabRowLay->addStretch(1);   // tabs + "+" to the left
   tabRow->hide();
   centralLay->addWidget(tabRow);
   centralLay->addWidget(splitter, 1);
@@ -1701,6 +1703,7 @@ int main(int argc, char ** argv)
 
   //--- toolbar / shortcuts ------------------------------------------------
   QObject::connect(actConnect, &QAction::triggered, doConnect);
+  QObject::connect(newTabBtn, &QToolButton::clicked, doConnect);   // "+" tab = open another session
   QObject::connect(actDisconnect, &QAction::triggered, doDisconnect);
   QObject::connect(actHome, &QAction::triggered, [&] { if (!active->isRemote()) active->navigate(u8(engine::homeDir())); });
   QObject::connect(actRefresh, &QAction::triggered, [&] { active->refresh(); });
