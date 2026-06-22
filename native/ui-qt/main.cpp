@@ -715,7 +715,24 @@ protected:
             !selectedItems().isEmpty())
         {
           s_dragSource = this;
-          auto * mime = new QMimeData; mime->setData(kFmt, "1");
+          auto * mime = new QMimeData; mime->setData(kFmt, "1");   // inter-panel marker
+          // Also expose the files as URLs so they can be dropped on Finder/Nautilus (drag OUT).
+          // Local: real paths (free). Remote: download the selected files to a temp dir first.
+          QList<QUrl> urls;
+          QStringList selFiles = selectedFiles();   // files only (dirs not exported this way)
+          if (!FRemote) {
+            for (const QString & f : selFiles) urls << QUrl::fromLocalFile(FPath + "/" + f);
+          } else if (!selFiles.isEmpty() && !gTransferRunning.load()) {
+            QString tmp = QDir::tempPath() + "/freescp-dragout"; QDir().mkpath(tmp);
+            QGuiApplication::setOverrideCursor(Qt::BusyCursor);
+            for (const QString & f : selFiles) {
+              std::string err;
+              if (engine::downloadFromRemote(engine::joinPath(s8(FPath), s8(f)), s8(tmp), &err))
+                urls << QUrl::fromLocalFile(tmp + "/" + f);
+            }
+            QGuiApplication::restoreOverrideCursor();
+          }
+          if (!urls.isEmpty()) mime->setUrls(urls);
           auto * drag = new QDrag(this); drag->setMimeData(mime);
           drag->exec(Qt::CopyAction);
           s_dragSource = nullptr;
