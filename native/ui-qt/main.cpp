@@ -1877,6 +1877,10 @@ int main(int argc, char ** argv)
         auto r = engine::connectSftp(s8(p[0]), p[1].toInt(), s8(p[2]), s8(p[3]), pr, false, p.size() > 5 ? s8(p[5]) : std::string());
         if (r.ok) { right->setRemote(QString("%1@%2").arg(p[2]).arg(p[0])); remoteHome = u8(r.currentDir); right->navigate(u8(r.currentDir));
           addSessionTab(QString("%1@%2").arg(p[2]).arg(p[0]));
+          if (!qEnvironmentVariable("WINSCP_DEMO").isEmpty()) {   // marketing screenshot: generic dirs
+            left->navigate("/tmp/freescp-demo");
+            right->navigate("/config/demo");
+          }
           // exercise the BACKGROUND transfer queue end-to-end (multi-file, on the worker thread)
           QString xf = qEnvironmentVariable("WINSCP_AUTOXFER");
           if (!xf.isEmpty()) {
