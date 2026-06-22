@@ -17,6 +17,9 @@
 #include "Exceptions.h"
 #include <algorithm>
 #include <cstdio>
+#include <ctime>
+#include <csignal>
+#include <execinfo.h>
 #include <filesystem>
 #include <memory>
 #include <mutex>
@@ -28,6 +31,34 @@ namespace {
 
 std::string ToU8(const UnicodeString & s) { return std::string(UTF8String(s).c_str()); }
 UnicodeString FromU8(const std::string & s) { return UTF8ToString(RawByteString(s.c_str())); }
+
+//--- diagnostics log (flushes every line so the last entry survives a crash) -----------------
+std::mutex g_logMtx;
+FILE * g_logFp = nullptr;
+const char * kLogPath = "/tmp/winscp-native.log";
+
+void LogLine(const std::string & s)
+{
+  std::lock_guard<std::mutex> lk(g_logMtx);
+  if (g_logFp == nullptr) g_logFp = fopen(kLogPath, "a");
+  if (g_logFp == nullptr) return;
+  char ts[32]; time_t t = time(nullptr); struct tm tm; localtime_r(&t, &tm);
+  strftime(ts, sizeof(ts), "%H:%M:%S", &tm);
+  fprintf(g_logFp, "%s %s\n", ts, s.c_str());
+  fflush(g_logFp);
+}
+
+// Crash handler: dump signal + backtrace to the log (and stderr) so a hard crash leaves a trace.
+void CrashHandler(int sig)
+{
+  const char * name = (sig == SIGSEGV) ? "SIGSEGV" : (sig == SIGABRT) ? "SIGABRT"
+                    : (sig == SIGBUS) ? "SIGBUS" : (sig == SIGILL) ? "SIGILL" : "signal";
+  void * bt[64]; int n = backtrace(bt, 64);
+  if (g_logFp) { fprintf(g_logFp, "\n*** CRASH: %s ***\n", name); fflush(g_logFp);
+                 backtrace_symbols_fd(bt, n, fileno(g_logFp)); fflush(g_logFp); }
+  backtrace_symbols_fd(bt, n, 2);
+  signal(sig, SIG_DFL); raise(sig);   // re-raise for the default handler / core
+}
 
 //--- remote SFTP session state (single session) ---
 class BridgeConfiguration : public TConfiguration
@@ -79,6 +110,14 @@ namespace engine {
 std::string banner()
 {
   return "WinSCP — native port (engine RTL + platform layer; local FS via ported FindFirst)";
+}
+
+void logLine(const std::string & msg) { LogLine(msg); }
+std::string logPath() { return kLogPath; }
+void installCrashHandler()
+{
+  for (int sig : { SIGSEGV, SIGABRT, SIGBUS, SIGILL }) signal(sig, CrashHandler);
+  LogLine("=== session start (crash handler installed) ===");
 }
 
 std::string homeDir()
@@ -193,6 +232,7 @@ ConnectResult connectSftp(const std::string & host, int port,
                           const std::string & user, const std::string & password,
                           Protocol protocol, bool tls, const std::string & keyFile)
 {
+  LogLine("connectSftp(" + user + "@" + host + ":" + std::to_string(port) + " proto=" + std::to_string((int)protocol) + " key=" + (keyFile.empty() ? "no" : "yes") + ") ...");
   ENGINE_LOCK;
   ConnectResult r;
   try
@@ -251,6 +291,7 @@ ConnectResult connectSftp(const std::string & host, int port,
     g_terminal->OnQueryUser =
       [](TObject *, const UnicodeString & Query, TStrings *, unsigned int Answers, const TQueryParams *, unsigned int & Answer, TQueryType Type, void *)
       {
+        LogLine("  OnQueryUser type=" + std::to_string((int)Type) + " answers=" + std::to_string(Answers) + " msg='" + ToU8(Query) + "'");
         if (Type == qtError)
         {
           // qaYes here is a recoverable action (e.g. "Delete & recreate" to overwrite a file the
@@ -286,17 +327,20 @@ ConnectResult connectSftp(const std::string & host, int port,
     r.ok = true;
     r.currentDir = ToU8(g_terminal->CurrentDirectory);
     g_lastParams = ConnParams{ host, port, user, password, protocol, tls, true };  // for parallel connections
+    LogLine("  connect: OK, cwd='" + r.currentDir + "'");
   }
   catch (Exception & E)
   {
+    g_connecting = false;
     UnicodeString msg = E.Message;
     ExtException * Ext = dynamic_cast<ExtException *>(&E);
     if ((Ext != nullptr) && (Ext->MoreMessages != nullptr))
       for (int i = 0; i < Ext->MoreMessages->Count; i++) msg += UnicodeString(L"\n") + Ext->MoreMessages->Strings[i];
     r.error = ToU8(msg);
     g_terminal.reset();
+    LogLine("  connect: FAILED: " + r.error);
   }
-  catch (...) { r.error = "unknown error"; g_terminal.reset(); }
+  catch (...) { g_connecting = false; r.error = "unknown error"; g_terminal.reset(); LogLine("  connect: unknown exception"); }
   return r;
 }
 
@@ -498,8 +542,9 @@ void closeParallelConnections()
 bool uploadToRemote(const std::string & localPathUtf8, const std::string & remoteDirUtf8,
                     std::string * error)
 {
+  LogLine("uploadToRemote('" + localPathUtf8 + "' -> '" + remoteDirUtf8 + "') ...");
   ENGINE_LOCK;
-  if (!remoteConnected()) { if (error) *error = "not connected"; return false; }
+  if (!remoteConnected()) { if (error) *error = "not connected"; LogLine("  upload: not connected"); return false; }
   g_lastTransferError.clear();
   try
   {
@@ -507,38 +552,45 @@ bool uploadToRemote(const std::string & localPathUtf8, const std::string & remot
     files->Add(FromU8(localPathUtf8));
     TCopyParamType cp; cp.Default();
     UnicodeString target = UnixIncludeTrailingBackslash(FromU8(remoteDirUtf8));
+    LogLine("  upload: CopyToRemote ...");
     bool res = g_terminal->CopyToRemote(files.get(), target, &cp, cpNoConfirmation, nullptr);
-    if (!g_lastTransferError.empty()) { if (error) *error = g_lastTransferError; return false; }  // skipped-on-error
+    LogLine("  upload: CopyToRemote returned res=" + std::string(res ? "1" : "0"));
+    if (!g_lastTransferError.empty()) { if (error) *error = g_lastTransferError; LogLine("  upload: failed: " + g_lastTransferError); return false; }  // skipped-on-error
+    LogLine("  upload: OK");
     return res;
   }
-  catch (Exception & E) { if (error) *error = g_lastTransferError.empty() ? ExceptionToU8(E) : g_lastTransferError; return false; }
-  catch (...) { if (error) *error = "unknown error"; return false; }
+  catch (Exception & E) { std::string m = g_lastTransferError.empty() ? ExceptionToU8(E) : g_lastTransferError; if (error) *error = m; LogLine("  upload: EXCEPTION: " + m); return false; }
+  catch (...) { if (error) *error = "unknown error"; LogLine("  upload: unknown exception"); return false; }
 }
 
 bool downloadFromRemote(const std::string & remotePathUtf8, const std::string & localDirUtf8,
                         std::string * error)
 {
+  LogLine("downloadFromRemote('" + remotePathUtf8 + "' -> '" + localDirUtf8 + "') ...");
   ENGINE_LOCK;
-  if (!remoteConnected()) { if (error) *error = "not connected"; return false; }
+  if (!remoteConnected()) { if (error) *error = "not connected"; LogLine("  download: not connected"); return false; }
   try
   {
     // CopyToLocal requires each entry's Object to be the TRemoteFile* (ProcessFiles reads
     // FileList->Objects[Index]); a bare string list yields a NULL File and crashes. Find the
     // file in the current listing (the panel the user is browsing) and attach it.
     TRemoteFile * rf = FindInListing(UnixExtractFileName(FromU8(remotePathUtf8)));
-    if (rf == nullptr) { if (error) *error = "file not in current listing"; return false; }
+    if (rf == nullptr) { if (error) *error = "file not in current listing"; LogLine("  download: not in listing"); return false; }
 
     std::unique_ptr<TStrings> files(new TStringList());
     files->AddObject(rf->FullFileName, rf);
     TCopyParamType cp; cp.Default();
     UnicodeString target = IncludeTrailingBackslash(FromU8(localDirUtf8));
     g_lastTransferError.clear();
+    LogLine("  download: CopyToLocal ...");
     bool res = g_terminal->CopyToLocal(files.get(), target, &cp, cpNoConfirmation, nullptr);
-    if (!g_lastTransferError.empty()) { if (error) *error = g_lastTransferError; return false; }
+    LogLine("  download: CopyToLocal returned res=" + std::string(res ? "1" : "0"));
+    if (!g_lastTransferError.empty()) { if (error) *error = g_lastTransferError; LogLine("  download: failed: " + g_lastTransferError); return false; }
+    LogLine("  download: OK");
     return res;
   }
-  catch (Exception & E) { if (error) *error = g_lastTransferError.empty() ? ExceptionToU8(E) : g_lastTransferError; return false; }
-  catch (...) { if (error) *error = "unknown error"; return false; }
+  catch (Exception & E) { std::string m = g_lastTransferError.empty() ? ExceptionToU8(E) : g_lastTransferError; if (error) *error = m; LogLine("  download: EXCEPTION: " + m); return false; }
+  catch (...) { if (error) *error = "unknown error"; LogLine("  download: unknown exception"); return false; }
 }
 
 bool remoteMakeDir(const std::string & nameUtf8, std::string * error)
@@ -560,15 +612,19 @@ bool remoteMakeDir(const std::string & nameUtf8, std::string * error)
 
 bool remoteDelete(const std::string & nameUtf8, std::string * error)
 {
+  LogLine("remoteDelete('" + nameUtf8 + "') ...");
   ENGINE_LOCK;
-  if (!remoteConnected()) { if (error) *error = "not connected"; return false; }
+  if (!remoteConnected()) { if (error) *error = "not connected"; LogLine("  delete: not connected"); return false; }
   try
   {
     TRemoteFile * rf = FindInListing(FromU8(nameUtf8));
-    if (rf == nullptr) { if (error) *error = "file not in current listing"; return false; }
+    if (rf == nullptr) { if (error) *error = "file not in current listing"; LogLine("  delete: not in listing"); return false; }
+    LogLine("  delete: found '" + ToU8(rf->FullFileName) + "' isDir=" + (rf->IsDirectory ? "1" : "0") + " -> DeleteFile");
     g_lastTransferError.clear();
     g_terminal->DeleteFile(rf->FullFileName, rf, nullptr);
-    if (!g_lastTransferError.empty()) { if (error) *error = g_lastTransferError; return false; }   // e.g. permission denied
+    LogLine("  delete: DeleteFile returned");
+    if (!g_lastTransferError.empty()) { if (error) *error = g_lastTransferError; LogLine("  delete: failed: " + g_lastTransferError); return false; }
+    LogLine("  delete: OK");
     return true;
   }
   catch (Exception & E) { if (error) *error = ExceptionToU8(E); return false; }

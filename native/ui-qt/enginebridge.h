@@ -34,6 +34,14 @@ struct DirEntry
 // Engine version/banner (proves winscpcore is linked and callable).
 std::string banner();
 
+//--- diagnostics log ---
+// Append a line to the diagnostics log (/tmp/winscp-native.log), flushed immediately.
+void logLine(const std::string & msg);
+// Path of the diagnostics log file (for showing the user / opening it).
+std::string logPath();
+// Install signal handlers that dump a backtrace to the log on a hard crash. Call once at startup.
+void installCrashHandler();
+
 // List a local directory via the ported engine file enumeration (FindFirst/TSearchRec).
 // Returns entries sorted dirs-first then by name; includes ".." unless at root.
 std::vector<DirEntry> listLocalDir(const std::string & utf8Path);

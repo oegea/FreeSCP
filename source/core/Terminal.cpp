@@ -1244,6 +1244,7 @@ __fastcall TTerminal::TTerminal(TSessionData * SessionData, TConfiguration * Con
   FOnCustomCommand = NULL;
   FOnClose = NULL;
   FOnFindingFile = NULL;
+  FOperationProgress = NULL;   // must be NULL before the first StartOperationWithFile (TryStartOperationWithFile reads it); upstream relies on this but never initializes it in the ctor
   FOperationProgressPersistence = NULL;
   FOperationProgressOnceDoneOperation = odoIdle;
 

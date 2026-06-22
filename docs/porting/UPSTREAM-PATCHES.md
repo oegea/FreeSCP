@@ -100,4 +100,14 @@ portable spelling. Needed because POSIX `struct in_addr` has no `S_un` union mem
   (both `#ifndef _WIN32`).
 - source/filezilla/AsyncProxySocketLayer.cpp, FtpControlSocket.cpp: `sin_addr.S_un.S_addr` ->
   `sin_addr.s_addr` (portable; Windows winsock #defines s_addr to S_un.S_addr).
+- **source/core/Terminal.cpp** — added `FOperationProgress = NULL;` to the TTerminal constructor
+  init block (UNGUARDED — correct on every platform). The member was never initialized in the ctor,
+  only assigned during/after an operation (set at DoStartOperation, cleared at line ~4072). Before
+  the first `StartOperationWithFile` (delete/chmod/SetProperties/remote-move/calculate-size),
+  `TryStartOperationWithFile` reads `OperationProgress` (== FOperationProgress) and, if non-NULL,
+  dereferences `->Operation`. With the member uninitialized this was garbage → **nondeterministic
+  SIGSEGV on the first delete/chmod/etc.** (the crash a user hit "sometimes" deleting a file). Upstream
+  relies on it being NULL (there's a `DebugAssert(FOperationProgress == NULL)` before the first set) but
+  never initializes it in the ctor — latent bug, masked on Windows by allocator zeroing / luck. Setting
+  it NULL is what upstream already expects, so Windows behavior is unchanged.
 All keep the Windows build intact.

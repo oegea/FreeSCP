@@ -752,6 +752,7 @@ private:
 
 int main(int argc, char ** argv)
 {
+  engine::installCrashHandler();   // dump a backtrace to the log on a hard crash (BEFORE anything else)
   QApplication app(argc, argv);
   app.setApplicationName("WinSCP");
   { QSettings s("WinSCP-native-port", "WinSCP");
@@ -837,7 +838,7 @@ int main(int argc, char ** argv)
   logDock->setWidget(logView);
   window.addDockWidget(Qt::BottomDockWidgetArea, logDock);
   logDock->hide();
-  auto log = [&](const QString & s) { logView->appendPlainText(s); };
+  auto log = [&](const QString & s) { logView->appendPlainText(s); engine::logLine("[ui] " + s8(s)); };
 
   // Transfer queue dock (WinSCP-style): a list of transfers with live progress. Processed
   // sequentially on the UI thread (processEvents keeps it responsive) — visible like WinSCP's queue.
@@ -1205,11 +1206,16 @@ int main(int argc, char ** argv)
     QStringList sel = active->selectedItems();
     if (sel.isEmpty()) { window.statusBar()->showMessage("No files selected"); return; }
     if (gConfirmDelete && QMessageBox::question(&window, "Delete", QString("Delete %1 item(s)?").arg(sel.size())) != QMessageBox::Yes) return;
-    int ok = 0; std::string err;
-    for (const QString & f : sel)
-      if (active->isRemote() ? engine::remoteDelete(s8(f), &err) : engine::localDelete(s8(active->path()), s8(f), &err)) ++ok;
+    engine::logLine("[ui] doDelete: " + std::to_string(sel.size()) + " item(s) remote=" + (active->isRemote() ? "1" : "0") + " in '" + s8(active->path()) + "'");
+    int ok = 0; std::string err, lastErr;
+    for (const QString & f : sel) {
+      bool r = active->isRemote() ? engine::remoteDelete(s8(f), &err) : engine::localDelete(s8(active->path()), s8(f), &err);
+      if (r) ++ok; else lastErr = err;
+    }
+    engine::logLine("[ui] doDelete done: " + std::to_string(ok) + "/" + std::to_string(sel.size()) + (lastErr.empty() ? "" : (" lastErr=" + lastErr)));
     active->refresh();
     window.statusBar()->showMessage(QString("Deleted %1/%2 item(s)").arg(ok).arg(sel.size()));
+    if (ok < sel.size()) QMessageBox::warning(&window, "Delete", "Some items could not be deleted:\n" + u8(lastErr));
   };
   auto doProps = [&] {
     if (busy()) return;
@@ -1375,6 +1381,11 @@ int main(int argc, char ** argv)
     mSession->addAction("E&xit\tF10", doQuit);
     auto * mOptions = window.menuBar()->addMenu("&Options");
     mOptions->addAction("Session &log\tCtrl+L", [&]{ logDock->setVisible(!logDock->isVisible()); });
+    mOptions->addAction("Open &diagnostics log file", [&]{
+      QString p = u8(engine::logPath());
+      window.statusBar()->showMessage("Diagnostics log: " + p);
+      QProcess::startDetached("open", { "-R", p });   // reveal in Finder (macOS)
+    });
     mOptions->addAction("Transfer &queue\tCtrl+Q", [&]{ queueDock->setVisible(!queueDock->isVisible()); });
     auto * actHidden = mOptions->addAction("Show &hidden files"); actHidden->setCheckable(true); actHidden->setChecked(gShowHidden);
     actHidden->setShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_H));
