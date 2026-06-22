@@ -1176,9 +1176,34 @@ int main(int argc, char ** argv)
     window.statusBar()->showMessage("Opened terminal: " + sshCmd);
   };
 
+  // WinSCP-style Copy/Move dialog: shows the count + an editable target directory. Returns the target
+  // (empty = cancelled). If the user changes the target, the dest panel is navigated there first so
+  // the transfer + the post-transfer refresh both target it.
+  auto showCopyDialog = [&](const QString & op, int count, const QString & defTarget) -> QString {
+    QDialog d(&window); d.setWindowTitle(op);
+    auto * lay = new QVBoxLayout(&d);
+    lay->addWidget(new QLabel(QString("%1 %2 item(s) to:").arg(op).arg(count)));
+    auto * edit = new QLineEdit(defTarget); edit->setMinimumWidth(380); edit->selectAll();
+    lay->addWidget(edit);
+    auto * bb = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
+    bb->button(QDialogButtonBox::Ok)->setText(op);
+    lay->addWidget(bb);
+    QObject::connect(bb, &QDialogButtonBox::accepted, &d, &QDialog::accept);
+    QObject::connect(bb, &QDialogButtonBox::rejected, &d, &QDialog::reject);
+    edit->setFocus();
+    return (d.exec() == QDialog::Accepted) ? edit->text() : QString();
+  };
   auto doCopy = [&] {
     FilePanel * dst = (active == left) ? right : left;
-    startTransfer(active, dst, active->selectedItems(), false);
+    QStringList files = active->selectedItems();
+    if (files.isEmpty()) { window.statusBar()->showMessage("No files selected"); return; }
+    if (active->isRemote() && dst->isRemote())
+    { QMessageBox::information(&window, "Copy", "Remote-to-remote copy is not supported yet."); return; }
+    if (busy()) return;
+    QString target = showCopyDialog("Copy", files.size(), dst->path());
+    if (target.isEmpty()) return;
+    if (target != dst->path()) dst->navigate(target);
+    startTransfer(active, dst, files, false);
   };
   auto doMove = [&] {
     FilePanel * dst = (active == left) ? right : left;
@@ -1187,8 +1212,9 @@ int main(int argc, char ** argv)
     if (active->isRemote() && dst->isRemote())
     { QMessageBox::information(&window, "Move", "Remote-to-remote move is not supported yet."); return; }
     if (busy()) return;
-    if (QMessageBox::question(&window, "Move",
-          QString("Move %1 item(s) to %2?").arg(files.size()).arg(dst->path())) != QMessageBox::Yes) return;
+    QString target = showCopyDialog("Move", files.size(), dst->path());
+    if (target.isEmpty()) return;
+    if (target != dst->path()) dst->navigate(target);
     startTransfer(active, dst, files, true);
   };
   auto doMkdir = [&] {
