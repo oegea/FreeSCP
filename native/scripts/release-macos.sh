@@ -29,6 +29,8 @@ MACDEPLOYQT="$(brew --prefix qt)/bin/macdeployqt"
 echo "==> staging a fresh FreeSCP.app"
 rm -rf "$STAGE"; mkdir -p "$STAGE"
 cp -R "$APP_SRC" "$APP"
+# Drop runtime cruft the dev app may have written next to the binary (ini/tmp/logs).
+rm -f "$APP"/Contents/MacOS/*.tmp "$APP"/Contents/MacOS/*.ini "$APP"/Contents/MacOS/*.log 2>/dev/null || true
 
 echo "==> bundling Qt (macdeployqt)"
 "$MACDEPLOYQT" "$APP" -no-strip
