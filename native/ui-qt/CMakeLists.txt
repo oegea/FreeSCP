@@ -27,7 +27,15 @@ find_package(OpenSSL REQUIRED)
 # The Qt app — normal flags (QString/4-byte wchar_t); never sees engine/rtlcompat headers. It
 # whole-archive links the engine (global ctors + cross-refs), the headless Interface stubs, and
 # the PuTTY libs — same set as the winscp-harness.
-add_executable(winscp-qt MACOSX_BUNDLE main.cpp)
+set(WINSCP_ICNS ${CMAKE_CURRENT_SOURCE_DIR}/winscp.icns)
+add_executable(winscp-qt MACOSX_BUNDLE main.cpp ${WINSCP_ICNS})
+if(APPLE)
+  set_source_files_properties(${WINSCP_ICNS} PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
+  set_target_properties(winscp-qt PROPERTIES
+    MACOSX_BUNDLE_ICON_FILE winscp.icns
+    MACOSX_BUNDLE_BUNDLE_NAME "FreeSCP"
+    MACOSX_BUNDLE_GUI_IDENTIFIER "org.freescp.app")
+endif()
 # Whole-archive the engine archives (macOS -force_load / GNU-lld --whole-archive). macOS unchanged.
 foreach(lib winscpcore winscp_harness puttycore puttyplatform puttycrypto_vs)
   if(APPLE)

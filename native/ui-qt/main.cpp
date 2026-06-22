@@ -855,7 +855,7 @@ int main(int argc, char ** argv)
     gAltColors = s.value("prefs/altColors", true).toBool(); }
 
   QMainWindow window;
-  window.setWindowTitle("WinSCP");
+  window.setWindowTitle("FreeSCP");
   window.resize(1100, 720);
   { QSettings s;
     if (s.contains("win/geometry")) window.restoreGeometry(s.value("win/geometry").toByteArray()); }
@@ -1254,7 +1254,7 @@ int main(int argc, char ** argv)
     if (tabBar->count() == 0) {
       tabRow->hide(); curTab = -1;
       right->setLocal(); right->navigate(u8(engine::homeDir()));
-      actDisconnect->setEnabled(false); window.setWindowTitle("WinSCP");
+      actDisconnect->setEnabled(false); window.setWindowTitle("FreeSCP");
     } else {
       int ni = qMin(i, tabBar->count() - 1);
       tabBar->setCurrentIndex(ni); activateTab(ni);
@@ -1291,7 +1291,7 @@ int main(int argc, char ** argv)
     right->navigate(u8(r.currentDir));
     right->onActivated();
     actDisconnect->setEnabled(true);
-    window.setWindowTitle(QString("%1@%2 \xE2\x80\x94 WinSCP").arg(lp.user).arg(lp.host));
+    window.setWindowTitle(QString("%1@%2 \xE2\x80\x94 FreeSCP").arg(lp.user).arg(lp.host));
     log("Connected. Remote directory: " + u8(r.currentDir));
     addSessionTab(QString("%1@%2").arg(lp.user).arg(lp.host));   // open a tab for this session
   };
@@ -1302,7 +1302,7 @@ int main(int argc, char ** argv)
     right->setLocal();
     right->navigate(u8(engine::homeDir()));
     actDisconnect->setEnabled(false);
-    window.setWindowTitle("WinSCP");
+    window.setWindowTitle("FreeSCP");
     window.statusBar()->showMessage("Disconnected");
     log("Disconnected.");
   };
@@ -1713,10 +1713,10 @@ int main(int argc, char ** argv)
     { auto * a = new QAction(&window); a->setShortcut(Qt::CTRL | Qt::Key_B);
       QObject::connect(a, &QAction::triggered, addBookmark); window.addAction(a); }
     auto * mHelp = window.menuBar()->addMenu("&Help");
-    mHelp->addAction("&About WinSCP (native port)", [&]{
+    mHelp->addAction("&About FreeSCP", [&]{
       QMessageBox::about(&window, "About",
-        "WinSCP — native macOS port\n\nPorted engine (RTL compat + platform layer) + Qt 6 GUI.\n"
-        "Protocols: SFTP, SCP, WebDAV, S3."); });
+        "FreeSCP — a native macOS/Linux port of WinSCP\n\nPorted engine (RTL compat + platform layer) + Qt 6 GUI.\n"
+        "Protocols: SFTP, SCP, FTP, WebDAV, S3."); });
   }
 
   //--- function-key bar buttons ------------------------------------------
@@ -1787,8 +1787,8 @@ int main(int argc, char ** argv)
   shortcut(Qt::CTRL | Qt::Key_Minus, [&]{ doSelectMask(false); });         // unselect by mask
   shortcut(Qt::CTRL | Qt::SHIFT | Qt::Key_C, doCopyPath);                  // copy path/URL
   shortcut(Qt::Key_Insert, [&]{ active->toggleSelectAndAdvance(); });      // Norton select + advance
-  shortcut(Qt::Key_F1, [&]{ QMessageBox::about(&window, "About WinSCP",
-    "WinSCP \xE2\x80\x94 native port (Mac/Linux)\nSFTP / SCP / FTP / WebDAV / S3"); });
+  shortcut(Qt::Key_F1, [&]{ QMessageBox::about(&window, "About FreeSCP",
+    "FreeSCP \xE2\x80\x94 a native macOS/Linux port of WinSCP\nSFTP / SCP / FTP / WebDAV / S3"); });
 
   left->setActive(true);
   left->navigate(u8(engine::homeDir()));
