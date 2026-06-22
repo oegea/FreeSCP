@@ -1680,6 +1680,31 @@ int main(int argc, char ** argv)
       QObject::connect(a, &QAction::triggered, doSync); window.addAction(a); }
     auto * mRemote = window.menuBar()->addMenu("&Remote");
     mRemote->addAction("&Refresh", [&]{ if (right->isRemote()) right->refresh(); });
+
+    // Bookmarks: persisted directory shortcuts; the menu is rebuilt each time it opens.
+    auto * mBookmarks = window.menuBar()->addMenu("&Bookmarks");
+    auto addBookmark = [&]{
+      QSettings st; QStringList bm = st.value("bookmarks").toStringList();
+      QString p = active->path();
+      if (!bm.contains(p)) { bm << p; st.setValue("bookmarks", bm); st.sync(); }
+      window.statusBar()->showMessage("Bookmarked " + p);
+    };
+    QObject::connect(mBookmarks, &QMenu::aboutToShow, [&, mBookmarks]{
+      mBookmarks->clear();
+      mBookmarks->addAction("&Add current directory\tCtrl+B", addBookmark);
+      QStringList bm = QSettings().value("bookmarks").toStringList();
+      if (!bm.isEmpty()) {
+        mBookmarks->addSeparator();
+        for (const QString & p : bm) { auto * a = mBookmarks->addAction(p); QObject::connect(a, &QAction::triggered, [&, p]{ active->navigate(p); }); }
+        mBookmarks->addSeparator();
+        mBookmarks->addAction("&Remove current directory", [&]{
+          QSettings st; QStringList b = st.value("bookmarks").toStringList();
+          b.removeAll(active->path()); st.setValue("bookmarks", b); st.sync();
+        });
+      }
+    });
+    { auto * a = new QAction(&window); a->setShortcut(Qt::CTRL | Qt::Key_B);
+      QObject::connect(a, &QAction::triggered, addBookmark); window.addAction(a); }
     auto * mHelp = window.menuBar()->addMenu("&Help");
     mHelp->addAction("&About WinSCP (native port)", [&]{
       QMessageBox::about(&window, "About",
