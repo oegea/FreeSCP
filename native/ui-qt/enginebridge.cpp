@@ -640,8 +640,9 @@ bool remoteMakeDir(const std::string & nameUtf8, std::string * error)
     if (!g_lastTransferError.empty()) { if (error) *error = g_lastTransferError; return false; }
     return true;
   }
-  catch (Exception & E) { if (error) *error = ExceptionToU8(E); return false; }
-  catch (...) { if (error) *error = "unknown error"; return false; }
+  // Prefer the message the error-query captured (e.g. "Permission denied") over a bare EAbort.
+  catch (Exception & E) { if (error) *error = g_lastTransferError.empty() ? ExceptionToU8(E) : g_lastTransferError; return false; }
+  catch (...) { if (error) *error = g_lastTransferError.empty() ? "unknown error" : g_lastTransferError; return false; }
 }
 
 bool remoteDelete(const std::string & nameUtf8, std::string * error)

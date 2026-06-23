@@ -29,13 +29,18 @@ find_package(OpenSSL REQUIRED)
 # the PuTTY libs — same set as the winscp-harness.
 set(WINSCP_ICNS ${CMAKE_CURRENT_SOURCE_DIR}/winscp.icns)
 set(CMAKE_AUTORCC ON)
+# Single source of truth for the app version (shown in About + baked into the bundle).
+set(FREESCP_VERSION "0.1.1")
 add_executable(winscp-qt MACOSX_BUNDLE main.cpp resources.qrc ${WINSCP_ICNS})
+target_compile_definitions(winscp-qt PRIVATE FREESCP_VERSION="${FREESCP_VERSION}")
 if(APPLE)
   set_source_files_properties(${WINSCP_ICNS} PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
   set_target_properties(winscp-qt PROPERTIES
     MACOSX_BUNDLE_ICON_FILE winscp.icns
     MACOSX_BUNDLE_BUNDLE_NAME "FreeSCP"
-    MACOSX_BUNDLE_GUI_IDENTIFIER "org.freescp.app")
+    MACOSX_BUNDLE_GUI_IDENTIFIER "org.freescp.app"
+    MACOSX_BUNDLE_SHORT_VERSION_STRING "${FREESCP_VERSION}"
+    MACOSX_BUNDLE_BUNDLE_VERSION "${FREESCP_VERSION}")
 endif()
 # Whole-archive the engine archives (macOS -force_load / GNU-lld --whole-archive). macOS unchanged.
 foreach(lib winscpcore winscp_harness puttycore puttyplatform puttycrypto_vs)

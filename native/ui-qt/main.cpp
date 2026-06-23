@@ -78,6 +78,10 @@
 
 #include "enginebridge.h"
 
+#ifndef FREESCP_VERSION
+#define FREESCP_VERSION "dev"
+#endif
+
 static QString u8(const std::string & s) { return QString::fromUtf8(s.c_str()); }
 static std::string s8(const QString & s) { return s.toUtf8().constData(); }
 
@@ -881,6 +885,8 @@ int main(int argc, char ** argv)
   QCoreApplication::setOrganizationName(qgetenv("QT_QPA_PLATFORM") == "offscreen" ? "WinSCP-native-port-test"
                                                                                   : "WinSCP-native-port");
   app.setApplicationName("WinSCP");
+  app.setApplicationVersion(FREESCP_VERSION);
+  app.setApplicationDisplayName("FreeSCP");   // stable app-menu name (avoids LaunchServices "FreeSCP 2")
   app.setWindowIcon(QIcon(":/winscp.png"));
   { QSettings s;
     gShowHidden = s.value("prefs/showHidden", true).toBool();
@@ -899,6 +905,7 @@ int main(int argc, char ** argv)
   auto * tb = window.addToolBar("Main");
   tb->setMovable(false);
   tb->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+  tb->setIconSize(QSize(16, 16));   // WinSCP-style small toolbar icons
   auto ic = [&](QStyle::StandardPixmap sp) { return window.style()->standardIcon(sp); };
   auto * actConnect = tb->addAction(ic(QStyle::SP_DialogOpenButton), "Login");
   tb->addSeparator();
@@ -915,6 +922,9 @@ int main(int argc, char ** argv)
   tb->addSeparator();
   auto * tbQueue  = tb->addAction(ic(QStyle::SP_FileDialogDetailedView), "Queue"); tbQueue->setCheckable(true);
   auto * tbLog    = tb->addAction(ic(QStyle::SP_FileDialogListView), "Log"); tbLog->setCheckable(true);
+  // Keep every command reachable: size the window so the toolbar never collapses into Qt's
+  // hard-to-hover overflow popup at normal sizes (WinSCP keeps its toolbar fully visible).
+  window.setMinimumWidth(qMax(960, tb->sizeHint().width() + 16));
 
   // Panels.
   auto * splitter = new QSplitter(Qt::Horizontal);
@@ -1410,7 +1420,15 @@ int main(int argc, char ** argv)
     bool ok = active->isRemote() ? engine::remoteMakeDir(s8(name), &err)
                                  : engine::localMakeDir(s8(active->path()), s8(name), &err);
     active->refresh();
-    window.statusBar()->showMessage(ok ? "Created " + name : "Create folder failed — " + u8(err));
+    if (ok) { window.statusBar()->showMessage("Created " + name); return; }
+    // WinSCP surfaces a failed folder creation as an error dialog (e.g. permission denied),
+    // not a silent status-bar line.
+    QString detail = u8(err).trimmed();
+    window.statusBar()->showMessage("Create folder failed");
+    appMessage(&window, "Create folder",
+               QString("Error creating folder \"%1\".\n\n%2")
+                   .arg(name, detail.isEmpty() ? QStringLiteral("The operation failed.") : detail),
+               QMessageBox::Ok);
   };
 
   // Select files by wildcard mask (Ctrl+Num+) / deselect (Ctrl+Num-).
@@ -1650,6 +1668,7 @@ int main(int argc, char ** argv)
     auto * body = new QLabel(
       "<div align='center'>"
       "<h2 style='margin:4px'>FreeSCP</h2>"
+      "<p style='margin:2px;color:gray'>Version " FREESCP_VERSION "</p>"
       "<p style='margin:2px'>A native macOS &amp; Linux port of WinSCP.</p>"
       "<p style='margin:2px'>SFTP · SCP · FTP · WebDAV · S3</p>"
       "<p style='margin:8px 2px 2px'><a href='https://github.com/oegea/FreeSCP'>github.com/oegea/FreeSCP</a></p>"

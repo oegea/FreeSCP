@@ -10,7 +10,7 @@
 # Usage: native/scripts/release-macos.sh [version]
 set -euo pipefail
 
-VERSION="${1:-0.1.0}"
+VERSION="${1:-0.1.1}"
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 APP_SRC="$ROOT/native/build/ui-qt/winscp-qt.app"
 STAGE="$ROOT/native/build/release"
