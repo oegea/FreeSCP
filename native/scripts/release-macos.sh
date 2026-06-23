@@ -46,7 +46,9 @@ codesign --force --deep --options runtime --timestamp \
 codesign --verify --deep --strict --verbose=2 "$APP"
 
 echo "==> notarizing"
-ZIP="$STAGE/FreeSCP-macos-arm64-$VERSION.zip"
+# Stable asset name — the website links to releases/latest/download/FreeSCP-macOS-arm64.zip,
+# so the filename must NOT carry the version (else the download 404s).
+ZIP="$STAGE/FreeSCP-macOS-arm64.zip"
 /usr/bin/ditto -c -k --keepParent "$APP" "$ZIP"
 xcrun notarytool submit "$ZIP" \
   --apple-id "$APPLE_ID" --password "$APPLE_APP_SPECIFIC_PASSWORD" --team-id "$APPLE_TEAM_ID" --wait
