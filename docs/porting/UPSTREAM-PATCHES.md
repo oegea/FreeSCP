@@ -3,8 +3,9 @@
 Minimal, guarded edits to source/ for the native port. Each is `#ifdef`-guarded so the
 Windows/C++Builder build is byte-identical.
 
-- **source/putty/defs.h** — `HAVE_AES_NI` guarded to x86 only (`__i386__/__x86_64__/_M_*`);
-  arm64 uses the software AES path. (Was unconditional `1` under WINSCP.)
+- **source/putty/defs.h** — `HAVE_AES_NI` guarded by `_WIN32` AND x86: only the upstream Windows x86
+  build uses hardware AES-NI; the native port (macOS arm64 + Linux x86) uses software AES. (Was
+  unconditional `1` under WINSCP; the native AES-NI build garbles decryption — see the Linux section.)
 - **source/core/SecureShell.h** — `typedef UINT_PTR SOCKET;` wrapped in `#ifdef _WIN32`; the
   `#else` branch is `typedef int SOCKET;`, identical to PuTTY platform.h's own
   `typedef int SOCKET` so the two coexist as a legal redefinition. This keeps the header
@@ -129,3 +130,24 @@ All keep the Windows build intact.
   forcing a tiny `SO_SNDBUF`. THE upload-stall bug.
 - **native/rtlcompat/src/Threading.cpp `WaitForMultipleObjects`** — `INFINITE` timeout was computed as
   1 ms (so infinite waits returned spuriously after 1 ms). Now loops without a deadline when INFINITE.
+
+## Linux x86-64 port (clang 18 + libstdc++ + GNU ld) — guarded source/ edits
+
+Surfaced bringing up the **Linux x64** build. All keep Windows and macOS byte-identical (guarded or a
+true no-op there). Most of the Linux work is in `native/` (no source edit) — see STATUS.md's Linux
+section. The two new `source/` touches (plus the defs.h `_WIN32` tightening above):
+
+- **source/core/Exceptions.h** — `ExtException::FMoreMessages` now has a `= nullptr` member
+  initializer (UNGUARDED — correct everywhere, same class as the `FOperationProgress` fix above).
+  `AddMoreMessages`/`QueryUserException` test `FMoreMessages == NULL` before allocating/using it, and
+  ExtExceptions are usually **thrown as stack temporaries** (never heap-allocated). Delphi zero-fills
+  instance fields; standard C++ does not. On Linux (glibc malloc / stack) the field was garbage → the
+  error-reporting path crashed (`TStrings::Assign`/`->Count` on a garbage pointer) the moment any remote
+  op returned an error (e.g. creating an existing dir, or the existence-probe during rename). macOS
+  happened to see zeroed memory; Windows (Borland zero-init) already gets NULL — explicit init changes
+  nothing there.
+- **source/core/Terminal.cpp** — the 1-arg `TTerminal::LogEvent(const UnicodeString&)` definition
+  carried a stray `inline`, so the compiler emitted no out-of-line symbol and cross-TU callers (e.g.
+  WebDAVFileSystem) failed to link. Dropped the `inline` **only on Linux** via
+  `#if defined(_WIN32) || defined(__APPLE__)`, so Windows and macOS keep the original token
+  byte-for-byte; clang 18 + GNU ld discard the inline copy where macOS clang 14 + ld64 kept a weak one.

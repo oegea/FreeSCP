@@ -806,3 +806,54 @@ FreeSCP shipped its first public macOS build and went public.
 
 Tomorrow: continue ROADMAP.md (drag-out of folders, recent-dirs dropdown, find files, transfer
 settings binary/text, SSH tunnel). Engine/protocol parity is done; remaining work is GUI/UX + auth.
+
+## Linux x86-64 BUILDS + RUNS — second native platform (same src, same repo)
+
+FreeSCP now compiles and runs on **Linux x86-64** from the identical source tree, no macOS regression.
+Toolchain: clang 18, CMake/Ninja, Qt6 (apt `qt6-base-dev`, libstdc++), OpenSSL 3, libc/libstdc++.
+Build: `cd native && cmake -B build-linux -G Ninja -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
+-DCMAKE_BUILD_TYPE=Release && cmake --build build-linux` → `harness/winscp-harness` + `ui-qt/winscp-qt`.
+(Engine REQUIRES clang — `-fshort-wchar` / `-fms-extensions` / `__declspec(property)` / `-Wno-everything`;
+gcc cannot build it.)
+
+Validated on Linux x64: GUI launches + renders the full Commander (dual panes listing real dirs via the
+ported engine's FindFirst, offscreen WINSCP_SHOT). **SFTP end-to-end** against a local sshd: connect,
+auth (password), list, upload, download (byte-correct), mkdir, rename, delete — all green (harness
+WINSCP_XFER/WINSCP_OPS, rc 0). **SCP** connect/list/upload/download works (one non-fatal "Illegal time
+format" warning on a timestamp-preserve path — surfaces as a clean query, not a crash). WebDAV/S3/FTP
+compile + link (their libs neon/expat/libs3/filezilla all build on Linux) but weren't runtime-tested
+this session (no docker/test servers up); they share the same engine + RTL fixes.
+
+What it took (detail in UPSTREAM-PATCHES.md "Linux x86-64 port"). Native-only (no source edit):
+- **`__try`/`__except` macros removed** from rtlcompat/WinCompat.h (kept `__finally`). They collided
+  with libstdc++'s internal `__try`/`__catch` in its standard headers ("expected expression" at every
+  libstdc++ `catch`). The engine never uses `__try`/`__except` (0 sites); libc++ on macOS lacks those
+  macros so it was invisible there. This was THE first blocker (100 errors → gone).
+- **`<cstring>/<cwctype>/<cstdlib>/<math.h>` added** to the force-included WcsCompat.h. libc++ pulls the
+  narrow str*/mem*/wctype/fabs decls transitively; libstdc++ doesn't, so WebDAV/S3/Configuration/Ftp
+  TUs failed to find strcmp/memset/strncpy/towupper/fabs.
+- **Case-exact shim headers** `native/filezilla/casecompat/{Ws2tcpip.h,FileZillaTools.h,
+  transfersocket.h,asyncproxysocketlayer.h,filezillaapi.h}` forwarding to the real (differently-cased)
+  files. macOS's case-insensitive FS hid these `#include` case typos; Linux is case-sensitive. Wired
+  into the winscpcore_ftp group + the filezilla target include paths.
+- **`AFX_COMDAT` → `__attribute__((weak))`** in native/filezilla/compat/afx.h (was empty). MSVC's
+  selectany merges the duplicate `_afxDataNilA`/`_afxPchNilA` definitions (structures.cpp + afx_statics.cpp);
+  GNU ld errors "multiple definition" where ld64 tolerated it. Weak makes the afx_statics defs win.
+
+Source/ edits (guarded — Windows & macOS untouched; in UPSTREAM-PATCHES.md):
+- **defs.h** `HAVE_AES_NI` guarded by `_WIN32`: native build (mac arm + Linux x86) uses software AES.
+  The hand-built aes-ni.c garbles SSH decryption on x86 under clang ("Incoming packet was garbled on
+  decryption"). Software AES is correct (what arm64 uses); AES-NI perf is a later revisit.
+- **Exceptions.h** `FMoreMessages = nullptr` — uninitialized field (Delphi zero-init reliance) crashed
+  the error path on Linux. THE ops-crash root cause.
+- **Terminal.cpp** drop stray `inline` on 1-arg `LogEvent` on Linux only (link fix).
+
+Build scripts: `native/scripts/build-linux.sh` (clang, x86-64) and `native/scripts/build-macos.sh`
+(Apple Silicon, dev build) — both `cmake -G Ninja` + build, print the binary paths.
+
+NEXT for Linux:
+- **Verify the build on arm64 Linux** (future) — same source should compile; HAVE_AES_NI is already 0
+  on arm so no AES-NI concern, but it's untested on aarch64-linux.
+- Runtime-test WebDAV/S3/FTP (spin the docker test servers).
+- Packaging (AppImage / .deb).
+- x86 AES-NI correctness is the one known perf TODO (currently software AES).

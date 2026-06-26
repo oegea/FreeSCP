@@ -19,6 +19,15 @@
 // only <stddef.h>, which still provides wchar_t and size_t, and never pull <wchar.h>.
 #ifdef __cplusplus
 #include <wchar.h>
+// libc++ (macOS) transitively declares the narrow str*/mem*/wctype functions via other system
+// headers; libstdc++ (Linux) does not, so engine TUs that rely on strcmp/memset/strncpy/towupper
+// being in scope (WebDAVFileSystem, S3FileSystem, Configuration, ...) fail to compile there. This
+// header is force-included into every engine TU, so pulling the standard C string/wctype headers
+// here makes both standard libraries behave identically. Harmless on macOS.
+#include <cstring>
+#include <cwctype>
+#include <cstdlib>
+#include <math.h>   // bare fabs() in FtpFileSystem; global-namespace math on libstdc++
 #else
 #include <stddef.h>
 #endif

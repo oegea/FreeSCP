@@ -65,7 +65,12 @@ protected:
   void __fastcall AddMoreMessages(Exception* E);
 
 private:
-  Classes::TStrings* FMoreMessages;
+  // Must be NULL-initialized: AddMoreMessages and QueryUserException test `FMoreMessages == NULL`
+  // before allocating/using it. Delphi zero-fills instance fields, and ExtExceptions are often
+  // THROWN (stack temporaries, never heap-allocated), so TObject's zeroing operator new doesn't
+  // reach them. Without this initializer the field is garbage on Linux (glibc malloc / stack),
+  // crashing the error-reporting path; macOS happened to see zeroed memory. (UPSTREAM-PATCHES.md)
+  Classes::TStrings* FMoreMessages = nullptr;
   UnicodeString FHelpKeyword;
 };
 //---------------------------------------------------------------------------

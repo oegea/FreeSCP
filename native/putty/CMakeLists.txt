@@ -19,7 +19,10 @@ file(GLOB PUTTY_SRC
   ${PUTTY_DIR}/proxy/*.c
   ${PUTTY_DIR}/stubs/*.c)
 
-# Drop x86-only hardware crypto on non-x86, and the one MSVC-ism.
+# Drop x86-only hardware crypto on every native target, and the one MSVC-ism. We use software
+# AES everywhere (HAVE_AES_NI is 0 in defs.h on both arm64 and x86 — see the note there: the
+# native AES-NI build garbles decryption), so aes-select never references the *_ni symbols and
+# the *-ni.c files are unused. Excluding them keeps the build clean and avoids the dead code.
 foreach(f ${PUTTY_SRC})
   get_filename_component(n ${f} NAME)
   if(n MATCHES "(aes-ni|sha-ni|sha1-ni|sha256-ni)\\.c$" OR n STREQUAL "conf_data.c")

@@ -40,6 +40,7 @@ target_compile_options(winscpfilezilla PRIVATE -fms-extensions -Wno-everything
   -include ${RTL_DIR}/winscp/WcsCompat.h)
 # compat shims FIRST, then filezilla, then the genprops engine headers + core + rtlcompat + deps.
 target_include_directories(winscpfilezilla PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}/casecompat   # exact-case shims (Ws2tcpip.h, FileZillaTools.h) — Linux is case-sensitive
   ${COMPAT_DIR}
   ${FZ_DIR}
   ${GEN_DIR}

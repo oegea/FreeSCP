@@ -241,11 +241,13 @@ struct TSHFileInfoW { HANDLE hIcon = nullptr; int iIcon = 0; DWORD dwAttributes 
 typedef TSHFileInfoW SHFILEINFOW; typedef TSHFileInfoW SHFILEINFO;
 
 //--- structured exception handling: neutralized on clang (no Win SEH) ---
-// __try { ... } __except(filter) { ... }  ->  a plain block; the handler is dropped.
-// This changes behavior (no SEH catch) but lets the bodies compile; revisit per-site.
+// The engine uses Borland `try { } __finally { }` (rewritten to RAII by genprops); it has
+// no real `__try`/`__except` sites. We must NOT define `__try`/`__except` as object macros:
+// libstdc++ (Linux) uses `__try`/`__catch` internally in its standard headers, so a global
+// `#define __try ...` corrupts every libstdc++ header included afterwards ("expected
+// expression" at its `catch`). libc++ (macOS) lacks those macros, so this was previously
+// invisible. Only `__finally` (which no standard library uses) is neutralized here.
 #ifndef _WIN32
-#define __try        if (true)
-#define __except(x)  if (false)
 #define __finally
 #endif
 

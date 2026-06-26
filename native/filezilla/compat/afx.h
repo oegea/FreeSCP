@@ -84,7 +84,13 @@ typedef UINT                WedgeMsg;
 #define LOWORD(l)  ((WORD)((DWORD_PTR)(l) & 0xffff))
 #define HIWORD(l)  ((WORD)(((DWORD_PTR)(l) >> 16) & 0xffff))
 typedef std::uintptr_t DWORD_PTR;
-#define AFX_COMDAT
+// MSVC's AFX_COMDAT is __declspec(selectany): duplicate definitions across TUs are merged
+// into one. structures.cpp defines _afxDataNilA/_afxPchNilA with AFX_COMDAT and afx_statics.cpp
+// defines them too; with AFX_COMDAT empty, both are strong defs and GNU ld (Linux) errors with
+// "multiple definition" (ld64 on macOS tolerated it). Map AFX_COMDAT to weak linkage so the
+// structures.cpp copies are weak and the afx_statics.cpp strong defs win — one definition, as
+// selectany intends.
+#define AFX_COMDAT __attribute__((weak))
 #define AFX_DATADEF
 
 //=== CRITICAL_SECTION (recursive mutex) ====================================

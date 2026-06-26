@@ -157,6 +157,7 @@ add_dependencies(winscpcore_ftp winscpcore_genheaders)
 target_link_libraries(winscpcore_ftp PUBLIC winscpcore_flags)
 target_compile_definitions(winscpcore_ftp PRIVATE WINSCP NO_GSSAPI MPEXT)
 target_include_directories(winscpcore_ftp PRIVATE
+  ${CMAKE_SOURCE_DIR}/filezilla/casecompat   # exact-case shims (FileZillaTools.h) — Linux is case-sensitive
   ${CMAKE_SOURCE_DIR}/../source/filezilla   # FileZillaIntf.h (TFileZillaIntf)
   ${CMAKE_SOURCE_DIR}/putty/include
   ${CMAKE_SOURCE_DIR}/../source/putty)

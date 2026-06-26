@@ -12,9 +12,14 @@
 #define PUTTY_DEFS_H
 
 #ifdef WINSCP
-/* WINSCP-NATIVE-PORT: AES-NI is x86-only; other arches (macOS arm64) use software AES.
-   Guarded so the native build doesn't reference x86 ssh_aes*_ni symbols. */
-#if defined(__i386__) || defined(__x86_64__) || defined(_M_IX86) || defined(_M_X64)
+/* WINSCP-NATIVE-PORT: Windows (upstream) keeps x86 hardware AES (AES-NI); the native port
+   (macOS arm64 + Linux x86) uses software AES. The hand-built aes-ni.c, compiled under clang in
+   one TU via WINSCP_VS, produces garbled decryption at runtime on x86 ("Incoming packet was
+   garbled on decryption"), so on the native build HAVE_AES_NI is 0 — aes-select then never
+   references the x86 ssh_aes*_ni symbols and the engine uses the (correct) software AES, same as
+   arm64. AES-NI is purely a throughput optimisation; revisit it for native x86 perf separately.
+   Guarded by _WIN32 so the upstream Windows build is byte-unchanged (still AES-NI on x86). */
+#if (defined(__i386__) || defined(__x86_64__) || defined(_M_IX86) || defined(_M_X64)) && defined(_WIN32)
 #define HAVE_AES_NI 1
 #else
 #define HAVE_AES_NI 0
