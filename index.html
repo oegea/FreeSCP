@@ -31,6 +31,16 @@
   .btn small{ font-weight:400; opacity:.85; font-size:12px; }
   .btn.primary{ background:var(--blue); color:#fff; } .btn.primary:hover{ background:var(--blue-d); text-decoration:none; }
   .btn.ghost{ background:#fff; color:var(--muted); border-color:var(--line); cursor:default; }
+  .dd{ position:relative; min-width:210px; }
+  .dd>summary{ list-style:none; cursor:pointer; width:100%; box-sizing:border-box; }
+  .dd>summary::-webkit-details-marker{ display:none; }
+  .dd-menu{ position:absolute; top:calc(100% + 8px); left:0; right:0; background:#fff; text-align:left;
+            border:1px solid var(--line); border-radius:10px; box-shadow:0 12px 30px rgba(20,40,80,.16);
+            overflow:hidden; z-index:10; }
+  .dd-menu a, .dd-menu span{ display:flex; flex-direction:column; padding:11px 16px; font-weight:600; color:var(--ink); }
+  .dd-menu a:hover{ background:var(--bg); text-decoration:none; }
+  .dd-menu small{ font-weight:400; opacity:.8; font-size:12px; }
+  .dd-menu .disabled{ color:var(--muted); cursor:default; }
   .shot{ padding:30px 0 50px; text-align:center; }
   .shot img{ max-width:100%; width:900px; border:1px solid var(--line); border-radius:10px;
              box-shadow:0 16px 40px rgba(20,40,80,.14); }
@@ -63,11 +73,18 @@
   <h1>FreeSCP</h1>
   <p class="tag">A native macOS &amp; Linux port of WinSCP.</p>
   <p class="sub">The dual-pane file manager people have loved on Windows for 20 years — SFTP, FTP, SCP,
-     WebDAV and S3 — now running natively on the Mac (Linux next). Free and open source.</p>
+     WebDAV and S3 — now running natively on macOS and Linux. Free and open source.</p>
   <div class="btns" id="download">
     <a class="btn primary" href="https://github.com/oegea/FreeSCP/releases/latest/download/FreeSCP-macOS-arm64.zip">
       Download for macOS<small>Apple Silicon · signed &amp; notarized</small></a>
-    <span class="btn ghost">Linux<small>coming soon</small></span>
+    <details class="dd">
+      <summary class="btn primary">Download for Linux<small>choose architecture ▾</small></summary>
+      <div class="dd-menu">
+        <a href="https://github.com/oegea/FreeSCP/releases/latest/download/FreeSCP-Linux-x86_64.AppImage">
+          x86-64 (Intel/AMD)<small>AppImage · chmod +x &amp; run</small></a>
+        <span class="disabled">ARM (aarch64)<small>coming soon</small></span>
+      </div>
+    </details>
   </div>
   <p class="protos">Works with <b>SFTP · SCP · FTP · WebDAV · Amazon S3</b> (＋TLS)</p>
 </div></div>
