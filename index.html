@@ -5,133 +5,578 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>FreeSCP — a native macOS & Linux port of WinSCP</title>
 <meta name="description" content="FreeSCP is a free, open-source SFTP/FTP/SCP/WebDAV/S3 file manager for macOS and Linux — a native port of WinSCP.">
+<meta name="theme-color" content="#070b14">
+<meta property="og:title" content="FreeSCP — WinSCP, natively on macOS & Linux">
+<meta property="og:description" content="The dual-pane SFTP/FTP/SCP/WebDAV/S3 file manager, running WinSCP's own engine natively. Free and open source.">
+<meta property="og:image" content="https://freescp.com/screenshot.png">
+<meta property="og:type" content="website">
 <link rel="icon" type="image/png" href="favicon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
 <style>
-  :root{ --blue:#2b6cb0; --blue-d:#22517f; --ink:#1a202c; --muted:#5b6473; --bg:#f5f7fa; --line:#e2e8f0; }
-  *{ box-sizing:border-box; } html{ scroll-behavior:smooth; }
-  body{ margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
-        color:var(--ink); background:#fff; line-height:1.6; }
-  a{ color:var(--blue); text-decoration:none; } a:hover{ text-decoration:underline; }
-  .wrap{ max-width:1040px; margin:0 auto; padding:0 20px; }
-  header{ border-bottom:1px solid var(--line); position:sticky; top:0; background:rgba(255,255,255,.92);
-          backdrop-filter:saturate(180%) blur(8px); z-index:10; }
-  nav{ display:flex; align-items:center; gap:18px; height:60px; }
-  nav .brand{ display:flex; align-items:center; gap:10px; font-weight:700; font-size:19px; color:var(--ink); }
-  nav .brand img{ width:30px; height:30px; }
+  :root{
+    --bg:#070b14; --bg-2:#0b1120; --panel:#0f1728; --panel-2:#131d33;
+    --line:rgba(148,174,220,.14); --line-2:rgba(148,174,220,.26);
+    --ink:#eef3fc; --muted:#9aa8c2; --dim:#6b7a96;
+    --blue:#4c9bff; --blue-2:#2f6fe4; --green:#4ade80; --green-2:#22b866;
+    --grad:linear-gradient(100deg,#6db3ff 0%,#4c9bff 35%,#4ade80 100%);
+    --display:"Space Grotesk",ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;
+    --body:"Inter",ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    --mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+    --ease:cubic-bezier(.2,.7,.2,1);
+  }
+  *{ box-sizing:border-box; }
+  html{ scroll-behavior:smooth; -webkit-text-size-adjust:100%; }
+  body{ margin:0; font-family:var(--body); color:var(--ink); background:var(--bg); line-height:1.6;
+        overflow-x:hidden; -webkit-font-smoothing:antialiased; }
+  a{ color:inherit; text-decoration:none; }
+  img{ max-width:100%; display:block; }
+  ::selection{ background:rgba(76,155,255,.35); }
+  :focus-visible{ outline:2px solid var(--blue); outline-offset:3px; border-radius:6px; }
+  .wrap{ width:100%; max-width:1160px; margin:0 auto; padding:0 24px; }
+  .grad{ background:var(--grad); -webkit-background-clip:text; background-clip:text; color:transparent; }
+
+  /* ---------- nav ---------- */
+  header{ position:fixed; inset:0 0 auto 0; z-index:50; transition:background .3s, border-color .3s, backdrop-filter .3s;
+          border-bottom:1px solid transparent; }
+  header.scrolled{ background:rgba(7,11,20,.72); backdrop-filter:saturate(160%) blur(14px);
+                   -webkit-backdrop-filter:saturate(160%) blur(14px); border-color:var(--line); }
+  nav{ display:flex; align-items:center; gap:28px; height:68px; }
+  .brand{ display:flex; align-items:center; gap:11px; font-family:var(--display); font-weight:700; font-size:20px; letter-spacing:-.2px; }
+  .brand img{ width:32px; height:32px; border-radius:8px; }
   nav .spacer{ flex:1; }
-  nav a{ color:var(--muted); font-weight:500; } nav a:hover{ color:var(--ink); text-decoration:none; }
-  .hero{ background:linear-gradient(180deg,#fff, var(--bg)); padding:64px 0 40px; text-align:center; }
-  .hero img.appicon{ width:104px; height:104px; }
-  .hero h1{ font-size:42px; margin:18px 0 6px; letter-spacing:-.5px; }
-  .hero .tag{ font-size:20px; color:var(--muted); margin:0 0 6px; }
-  .hero .sub{ color:var(--muted); margin:0 auto 26px; max-width:620px; }
-  .btns{ display:flex; gap:14px; justify-content:center; flex-wrap:wrap; }
-  .btn{ display:inline-flex; flex-direction:column; align-items:center; padding:13px 26px; border-radius:10px;
-        font-weight:600; border:1px solid transparent; min-width:210px; }
-  .btn small{ font-weight:400; opacity:.85; font-size:12px; }
-  .btn.primary{ background:var(--blue); color:#fff; } .btn.primary:hover{ background:var(--blue-d); text-decoration:none; }
-  .btn.ghost{ background:#fff; color:var(--muted); border-color:var(--line); cursor:default; }
-  .dd{ position:relative; min-width:210px; }
-  .dd>summary{ list-style:none; cursor:pointer; width:100%; box-sizing:border-box; }
-  .dd>summary::-webkit-details-marker{ display:none; }
-  .dd-menu{ position:absolute; top:calc(100% + 8px); left:0; right:0; background:#fff; text-align:left;
-            border:1px solid var(--line); border-radius:10px; box-shadow:0 12px 30px rgba(20,40,80,.16);
-            overflow:hidden; z-index:10; }
-  .dd-menu a, .dd-menu span{ display:flex; flex-direction:column; padding:11px 16px; font-weight:600; color:var(--ink); }
-  .dd-menu a:hover{ background:var(--bg); text-decoration:none; }
-  .dd-menu small{ font-weight:400; opacity:.8; font-size:12px; }
-  .dd-menu .disabled{ color:var(--muted); cursor:default; }
-  .shot{ padding:30px 0 50px; text-align:center; }
-  .shot img{ max-width:100%; width:900px; border:1px solid var(--line); border-radius:10px;
-             box-shadow:0 16px 40px rgba(20,40,80,.14); }
-  section.features{ padding:54px 0; background:var(--bg); border-top:1px solid var(--line); }
-  h2{ text-align:center; font-size:28px; margin:0 0 8px; }
-  .lead{ text-align:center; color:var(--muted); max-width:680px; margin:0 auto 36px; }
-  .grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); gap:18px; }
-  .card{ background:#fff; border:1px solid var(--line); border-radius:10px; padding:20px; }
-  .card h3{ margin:0 0 6px; font-size:17px; } .card p{ margin:0; color:var(--muted); font-size:15px; }
-  section.about{ padding:54px 0; } .about p{ max-width:760px; margin:0 auto 14px; color:#333; }
-  .protos{ text-align:center; font-size:15px; color:var(--muted); margin-top:10px; }
-  .protos b{ color:var(--ink); }
-  footer{ border-top:1px solid var(--line); padding:28px 0; color:var(--muted); font-size:14px; }
-  footer .wrap{ display:flex; gap:16px; flex-wrap:wrap; align-items:center; }
-  .disclaimer{ font-size:12.5px; color:#8a929e; max-width:760px; margin:14px auto 0; text-align:center; }
-  code{ background:var(--bg); padding:2px 6px; border-radius:5px; font-size:13px; }
+  nav .link{ color:var(--muted); font-weight:500; font-size:15px; transition:color .2s; }
+  nav .link:hover{ color:var(--ink); }
+  .pill{ display:inline-flex; align-items:center; gap:8px; padding:9px 16px; border-radius:999px; font-weight:600; font-size:14px;
+         border:1px solid var(--line-2); background:rgba(255,255,255,.04); transition:background .2s, border-color .2s, transform .2s; }
+  .pill:hover{ background:rgba(255,255,255,.09); border-color:rgba(148,174,220,.45); transform:translateY(-1px); }
+  .pill svg{ width:16px; height:16px; }
+
+  /* ---------- hero ---------- */
+  .hero{ position:relative; padding:150px 0 0; text-align:center; isolation:isolate; overflow-x:clip; }
+  #streams{ position:absolute; inset:0; width:100%; height:100%; z-index:-2; pointer-events:none; }
+  .aurora{ position:absolute; inset:-10% -20% auto -20%; height:900px; z-index:-3; pointer-events:none; filter:blur(70px); opacity:.75; }
+  .aurora i{ position:absolute; border-radius:50%; }
+  .aurora i:nth-child(1){ width:620px; height:620px; left:8%; top:0; background:radial-gradient(circle,#1d57c9 0%,transparent 65%); animation:drift1 18s ease-in-out infinite alternate; }
+  .aurora i:nth-child(2){ width:560px; height:560px; right:8%; top:120px; background:radial-gradient(circle,#0f8a55 0%,transparent 65%); animation:drift2 22s ease-in-out infinite alternate; }
+  .aurora i:nth-child(3){ width:480px; height:480px; left:38%; top:260px; background:radial-gradient(circle,#243f9c 0%,transparent 65%); animation:drift1 26s ease-in-out infinite alternate-reverse; }
+  @keyframes drift1{ to{ transform:translate(90px,60px) scale(1.15); } }
+  @keyframes drift2{ to{ transform:translate(-110px,-40px) scale(1.1); } }
+  .gridfx{ position:absolute; inset:0; z-index:-2; pointer-events:none;
+           background-image:linear-gradient(var(--line) 1px,transparent 1px),linear-gradient(90deg,var(--line) 1px,transparent 1px);
+           background-size:64px 64px; opacity:.35;
+           -webkit-mask-image:radial-gradient(ellipse 70% 55% at 50% 30%,#000 20%,transparent 75%);
+                   mask-image:radial-gradient(ellipse 70% 55% at 50% 30%,#000 20%,transparent 75%); }
+
+  .badge{ display:inline-flex; align-items:center; gap:10px; padding:7px 15px 7px 9px; border-radius:999px; font-size:13.5px; color:var(--muted);
+          border:1px solid var(--line-2); background:rgba(15,23,40,.6); backdrop-filter:blur(8px); transition:border-color .2s, color .2s; }
+  .badge:hover{ border-color:rgba(76,155,255,.6); color:var(--ink); }
+  .badge b{ font-weight:600; font-size:12px; color:#06210f; background:var(--green); border-radius:999px; padding:2px 9px; }
+  .hero h1{ font-family:var(--display); font-weight:700; font-size:clamp(42px,7.4vw,88px); line-height:1.02; letter-spacing:-.035em;
+            margin:26px auto 0; max-width:13ch; }
+  .hero .sub{ color:var(--muted); font-size:clamp(17px,2vw,20px); max-width:640px; margin:24px auto 0; }
+  .hero .sub b{ color:var(--ink); font-weight:500; }
+
+  .btns{ display:flex; gap:14px; justify-content:center; flex-wrap:wrap; margin-top:38px; scroll-margin-top:110px; }
+  .btn{ position:relative; display:inline-flex; align-items:center; gap:13px; padding:14px 24px 14px 20px; border-radius:14px; text-align:left;
+        font-weight:600; font-size:16px; line-height:1.25; min-width:236px; cursor:pointer; border:1px solid var(--line-2);
+        background:rgba(255,255,255,.05); color:var(--ink); transition:transform .25s var(--ease), box-shadow .25s, background .2s, border-color .2s; }
+  .btn svg{ width:26px; height:26px; flex:none; }
+  .btn small{ display:block; font-weight:400; font-size:12.5px; opacity:.78; }
+  .btn:hover{ transform:translateY(-2px); background:rgba(255,255,255,.1); border-color:rgba(148,174,220,.5); }
+  .btn.primary{ border-color:transparent; color:#fff; background:linear-gradient(135deg,#3f8cff,#2a63de);
+                box-shadow:0 10px 36px -8px rgba(63,140,255,.75), inset 0 1px 0 rgba(255,255,255,.28); overflow:hidden; }
+  .btn.primary::after{ content:""; position:absolute; top:0; bottom:0; width:45%; left:-60%; transform:skewX(-20deg);
+                       background:linear-gradient(90deg,transparent,rgba(255,255,255,.3),transparent); animation:sheen 4.5s ease-in-out infinite; }
+  @keyframes sheen{ 0%,55%{ left:-60%; } 100%{ left:130%; } }
+  .btn.primary:hover{ background:linear-gradient(135deg,#539aff,#3270ee); box-shadow:0 16px 44px -8px rgba(63,140,255,.9), inset 0 1px 0 rgba(255,255,255,.3); }
+  .dd{ position:relative; }
+  .dd>summary{ list-style:none; } .dd>summary::-webkit-details-marker{ display:none; }
+  .dd .chev{ width:16px; height:16px; margin-left:auto; transition:transform .25s; } .dd[open] .chev{ transform:rotate(180deg); }
+  .dd-menu{ position:absolute; top:calc(100% + 10px); left:0; right:0; z-index:20; text-align:left; padding:6px; border-radius:14px;
+            background:rgba(15,23,40,.96); border:1px solid var(--line-2); backdrop-filter:blur(14px);
+            box-shadow:0 24px 60px rgba(0,0,0,.55); animation:pop .22s var(--ease); }
+  @keyframes pop{ from{ opacity:0; transform:translateY(-6px) scale(.98); } }
+  .dd-menu a,.dd-menu span{ display:block; padding:10px 13px; border-radius:9px; font-weight:600; font-size:15px; }
+  .dd-menu a:hover{ background:rgba(76,155,255,.16); }
+  .dd-menu small{ display:block; font-weight:400; font-size:12.5px; color:var(--muted); }
+  .dd-menu .disabled{ color:var(--dim); cursor:default; }
+  .hint{ margin-top:18px; font-size:13.5px; color:var(--dim); min-height:1.6em; }
+  .hint a{ color:var(--muted); border-bottom:1px solid var(--line-2); } .hint a:hover{ color:var(--ink); }
+
+  /* hero screenshot */
+  .stage{ perspective:1800px; margin:74px auto 0; max-width:1060px; padding:0 24px; }
+  .window{ --rx:16deg; --s:.94; position:relative; border-radius:14px; background:#1b2233; border:1px solid rgba(160,185,230,.28);
+           transform:rotateX(var(--rx)) scale(var(--s)); transform-origin:50% 0; will-change:transform;
+           box-shadow:0 60px 120px -30px rgba(0,0,0,.85), 0 0 0 1px rgba(0,0,0,.4), 0 0 140px -20px rgba(63,140,255,.5); }
+  .window::before{ content:""; position:absolute; inset:-1px; border-radius:15px; padding:1px; pointer-events:none;
+                   background:linear-gradient(140deg,rgba(109,179,255,.9),transparent 30%,transparent 65%,rgba(74,222,128,.8));
+                   -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0); -webkit-mask-composite:xor; mask-composite:exclude; }
+  .chrome{ display:flex; align-items:center; gap:8px; height:38px; padding:0 14px; }
+  .chrome i{ width:12px; height:12px; border-radius:50%; background:#ff5f57; } .chrome i:nth-child(2){ background:#febc2e; } .chrome i:nth-child(3){ background:#28c840; }
+  .chrome span{ flex:1; text-align:center; font-size:12.5px; color:#8f9bb3; margin-right:52px; font-weight:500; }
+  .window img{ width:100%; border-radius:0 0 13px 13px; }
+  .fade-bottom{ height:120px; margin-top:-120px; position:relative; background:linear-gradient(transparent,var(--bg)); pointer-events:none; }
+
+  /* ---------- marquee ---------- */
+  .marquee{ overflow:hidden; padding:26px 0; border-block:1px solid var(--line); background:var(--bg-2);
+            -webkit-mask-image:linear-gradient(90deg,transparent,#000 12%,#000 88%,transparent); mask-image:linear-gradient(90deg,transparent,#000 12%,#000 88%,transparent); }
+  .track{ display:flex; gap:56px; width:max-content; animation:scroll 38s linear infinite; }
+  .marquee:hover .track{ animation-play-state:paused; }
+  .track span{ font-family:var(--mono); font-size:15px; color:var(--muted); white-space:nowrap; display:inline-flex; align-items:center; gap:12px; }
+  .track span::before{ content:""; width:7px; height:7px; border-radius:50%; background:var(--green); box-shadow:0 0 10px var(--green); }
+  .track span:nth-child(even)::before{ background:var(--blue); box-shadow:0 0 10px var(--blue); }
+  @keyframes scroll{ to{ transform:translateX(-50%); } }
+
+  /* ---------- sections ---------- */
+  section{ padding:120px 0; position:relative; }
+  .eyebrow{ font-family:var(--mono); font-size:13px; letter-spacing:.14em; text-transform:uppercase; color:var(--blue); }
+  h2{ font-family:var(--display); font-weight:700; font-size:clamp(32px,4.6vw,54px); line-height:1.06; letter-spacing:-.03em; margin:14px 0 0; }
+  .lead{ color:var(--muted); font-size:18px; max-width:600px; margin:18px 0 0; }
+  .center{ text-align:center; } .center .lead{ margin-inline:auto; }
+
+  .reveal{ opacity:0; transform:translateY(28px); transition:opacity .8s var(--ease), transform .8s var(--ease); transition-delay:var(--d,0s); }
+  .reveal.in{ opacity:1; transform:none; }
+
+  /* bento */
+  .bento{ display:grid; grid-template-columns:repeat(6,1fr); gap:16px; margin-top:56px; }
+  .card{ position:relative; grid-column:span 2; border-radius:20px; padding:28px; background:linear-gradient(180deg,var(--panel),var(--bg-2));
+         border:1px solid var(--line); overflow:hidden; transition:transform .35s var(--ease), border-color .3s; }
+  .card.wide{ grid-column:span 4; } .card.half{ grid-column:span 3; }
+  .card::before{ content:""; position:absolute; inset:0; pointer-events:none; opacity:0; transition:opacity .35s;
+                 background:radial-gradient(420px circle at var(--mx,50%) var(--my,50%),rgba(76,155,255,.2),transparent 60%); }
+  .card:hover{ transform:translateY(-4px); border-color:var(--line-2); } .card:hover::before{ opacity:1; }
+  .card>*{ position:relative; }
+  .ico{ width:46px; height:46px; border-radius:13px; display:grid; place-items:center; margin-bottom:20px; color:var(--blue);
+        background:rgba(76,155,255,.12); border:1px solid rgba(76,155,255,.28); }
+  .ico.g{ color:var(--green); background:rgba(74,222,128,.1); border-color:rgba(74,222,128,.28); }
+  .ico svg{ width:23px; height:23px; }
+  .card h3{ font-family:var(--display); font-size:21px; font-weight:600; letter-spacing:-.01em; margin:0 0 8px; }
+  .card p{ margin:0; color:var(--muted); font-size:15.5px; }
+  .chips{ display:flex; flex-wrap:wrap; gap:8px; margin-top:20px; }
+  .chips span{ font-family:var(--mono); font-size:13px; padding:5px 12px; border-radius:999px; border:1px solid var(--line-2); color:var(--ink); background:rgba(255,255,255,.03); }
+
+  /* live queue demo */
+  .queue{ margin-top:22px; border-radius:13px; border:1px solid var(--line); background:rgba(7,11,20,.6); font-family:var(--mono); font-size:13px; overflow:hidden; }
+  .qrow{ display:grid; grid-template-columns:20px minmax(0,1.5fr) minmax(70px,1.6fr) 74px; align-items:center; gap:12px; padding:10px 14px; }
+  .qrow+.qrow{ border-top:1px solid var(--line); }
+  .qrow .dir{ font-weight:600; } .qrow .up{ color:var(--blue); } .qrow .down{ color:var(--green); }
+  .qrow .name{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--ink); }
+  .bar{ height:6px; border-radius:99px; background:rgba(148,174,220,.14); overflow:hidden; }
+  .bar i{ display:block; height:100%; width:0; border-radius:99px; background:linear-gradient(90deg,var(--blue-2),var(--blue)); }
+  .down~.bar i{ background:linear-gradient(90deg,var(--green-2),var(--green)); }
+  .qrow .spd{ text-align:right; color:var(--muted); font-variant-numeric:tabular-nums; white-space:nowrap; }
+  .qrow.done .spd{ color:var(--green); }
+
+  /* editor demo */
+  .term{ margin-top:22px; border-radius:13px; border:1px solid var(--line); background:rgba(7,11,20,.6); font-family:var(--mono); font-size:13px; padding:14px 16px; color:var(--muted); min-height:104px; }
+  .term .ok{ color:var(--green); } .term .hl{ color:var(--ink); }
+  .caret{ display:inline-block; width:7px; height:15px; background:var(--blue); vertical-align:-2px; animation:blink 1.1s steps(1) infinite; }
+  @keyframes blink{ 50%{ opacity:0; } }
+
+  /* engine section */
+  .engine{ background:var(--bg-2); border-block:1px solid var(--line); overflow:hidden; }
+  .engine .cols{ display:grid; grid-template-columns:1.05fr 1fr; gap:64px; align-items:center; }
+  .engine p{ color:var(--muted); font-size:17px; margin:18px 0 0; }
+  .engine p a{ color:var(--ink); border-bottom:1px solid var(--line-2); } .engine p a:hover{ border-color:var(--blue); }
+  .stack{ display:grid; gap:12px; }
+  .layer{ display:flex; align-items:center; gap:16px; padding:18px 20px; border-radius:16px; border:1px solid var(--line); background:var(--panel);
+          transition:transform .35s var(--ease), border-color .3s; }
+  .layer:hover{ transform:translateX(6px); border-color:var(--line-2); }
+  .layer b{ font-family:var(--display); font-size:17px; font-weight:600; display:block; }
+  .layer small{ color:var(--muted); font-size:14px; }
+  .layer .tag{ margin-left:auto; font-family:var(--mono); font-size:12px; padding:4px 10px; border-radius:99px; white-space:nowrap; color:var(--green); border:1px solid rgba(74,222,128,.3); background:rgba(74,222,128,.08); }
+  .layer .tag.b{ color:var(--blue); border-color:rgba(76,155,255,.32); background:rgba(76,155,255,.09); }
+  .link-dots{ display:flex; justify-content:center; gap:5px; height:14px; }
+  .link-dots i{ width:3px; height:3px; border-radius:50%; background:var(--blue); animation:pulse 1.4s ease-in-out infinite; }
+  .link-dots i:nth-child(2){ animation-delay:.2s; } .link-dots i:nth-child(3){ animation-delay:.4s; }
+  @keyframes pulse{ 0%,100%{ opacity:.2; transform:translateY(-3px); } 50%{ opacity:1; transform:translateY(3px); } }
+  .stats{ display:grid; grid-template-columns:repeat(4,1fr); gap:16px; margin-top:80px; }
+  .stat{ padding:26px 8px 0; border-top:1px solid var(--line-2); }
+  .stat b{ display:block; font-family:var(--display); font-weight:700; font-size:clamp(34px,4.4vw,52px); line-height:1; letter-spacing:-.03em; }
+  .stat>span{ display:block; color:var(--muted); font-size:14.5px; margin-top:10px; }
+
+  /* cta */
+  .cta .box{ position:relative; overflow:hidden; text-align:center; padding:84px 28px; border-radius:28px; border:1px solid var(--line-2);
+             background:radial-gradient(ellipse 80% 120% at 50% 0%,rgba(47,111,228,.42),transparent 60%),radial-gradient(ellipse 60% 90% at 85% 100%,rgba(34,184,102,.24),transparent 60%),var(--panel); }
+  .cta img{ width:92px; height:92px; margin:0 auto 26px; border-radius:22px; animation:float 6s ease-in-out infinite; filter:drop-shadow(0 18px 40px rgba(63,140,255,.55)); }
+  @keyframes float{ 50%{ transform:translateY(-10px); } }
+  .cta .btns{ margin-top:36px; }
+
+  footer{ border-top:1px solid var(--line); padding:38px 0 46px; color:var(--muted); font-size:14.5px; }
+  footer .row{ display:flex; gap:22px; flex-wrap:wrap; align-items:center; }
+  footer .row a:hover{ color:var(--ink); }
+  .disclaimer{ font-size:12.5px; color:var(--dim); max-width:820px; margin:26px auto 0; text-align:center; padding:0 24px; }
+
+  @media (max-width:900px){
+    .card,.card.wide,.card.half{ grid-column:span 6; }
+    .engine .cols{ grid-template-columns:1fr; gap:44px; }
+    .stats{ grid-template-columns:repeat(2,1fr); }
+    section{ padding:88px 0; }
+    nav .link{ display:none; }
+    .hero{ padding-top:124px; }
+    .stage{ margin-top:54px; padding:0 14px; }
+  }
+  @media (max-width:520px){
+    .btn{ width:100%; } .dd{ width:100%; } .btns{ padding:0 4px; }
+    .qrow{ grid-template-columns:18px minmax(0,1fr) 84px; } .qrow .bar{ display:none; }
+    .layer .tag{ display:none; }
+  }
+  @media (prefers-reduced-motion:reduce){
+    *,*::before,*::after{ animation:none !important; transition:none !important; }
+    html{ scroll-behavior:auto; }
+    .reveal{ opacity:1; transform:none; }
+    .window{ --rx:0deg; --s:1; }
+  }
 </style>
 </head>
 <body>
-<header><div class="wrap"><nav>
-  <span class="brand"><img src="icon.png" alt="">FreeSCP</span>
+
+<header id="top"><div class="wrap"><nav>
+  <a class="brand" href="#top"><img src="icon.png" alt="">FreeSCP</a>
   <span class="spacer"></span>
-  <a href="#features">Features</a>
-  <a href="#download">Download</a>
-  <a href="https://github.com/oegea/FreeSCP">GitHub</a>
+  <a class="link" href="#features">Features</a>
+  <a class="link" href="#engine">How it works</a>
+  <a class="link" href="#download">Download</a>
+  <a class="pill" href="https://github.com/oegea/FreeSCP">
+    <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .5a11.5 11.5 0 0 0-3.64 22.41c.58.1.79-.25.79-.56v-2c-3.2.7-3.88-1.36-3.88-1.36-.52-1.33-1.28-1.69-1.28-1.69-1.05-.71.08-.7.08-.7 1.16.08 1.77 1.19 1.77 1.19 1.03 1.76 2.7 1.25 3.36.96.1-.75.4-1.25.73-1.54-2.55-.29-5.24-1.28-5.24-5.68 0-1.26.45-2.28 1.19-3.09-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.17 1.18a11 11 0 0 1 5.78 0c2.2-1.49 3.17-1.18 3.17-1.18.63 1.59.23 2.76.11 3.05.74.81 1.19 1.83 1.19 3.09 0 4.41-2.69 5.38-5.25 5.67.41.36.78 1.06.78 2.14v3.17c0 .31.21.67.8.56A11.5 11.5 0 0 0 12 .5Z"/></svg>
+    GitHub
+  </a>
 </nav></div></header>
 
-<div class="hero"><div class="wrap">
-  <img class="appicon" src="icon.png" alt="FreeSCP">
-  <h1>FreeSCP</h1>
-  <p class="tag">A native macOS &amp; Linux port of WinSCP.</p>
-  <p class="sub">The dual-pane file manager people have loved on Windows for 20 years — SFTP, FTP, SCP,
-     WebDAV and S3 — now running natively on macOS and Linux. Free and open source.</p>
-  <div class="btns" id="download">
-    <a class="btn primary" href="https://github.com/oegea/FreeSCP/releases/latest/download/FreeSCP-macOS-arm64.zip">
-      Download for macOS<small>Apple Silicon · signed &amp; notarized</small></a>
-    <details class="dd">
-      <summary class="btn primary">Download for Linux<small>choose architecture ▾</small></summary>
-      <div class="dd-menu">
-        <a href="https://github.com/oegea/FreeSCP/releases/latest/download/FreeSCP-Linux-x86_64.AppImage">
-          x86-64 (Intel/AMD)<small>AppImage · chmod +x &amp; run</small></a>
-        <span class="disabled">ARM (aarch64)<small>coming soon</small></span>
-      </div>
-    </details>
+<main>
+<div class="hero">
+  <div class="aurora" aria-hidden="true"><i></i><i></i><i></i></div>
+  <div class="gridfx" aria-hidden="true"></div>
+  <canvas id="streams" aria-hidden="true"></canvas>
+  <div class="wrap">
+    <a class="badge reveal" href="https://github.com/oegea/FreeSCP/releases/latest"><b>New</b> Now on Linux — x86-64 AppImage &nbsp;→</a>
+    <h1 class="reveal" style="--d:.08s">WinSCP. <span class="grad">Natively</span> on Mac &amp; Linux.</h1>
+    <p class="sub reveal" style="--d:.16s">The dual-pane file manager people have loved on Windows for 20 years —
+      <b>SFTP, FTP, SCP, WebDAV and S3</b> — now running natively on macOS and Linux. Free and open source.</p>
+
+    <div class="btns reveal" id="download" style="--d:.24s">
+      <a class="btn primary" id="dl-mac" href="https://github.com/oegea/FreeSCP/releases/latest/download/FreeSCP-macOS-arm64.zip">
+        <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M17.05 12.54c-.03-2.74 2.24-4.06 2.34-4.12-1.28-1.86-3.26-2.12-3.96-2.15-1.69-.17-3.29.99-4.15.99-.85 0-2.17-.97-3.57-.94-1.84.03-3.53 1.07-4.48 2.71-1.91 3.31-.49 8.21 1.37 10.9.91 1.31 2 2.79 3.42 2.74 1.37-.06 1.89-.89 3.55-.89s2.12.89 3.57.86c1.48-.03 2.41-1.34 3.31-2.66 1.04-1.52 1.47-3 1.5-3.07-.03-.02-2.87-1.1-2.9-4.37ZM14.32 4.5c.76-.92 1.27-2.19 1.13-3.46-1.09.04-2.41.73-3.19 1.64-.7.81-1.31 2.11-1.15 3.35 1.22.1 2.46-.62 3.21-1.53Z"/></svg>
+        <span>Download for macOS<small>Apple Silicon · signed &amp; notarized</small></span></a>
+      <details class="dd">
+        <summary class="btn" id="dl-linux">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2.5"/><path d="m7.5 9.5 3 2.5-3 2.5M13 15h3.5"/></svg>
+          <span>Download for Linux<small>choose architecture</small></span>
+          <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+        </summary>
+        <div class="dd-menu">
+          <a href="https://github.com/oegea/FreeSCP/releases/latest/download/FreeSCP-Linux-x86_64.AppImage">
+            x86-64 (Intel/AMD)<small>AppImage · chmod +x &amp; run</small></a>
+          <span class="disabled">ARM (aarch64)<small>coming soon</small></span>
+        </div>
+      </details>
+    </div>
+    <p class="hint reveal" id="hint" style="--d:.3s">Free forever · GPLv3 · no account, no telemetry</p>
   </div>
-  <p class="protos">Works with <b>SFTP · SCP · FTP · WebDAV · Amazon S3</b> (＋TLS)</p>
-</div></div>
 
-<div class="shot"><div class="wrap">
-  <img src="screenshot.png" alt="FreeSCP screenshot — dual-pane Commander connected over SFTP">
-</div></div>
-
-<section class="features" id="features"><div class="wrap">
-  <h2>Everything you reach for</h2>
-  <p class="lead">A faithful rebuild of the WinSCP Commander, running the same protocol engine natively.</p>
-  <div class="grid">
-    <div class="card"><h3>Dual-pane Commander</h3><p>Two panels, session tabs, a directory tree and synchronized browsing — the layout you know.</p></div>
-    <div class="card"><h3>Five protocols</h3><p>SFTP, SCP, FTP, WebDAV and S3, with TLS. Connect, browse, transfer and manage files.</p></div>
-    <div class="card"><h3>Edit remote files</h3><p>Open a remote file in any editor; FreeSCP watches it and re-uploads automatically when you save.</p></div>
-    <div class="card"><h3>Transfer queue</h3><p>Background transfers with a live queue, speed and parallel connections.</p></div>
-    <div class="card"><h3>Drag &amp; drop</h3><p>Between panels and to/from Finder. Bookmarks, masks, overwrite prompts, recursive chmod.</p></div>
-    <div class="card"><h3>Secure</h3><p>Public-key auth (your OpenSSH keys work), host-key verification, and a notarized, signed app.</p></div>
+  <div class="stage reveal" style="--d:.36s">
+    <div class="window" id="window">
+      <div class="chrome"><i></i><i></i><i></i><span>FreeSCP — winscp@127.0.0.1</span></div>
+      <img src="screenshot.png" width="1100" height="720" alt="FreeSCP screenshot — dual-pane Commander connected over SFTP">
+    </div>
   </div>
-</div></section>
-
-<section class="about"><div class="wrap">
-  <h2>Why FreeSCP?</h2>
-  <p>WinSCP has been a fantastic, free tool on Windows for many years — but it never existed on macOS or
-     Linux, and nothing else quite replaces it. FreeSCP closes that gap: it runs WinSCP's own protocol
-     engine, recompiled natively, behind a Qt rebuild of its interface. So transfers behave exactly like
-     WinSCP, on your Mac.</p>
-  <p>It's free software under the <a href="https://github.com/oegea/FreeSCP/blob/main/LICENSE">GPLv3</a>,
-     a project started by Oriol Egea, made possible by leaning on AI for the heavy lifting of the port.</p>
-</div></section>
-
-<footer><div class="wrap">
-  <span>© 2026 FreeSCP — GPLv3</span>
-  <span class="spacer" style="flex:1"></span>
-  <a href="https://github.com/oegea/FreeSCP">GitHub</a>
-  <a href="https://github.com/oegea/FreeSCP/releases">Releases</a>
-  <a href="https://github.com/oegea/FreeSCP/issues">Report a bug</a>
+  <div class="fade-bottom"></div>
 </div>
-<p class="disclaimer">
-  FreeSCP is an independent, community-made port and is <b>not affiliated with, sponsored by, endorsed
-  by, or connected to</b> WinSCP or its author, Martin&nbsp;Přikryl. &ldquo;WinSCP&rdquo; is the name of
-  that separate project and is used here purely descriptively, to identify the software FreeSCP is
-  derived from (nominative fair use); all trademarks are the property of their respective owners.
-  FreeSCP reuses the WinSCP engine source under the GNU GPL&nbsp;v3 and is itself distributed under the
-  GPL&nbsp;v3. It is provided &ldquo;as is&rdquo;, without warranty of any kind. With sincere gratitude
-  to the WinSCP authors for the original software.
-</p>
+
+<div class="marquee" aria-hidden="true"><div class="track" id="track">
+  <span>SFTP</span><span>SCP</span><span>FTP</span><span>FTPS</span><span>WebDAV</span><span>Amazon S3</span>
+  <span>OpenSSH keys</span><span>PuTTY .ppk</span><span>Host-key verification</span><span>TLS</span>
+  <span>Transfer queue</span><span>Remote editing</span><span>Synchronized browsing</span><span>Bookmarks</span>
+</div></div>
+
+<section id="features"><div class="wrap">
+  <div class="center">
+    <div class="eyebrow reveal">Features</div>
+    <h2 class="reveal" style="--d:.06s">Everything you reach for.</h2>
+    <p class="lead reveal" style="--d:.12s">A faithful rebuild of the WinSCP Commander, running the same protocol engine natively.</p>
+  </div>
+
+  <div class="bento">
+    <div class="card wide reveal">
+      <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7 17V5m0 0L3 9m4-4 4 4M17 7v12m0 0 4-4m-4 4-4-4"/></svg></div>
+      <h3>Transfer queue</h3>
+      <p>Background transfers with a live queue, speed and parallel connections.</p>
+      <div class="queue" id="queue" aria-hidden="true">
+        <div class="qrow"><span class="dir up">↑</span><span class="name">site-backup.tar.gz</span><div class="bar"><i></i></div><span class="spd"></span></div>
+        <div class="qrow"><span class="dir down">↓</span><span class="name">access.log</span><div class="bar"><i></i></div><span class="spd"></span></div>
+        <div class="qrow"><span class="dir up">↑</span><span class="name">assets/hero@2x.png</span><div class="bar"><i></i></div><span class="spd"></span></div>
+        <div class="qrow"><span class="dir down">↓</span><span class="name">db-dump.sql</span><div class="bar"><i></i></div><span class="spd"></span></div>
+      </div>
+    </div>
+
+    <div class="card reveal" style="--d:.08s">
+      <div class="ico g"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2.5"/><path d="M12 4v16M3 9h18"/></svg></div>
+      <h3>Dual-pane Commander</h3>
+      <p>Two panels, session tabs, a directory tree and synchronized browsing — the layout you know.</p>
+    </div>
+
+    <div class="card reveal">
+      <div class="ico g"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="10" rx="2.5"/><path d="M8 11V7.5a4 4 0 0 1 8 0V11"/></svg></div>
+      <h3>Secure</h3>
+      <p>Public-key auth (your OpenSSH keys work), host-key verification, and a notarized, signed app.</p>
+    </div>
+
+    <div class="card wide reveal" style="--d:.08s">
+      <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h4L19 9l-4-4L4 16v4ZM13.5 6.5l4 4"/></svg></div>
+      <h3>Edit remote files</h3>
+      <p>Open a remote file in any editor; FreeSCP watches it and re-uploads automatically when you save.</p>
+      <div class="term" id="term" aria-hidden="true"></div>
+    </div>
+
+    <div class="card half reveal">
+      <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.8 3 2.8 15 0 18M12 3c-2.8 3-2.8 15 0 18"/></svg></div>
+      <h3>Five protocols</h3>
+      <p>SFTP, SCP, FTP, WebDAV and S3, with TLS. Connect, browse, transfer and manage files.</p>
+      <div class="chips"><span>SFTP</span><span>SCP</span><span>FTP</span><span>WebDAV</span><span>S3</span><span>+TLS</span></div>
+    </div>
+
+    <div class="card half reveal" style="--d:.08s">
+      <div class="ico g"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11V5.5a1.5 1.5 0 0 1 3 0V11m0-1.5a1.5 1.5 0 0 1 3 0V11m0-.5a1.5 1.5 0 0 1 3 0V15a6 6 0 0 1-6 6h-1a6 6 0 0 1-5-2.7L3.6 14a1.5 1.5 0 0 1 2.5-1.6L9 15"/></svg></div>
+      <h3>Drag &amp; drop</h3>
+      <p>Between panels and to/from Finder. Bookmarks, masks, overwrite prompts, recursive chmod.</p>
+      <div class="chips"><span>Finder</span><span>Bookmarks</span><span>Masks</span><span>chmod -R</span></div>
+    </div>
+  </div>
+</div></section>
+
+<section class="engine" id="engine"><div class="wrap">
+  <div class="cols">
+    <div>
+      <div class="eyebrow reveal">How it works</div>
+      <h2 class="reveal" style="--d:.06s">Same engine.<br><span class="grad">Zero emulation.</span></h2>
+      <p class="reveal" style="--d:.12s">WinSCP has been a fantastic, free tool on Windows for many years — but it never existed on macOS or
+        Linux, and nothing else quite replaces it. FreeSCP closes that gap: it runs WinSCP's own protocol
+        engine, recompiled natively, behind a Qt rebuild of its interface. So transfers behave exactly like
+        WinSCP, on your Mac.</p>
+      <p class="reveal" style="--d:.18s">It's free software under the <a href="https://github.com/oegea/FreeSCP/blob/main/LICENSE">GPLv3</a>,
+        a project started by Oriol Egea, made possible by leaning on AI for the heavy lifting of the port.</p>
+    </div>
+    <div class="stack">
+      <div class="layer reveal"><div><b>Qt 6 interface</b><small>The Commander, rebuilt natively</small></div><span class="tag b">native UI</span></div>
+      <div class="link-dots" aria-hidden="true"><i></i><i></i><i></i></div>
+      <div class="layer reveal" style="--d:.08s"><div><b>WinSCP protocol engine</b><small>The original source, recompiled</small></div><span class="tag">same code</span></div>
+      <div class="link-dots" aria-hidden="true"><i></i><i></i><i></i></div>
+      <div class="layer reveal" style="--d:.16s"><div><b>macOS &amp; Linux</b><small>No Wine, no VM, no compatibility layer to install</small></div><span class="tag b">arm64 · x86-64</span></div>
+    </div>
+  </div>
+
+  <div class="stats">
+    <div class="stat reveal"><b><span data-count="5">5</span></b><span>protocols, one app</span></div>
+    <div class="stat reveal" style="--d:.06s"><b><span data-count="20">20</span>+</b><span>years of WinSCP engineering inside</span></div>
+    <div class="stat reveal" style="--d:.12s"><b><span data-count="100">100</span>%</b><span>native code — no Wine</span></div>
+    <div class="stat reveal" style="--d:.18s"><b>$<span data-count="0">0</span></b><span>free &amp; open source, GPLv3</span></div>
+  </div>
+</div></section>
+
+<section class="cta"><div class="wrap">
+  <div class="box reveal">
+    <img src="icon.png" alt="">
+    <h2>Ready when you are.</h2>
+    <p class="lead" style="margin-inline:auto">Download FreeSCP and connect to your first server in under a minute.</p>
+    <div class="btns">
+      <a class="btn primary" href="https://github.com/oegea/FreeSCP/releases/latest/download/FreeSCP-macOS-arm64.zip">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11m0 0-4.5-4.5M12 15l4.5-4.5M5 20h14"/></svg>
+        <span>macOS<small>Apple Silicon · .zip</small></span></a>
+      <a class="btn" href="https://github.com/oegea/FreeSCP/releases/latest/download/FreeSCP-Linux-x86_64.AppImage">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11m0 0-4.5-4.5M12 15l4.5-4.5M5 20h14"/></svg>
+        <span>Linux<small>x86-64 · AppImage</small></span></a>
+      <a class="btn" href="https://github.com/oegea/FreeSCP">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m8 8-4 4 4 4m8-8 4 4-4 4M13.5 5l-3 14"/></svg>
+        <span>Source code<small>Build it yourself</small></span></a>
+    </div>
+  </div>
+</div></section>
+</main>
+
+<footer>
+  <div class="wrap"><div class="row">
+    <span>© 2026 FreeSCP — GPLv3</span>
+    <span style="flex:1"></span>
+    <a href="https://github.com/oegea/FreeSCP">GitHub</a>
+    <a href="https://github.com/oegea/FreeSCP/releases">Releases</a>
+    <a href="https://github.com/oegea/FreeSCP/issues">Report a bug</a>
+  </div></div>
+  <p class="disclaimer">
+    FreeSCP is an independent, community-made port and is <b>not affiliated with, sponsored by, endorsed
+    by, or connected to</b> WinSCP or its author, Martin&nbsp;Přikryl. &ldquo;WinSCP&rdquo; is the name of
+    that separate project and is used here purely descriptively, to identify the software FreeSCP is
+    derived from (nominative fair use); all trademarks are the property of their respective owners.
+    FreeSCP reuses the WinSCP engine source under the GNU GPL&nbsp;v3 and is itself distributed under the
+    GPL&nbsp;v3. It is provided &ldquo;as is&rdquo;, without warranty of any kind. With sincere gratitude
+    to the WinSCP authors for the original software.
+  </p>
 </footer>
+
+<script>
+(function(){
+  "use strict";
+  var reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  var $ = function(s, r){ return (r || document).querySelector(s); };
+  var $$ = function(s, r){ return Array.prototype.slice.call((r || document).querySelectorAll(s)); };
+
+  // --- platform-aware download buttons ---
+  var ua = navigator.userAgent, plat = (navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || "";
+  var isWin = /Win/i.test(plat) || /Windows/i.test(ua);
+  var isLinux = !/Android/i.test(ua) && (/Linux/i.test(plat) || /Linux|X11/i.test(ua));
+  if (isLinux) { $("#dl-mac").classList.remove("primary"); $("#dl-linux").classList.add("primary"); }
+  if (isWin) $("#hint").innerHTML = 'On Windows? You want the original: <a href="https://winscp.net/" rel="noopener">WinSCP</a>.';
+
+  // close the Linux dropdown on outside click / Escape
+  var dd = $(".dd");
+  document.addEventListener("click", function(e){ if (dd.open && !dd.contains(e.target)) dd.open = false; });
+  document.addEventListener("keydown", function(e){ if (e.key === "Escape") dd.open = false; });
+
+  // --- nav state + hero window un-tilt on scroll ---
+  var header = $("header"), win = $("#window"), ticking = false;
+  function onScroll(){
+    ticking = false;
+    var y = window.scrollY;
+    header.classList.toggle("scrolled", y > 12);
+    if (!reduce) {
+      var r = win.getBoundingClientRect(), vh = window.innerHeight;
+      var p = Math.min(1, Math.max(0, (vh - r.top) / (vh * 0.75)));   // 0 = just entering, 1 = well in view
+      win.style.setProperty("--rx", (16 * (1 - p)).toFixed(2) + "deg");
+      win.style.setProperty("--s", (0.94 + 0.06 * p).toFixed(4));
+    }
+  }
+  window.addEventListener("scroll", function(){ if (!ticking) { ticking = true; requestAnimationFrame(onScroll); } }, { passive:true });
+  window.addEventListener("resize", onScroll);
+  onScroll();
+
+  // --- reveal on scroll ---
+  var revealed = function(el){ el.classList.add("in"); };
+  if (!("IntersectionObserver" in window) || reduce) { $$(".reveal").forEach(revealed); }
+  else {
+    var io = new IntersectionObserver(function(es){
+      es.forEach(function(e){ if (e.isIntersecting) { revealed(e.target); io.unobserve(e.target); } });
+    }, { rootMargin:"0px 0px -8% 0px", threshold:0.08 });
+    $$(".reveal").forEach(function(el){ io.observe(el); });
+  }
+
+  // --- spotlight on cards ---
+  $$(".card").forEach(function(c){
+    c.addEventListener("pointermove", function(e){
+      var r = c.getBoundingClientRect();
+      c.style.setProperty("--mx", (e.clientX - r.left) + "px");
+      c.style.setProperty("--my", (e.clientY - r.top) + "px");
+    });
+  });
+
+  // --- marquee: duplicate the items so the -50% loop is seamless ---
+  var track = $("#track"); track.innerHTML += track.innerHTML;
+
+  // --- count-up stats ---
+  function countUp(el){
+    var to = +el.dataset.count, t0 = null, dur = 1400;
+    if (reduce || to === 0) { el.textContent = to; return; }
+    function step(t){
+      if (t0 === null) t0 = t;
+      var p = Math.min(1, (t - t0) / dur), e = 1 - Math.pow(1 - p, 3);
+      el.textContent = Math.round(to * e);
+      if (p < 1) requestAnimationFrame(step);
+    }
+    requestAnimationFrame(step);
+  }
+  if ("IntersectionObserver" in window) {
+    var cio = new IntersectionObserver(function(es){
+      es.forEach(function(e){ if (e.isIntersecting) { countUp(e.target); cio.unobserve(e.target); } });
+    }, { threshold:0.6 });
+    $$("[data-count]").forEach(function(el){ cio.observe(el); });
+  }
+
+  // --- live transfer-queue demo ---
+  var rows = $$("#queue .qrow").map(function(row, i){
+    return { row:row, fill:$(".bar i", row), spd:$(".spd", row), p:[0.42, 0.78, 0.12, 0.6][i], rate:[0.05, 0.085, 0.11, 0.065][i], base:[8.4, 2.1, 14.6, 5.2][i], wait:0 };
+  });
+  function paintRow(r){
+    var done = r.p >= 1;
+    r.fill.style.width = (Math.min(1, r.p) * 100).toFixed(1) + "%";
+    r.row.classList.toggle("done", done);
+    r.spd.textContent = done ? "done ✓" : (r.base * (0.85 + 0.3 * Math.random())).toFixed(1) + " MB/s";
+  }
+  rows.forEach(paintRow);
+  if (!reduce) {
+    var last = performance.now(), acc = 0;
+    (function tick(now){
+      var dt = Math.min(0.1, (now - last) / 1000); last = now; acc += dt;
+      var repaintSpeed = acc > 0.45; if (repaintSpeed) acc = 0;
+      rows.forEach(function(r){
+        if (r.p >= 1) { r.wait += dt; if (r.wait > 1.6) { r.p = 0; r.wait = 0; paintRow(r); } return; }
+        r.p += r.rate * dt;
+        if (r.p >= 1 || repaintSpeed) paintRow(r); else r.fill.style.width = (r.p * 100).toFixed(1) + "%";
+      });
+      requestAnimationFrame(tick);
+    })(last);
+  }
+
+  // --- remote-edit typed demo ---
+  var term = $("#term");
+  var lines = [
+    ['<span class="hl">nginx.conf</span> opened in your editor', 600],
+    ['watching for changes…', 1500],
+    ['saved → <span class="hl">uploading nginx.conf</span>', 900],
+    ['<span class="ok">✓ uploaded to /etc/nginx/nginx.conf</span>', 2600]
+  ];
+  if (reduce) { term.innerHTML = lines.map(function(l){ return "› " + l[0]; }).join("<br>"); }
+  else {
+    var li = 0, shown = [];
+    (function next(){
+      if (li === lines.length) { li = 0; shown = []; }
+      shown.push("› " + lines[li][0]);
+      term.innerHTML = shown.join("<br>") + ' <span class="caret"></span>';
+      setTimeout(next, lines[li++][1]);
+    })();
+  }
+
+  // --- hero background: diagonal data streams (blue up-left, green down-right, like the icon) ---
+  var cv = $("#streams"), ctx = cv.getContext && cv.getContext("2d");
+  if (ctx && !reduce) {
+    var W = 0, H = 0, dpr = Math.min(2, window.devicePixelRatio || 1), streams = [], visible = true;
+    function spawn(s, anywhere){
+      s.up = Math.random() < 0.5;
+      s.len = 60 + Math.random() * 140;
+      s.v = 40 + Math.random() * 90;
+      s.w = 1 + Math.random() * 1.3;
+      s.a = 0.18 + Math.random() * 0.4;
+      s.x = Math.random() * (W + H) - H * 0.5;
+      s.y = anywhere ? Math.random() * H : (s.up ? H + s.len : -s.len);
+      return s;
+    }
+    function size(){
+      var r = cv.getBoundingClientRect(); W = r.width; H = r.height;
+      cv.width = W * dpr; cv.height = H * dpr; ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      var n = Math.round(Math.min(46, Math.max(14, W / 30)));
+      streams = []; for (var i = 0; i < n; i++) streams.push(spawn({}, true));
+    }
+    size(); window.addEventListener("resize", size);
+    if ("IntersectionObserver" in window) new IntersectionObserver(function(es){ visible = es[0].isIntersecting; }).observe(cv);
+    var k = Math.SQRT1_2, prev = performance.now();
+    (function draw(now){
+      var dt = Math.min(0.05, (now - prev) / 1000); prev = now;
+      if (visible && !document.hidden) {
+        ctx.clearRect(0, 0, W, H);
+        for (var i = 0; i < streams.length; i++) {
+          var s = streams[i], d = s.up ? -1 : 1;
+          s.x += d * s.v * k * dt; s.y += d * s.v * k * dt;
+          var tx = s.x - d * s.len * k, ty = s.y - d * s.len * k;
+          var g = ctx.createLinearGradient(tx, ty, s.x, s.y), c = s.up ? "76,155,255" : "74,222,128";
+          g.addColorStop(0, "rgba(" + c + ",0)"); g.addColorStop(1, "rgba(" + c + "," + s.a + ")");
+          ctx.strokeStyle = g; ctx.lineWidth = s.w; ctx.lineCap = "round";
+          ctx.beginPath(); ctx.moveTo(tx, ty); ctx.lineTo(s.x, s.y); ctx.stroke();
+          if ((s.up && s.y < -s.len) || (!s.up && s.y > H + s.len)) spawn(s, false);
+        }
+      }
+      requestAnimationFrame(draw);
+    })(prev);
+  }
+})();
+</script>
 </body>
 </html>
