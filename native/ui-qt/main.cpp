@@ -6,6 +6,8 @@
 // Rights/Owner columns, and the classic bottom function-key bar (F5 Copy / F6 Move / F7 Create
 // Directory / F8 Delete / ...). Both panels talk to the ported engine through enginebridge.
 //---------------------------------------------------------------------------
+#include <cstdlib>
+#include <cstdio>
 #include <QApplication>
 #include <QMainWindow>
 #include <QSplitter>
@@ -1907,6 +1909,8 @@ int main(int argc, char ** argv)
             startTransfer(right, left, xf.split(','), false);
           }
         }
+        else   // make a failed auto-connect visible in the render (verifies the error text the user would see)
+          window.statusBar()->showMessage("Connect failed: " + QString::fromUtf8(r.error.c_str()));
       }
       // Grab after a delay so background transfers (detached worker) complete first.
       QTimer::singleShot(qEnvironmentVariableIsEmpty("WINSCP_AUTOXFER") ? 100 : 3000, [&]{
@@ -1920,5 +1924,9 @@ int main(int argc, char ** argv)
   if (qEnvironmentVariableIsEmpty("WINSCP_NO_AUTOLOGIN"))
     QMetaObject::invokeMethod(&window, [&]{ doConnect(); }, Qt::QueuedConnection);
 
-  return app.exec();
+  int rc = app.exec();
+  // Close sessions while the engine is alive (see engine::shutdown). If a transfer is still running
+  // on the worker thread, skip all destructors rather than pull the engine from under it.
+  if (!engine::shutdown(3000)) { fflush(nullptr); std::_Exit(rc); }
+  return rc;
 }

@@ -9,6 +9,10 @@
 #include "winscp/UnicodeString.h"
 #include <functional>
 
+#include <cstdlib>
+#include <cstddef>
+#include <new>
+
 class TObject;
 
 // __classid(C)/InheritsFrom/ClassName via typeid + dynamic_cast (exact is-a, no engine edits).
@@ -22,6 +26,25 @@ class TObject
 public:
   TObject() = default;
   virtual ~TObject() {}
+
+  // Delphi/VCL allocates every TObject descendant ZERO-FILLED (TObject.NewInstance ->
+  // InitInstance), and the engine relies on it: plenty of constructors leave pointer/flag members
+  // unset and expect NULL/false (e.g. TSessionData::FUnsafeSettings, which Modify() writes
+  // through when non-NULL). With the default allocator those members hold whatever the heap
+  // contained - it worked while fresh pages happened to be zero and crashed once memory was
+  // reused (opening a second connection). Class-level operator new restores the VCL guarantee
+  // for all heap-allocated descendants; constructors and member initialisers still run on top.
+  static void * operator new(std::size_t size)
+  {
+    void * p = std::calloc(1, size != 0 ? size : 1);
+    if (p == nullptr) throw std::bad_alloc();
+    return p;
+  }
+  static void * operator new[](std::size_t size) { return operator new(size); }
+  static void * operator new(std::size_t, void * where) noexcept { return where; }   // keep placement new usable
+  static void operator delete(void * p) noexcept { std::free(p); }
+  static void operator delete[](void * p) noexcept { std::free(p); }
+  static void operator delete(void *, void *) noexcept {}
   virtual UnicodeString __fastcall ClassName() const;
   UnicodeString __fastcall QualifiedClassName() const { return ClassName(); }
   bool __fastcall InheritsFrom(TClass cls) const { return cls && cls->isInstance(this); }

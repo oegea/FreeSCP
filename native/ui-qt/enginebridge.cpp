@@ -23,6 +23,8 @@
 #include <filesystem>
 #include <memory>
 #include <mutex>
+#include <chrono>
+#include <thread>
 
 void __fastcall PuttyInitialize();   // one-time PuTTY init (sk_init + appname)
 void __fastcall NeonInitialize();    // ne_sock_init (WebDAV/HTTP)
@@ -567,7 +569,9 @@ bool downloadVia(int handle, const std::string & remotePathUtf8, const std::stri
       if (c->term->Files->Files[i]->FileName == fn) rf = c->term->Files->Files[i];
     if (!rf) { if (error) *error = "file not found on parallel connection"; return false; }
     std::unique_ptr<TStrings> files(new TStringList());
-    files->AddObject(rf->FullFileName, rf);
+    // A directory's FullFileName ends in '/'; the transfer code derives the local name with
+    // UnixExtractFileName(), which is then empty - the folder's contents landed directly in the target.
+    files->AddObject(UnixExcludeTrailingBackslash(rf->FullFileName), rf);
     TCopyParamType cp; cp.Default();
     g_lastTransferError.clear();
     bool res = c->term->CopyToLocal(files.get(), IncludeTrailingBackslash(FromU8(localDirUtf8)), &cp, cpNoConfirmation, nullptr);
@@ -583,6 +587,26 @@ void closeParallelConnections()
   std::lock_guard<std::mutex> pk(g_poolMtx);
   for (auto & c : g_pool) { try { if (c->term && c->term->Active) c->term->Close(); } catch (...) {} }
   g_pool.clear();
+}
+
+bool shutdown(int timeoutMs)
+{
+  // The transfer worker holds g_engineMutex while a file is in flight: wait a bounded time.
+  bool locked = false;
+  for (int waited = 0; !(locked = g_engineMutex.try_lock()) && waited < timeoutMs; waited += 50)
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+  if (!locked) { LogLine("shutdown: engine busy, leaving without teardown"); return false; }
+  closeParallelConnections();
+  while (!g_sess.empty())
+  {
+    Sess * s = g_sess.back().get();
+    if (s->term) { try { if (s->term->Active) s->term->Close(); } catch (...) {} }
+    try { g_sess.pop_back(); } catch (...) {}
+  }
+  g_active = -1;
+  g_engineMutex.unlock();
+  LogLine("shutdown: sessions closed");
+  return true;
 }
 
 bool uploadToRemote(const std::string & localPathUtf8, const std::string & remoteDirUtf8,
@@ -624,7 +648,9 @@ bool downloadFromRemote(const std::string & remotePathUtf8, const std::string & 
     if (rf == nullptr) { if (error) *error = "file not in current listing"; LogLine("  download: not in listing"); return false; }
 
     std::unique_ptr<TStrings> files(new TStringList());
-    files->AddObject(rf->FullFileName, rf);
+    // A directory's FullFileName ends in '/'; the transfer code derives the local name with
+    // UnixExtractFileName(), which is then empty - the folder's contents landed directly in the target.
+    files->AddObject(UnixExcludeTrailingBackslash(rf->FullFileName), rf);
     TCopyParamType cp; cp.Default();
     UnicodeString target = IncludeTrailingBackslash(FromU8(localDirUtf8));
     g_lastTransferError.clear();

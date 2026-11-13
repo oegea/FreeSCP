@@ -135,6 +135,14 @@ bool uploadVia(int handle, const std::string & localPath, const std::string & re
 bool downloadVia(int handle, const std::string & remotePath, const std::string & localDir, std::string * error = nullptr);
 void closeParallelConnections();
 
+// Orderly teardown at application exit: closes the parallel connections and every session while
+// the engine is still fully alive. Without it they were destroyed by static destructors after
+// exit(), in an order where the engine's own statics (mutexes) were already gone ->
+// "mutex lock failed" abort = a crash report on every quit with a session open.
+// Returns false if the engine stayed busy (a transfer still running) for timeoutMs; the caller
+// should then leave with _exit() so no destructor touches the engine underneath the worker.
+bool shutdown(int timeoutMs);
+
 //--- directory synchronization (TSynchronizeChecklist) ---
 struct SyncItem
 {

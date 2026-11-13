@@ -34,10 +34,12 @@ public:
 
 int main(int argc, char ** argv)
 {
-  UnicodeString Host = (argc > 1) ? UnicodeString(argv[1]) : UnicodeString(L"127.0.0.1");
+  // argv is UTF-8: decode it (UnicodeString(const char *) would widen byte-for-byte)
+  auto Arg = [&](int i) { return UnicodeString(UTF8String(argv[i])); };
+  UnicodeString Host = (argc > 1) ? Arg(1) : UnicodeString(L"127.0.0.1");
   int Port = (argc > 2) ? atoi(argv[2]) : 2222;
-  UnicodeString User = (argc > 3) ? UnicodeString(argv[3]) : UnicodeString(L"winscp");
-  UnicodeString Pass = (argc > 4) ? UnicodeString(argv[4]) : UnicodeString(L"winscp123");
+  UnicodeString User = (argc > 3) ? Arg(3) : UnicodeString(L"winscp");
+  UnicodeString Pass = (argc > 4) ? Arg(4) : UnicodeString(L"winscp123");
 
   try
   {
@@ -175,7 +177,7 @@ int main(int argc, char ** argv)
       for (int i = 0; i < Terminal->Files->Count; i++)
         if (Terminal->Files->Files[i]->FileName == LocalName) { rf = Terminal->Files->Files[i]; break; }
       std::unique_ptr<TStrings> dn(new TStringList());
-      if (rf) dn->AddObject(rf->FullFileName, rf);
+      if (rf) dn->AddObject(UnixExcludeTrailingBackslash(rf->FullFileName), rf);   // no trailing '/' for directories
       bool dok = rf && Terminal->CopyToLocal(dn.get(), L"/tmp/dl/", &cp, cpNoConfirmation, NULL);
       out(FORMAT(L"[harness] SCP/SFTP DOWNLOAD ok=%d (rf=%d)", ((int)dok, (int)(rf!=NULL))));
     }

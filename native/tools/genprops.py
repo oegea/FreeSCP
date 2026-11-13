@@ -437,6 +437,15 @@ def _fileoploop(m):
     return 'FileOperationLoop(%s,' % _mc_this(m.group('meth'))
 
 
+# 6) Classes that inherit a VCL class PRIVATELY (`class X : private TStringList`) would also make
+#    TObject's class-level operator new/delete private (rtlcompat zero-fills TObject allocations,
+#    see Object.h), so `new X()` / `delete p` outside the class stops compiling. Re-export them.
+PRIVATE_BASE_RE = re.compile(r'(class\s+\w+\s*:\s*private\s+T\w+\s*\{)')
+def _private_base(m):
+    return (m.group(1) + ' public: using ::TObject::operator new; using ::TObject::operator delete;'
+            ' private:')
+
+
 def process(text):
     text = transform_try_finally(text)
     text = CLOSURE_TYPEDEF_RE.sub(_closure_typedef, text)
@@ -447,6 +456,7 @@ def process(text):
     for regex, sub in SLOT_RULES:
         text = regex.sub(sub, text)
     text = FILEOPLOOP_RE.sub(_fileoploop, text)
+    text = PRIVATE_BASE_RE.sub(_private_base, text)
     text = EVENTEX_CAST_RE.sub(_eventex_cast, text)
     text = EVENT_CAST_RE.sub(_event_cast, text)
     text = CLOSURE_ARG_RE.sub(_closure_arg, text)
