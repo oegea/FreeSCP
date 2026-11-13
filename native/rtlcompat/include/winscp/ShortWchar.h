@@ -72,7 +72,13 @@ constexpr W * wmemchr_(W * s, wchar_t c, size_t n)
 // <wchar.h> is included first so its declarations are parsed untouched; from here on the names
 // are function-like macros, which the library templates (parsed later) expand at their call sites.
 #if __has_include(<bits/c++config.h>)
+// <cwchar> must be included BEFORE the macros: libstdc++'s <cwchar> starts with `#undef wcslen`,
+// `#undef wmemchr`, `#undef swscanf`... for every wide function, so whichever header pulled it in
+// first silently removed macros defined earlier (that is how SCP downloads on Linux ended up in
+// glibc's 4-byte swscanf: "SCP protocol error: Illegal time format"). Its include guard makes this
+// the only time those #undefs run.
 #include <wchar.h>
+#include <cwchar>
 namespace winscp_shortwchar {
 inline wchar_t * wmemcpy_(wchar_t * d, const wchar_t * s, size_t n)
 { for (size_t i = 0; i < n; ++i) d[i] = s[i]; return d; }

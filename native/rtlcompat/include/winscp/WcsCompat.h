@@ -21,6 +21,7 @@
 // only <stddef.h>, which still provides wchar_t and size_t, and never pull <wchar.h>.
 #ifdef __cplusplus
 #include <wchar.h>
+#include <cwchar>   // before the #defines below: libstdc++'s <cwchar> #undefs every wcs*/swscanf name
 // libc++ (macOS) transitively declares the narrow str*/mem*/wctype functions via other system
 // headers; libstdc++ (Linux) does not, so engine TUs that rely on strcmp/memset/strncpy/towupper
 // being in scope (WebDAVFileSystem, S3FileSystem, Configuration, ...) fail to compile there. This

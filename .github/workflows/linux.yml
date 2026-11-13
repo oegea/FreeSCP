@@ -53,7 +53,8 @@ jobs:
 
       - name: Start a local SSH server for the end-to-end tests
         run: |
-          sudo useradd -m -s /bin/bash winscp
+          # empty skeleton: the runner image's default dotfiles print at login, which breaks SFTP/SCP
+          sudo useradd -m -k /dev/null -s /bin/bash winscp
           echo 'winscp:winscp123' | sudo chpasswd
           sudo mkdir -p /run/sshd
           sudo /usr/sbin/sshd -p 2222 -o PasswordAuthentication=yes -o KbdInteractiveAuthentication=no \
