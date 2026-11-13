@@ -15,6 +15,11 @@ elseif(UNIX)
   add_compile_definitions(WINSCP_PLATFORM_LINUX=1 WINSCP_PLATFORM_POSIX=1)
 endif()
 
+# The engine, PuTTY and FileZilla were written for compilers where plain `char` is signed (Windows,
+# x86, Apple). On ARM Linux it is unsigned by default, which changes byte comparisons and
+# conversions (SFTP read a garbage packet length on aarch64). Pin it everywhere.
+add_compile_options(-fsigned-char)
+
 enable_testing()
 
 # Phase 1 keystone: Embarcadero RTL compatibility layer.
