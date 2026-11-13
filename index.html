@@ -7,7 +7,7 @@
 <meta name="description" content="FreeSCP is a free, open-source SFTP/FTP/SCP/WebDAV/S3 file manager for macOS and Linux — a native port of WinSCP.">
 <meta name="theme-color" content="#070b14">
 <meta property="og:title" content="FreeSCP — WinSCP, natively on macOS & Linux">
-<meta property="og:description" content="The dual-pane SFTP/FTP/SCP/WebDAV/S3 file manager, running WinSCP's own engine natively. Free and open source.">
+<meta property="og:description" content="The dual-pane SFTP/FTP/SCP/WebDAV/S3 file manager, running WinSCP's own engine natively on Apple Silicon, Intel Macs and Linux (x86-64, ARM64). 100% free, open source, no telemetry.">
 <meta property="og:image" content="https://freescp.com/screenshot.png">
 <meta property="og:type" content="website">
 <link rel="icon" type="image/png" href="favicon.png">
@@ -197,6 +197,59 @@
   .stat b{ display:block; font-family:var(--display); font-weight:700; font-size:clamp(34px,4.4vw,52px); line-height:1; letter-spacing:-.03em; }
   .stat>span{ display:block; color:var(--muted); font-size:14.5px; margin-top:10px; }
 
+  /* how to start */
+  .steps{ display:grid; grid-template-columns:repeat(3,1fr); gap:16px; margin-top:56px; counter-reset:step; }
+  .step{ position:relative; padding:28px; border-radius:20px; border:1px solid var(--line); background:linear-gradient(180deg,var(--panel),var(--bg-2)); }
+  .step::before{ counter-increment:step; content:counter(step); display:grid; place-items:center; width:38px; height:38px; border-radius:11px; margin-bottom:18px;
+                 font-family:var(--display); font-weight:700; font-size:18px; color:#06210f; background:var(--green); }
+  .step h3{ font-family:var(--display); font-size:20px; font-weight:600; margin:0 0 8px; }
+  .step p{ margin:0; color:var(--muted); font-size:15.5px; }
+  .step code,.faq code,.plat code{ font-family:var(--mono); font-size:13px; padding:2px 7px; border-radius:6px; background:rgba(148,174,220,.12); color:var(--ink); white-space:nowrap; }
+
+  /* downloads */
+  .plats{ display:grid; grid-template-columns:repeat(3,1fr); gap:16px; margin-top:56px; }
+  .plat{ display:flex; flex-direction:column; padding:28px; border-radius:20px; border:1px solid var(--line); background:linear-gradient(180deg,var(--panel),var(--bg-2));
+         transition:transform .35s var(--ease), border-color .3s; }
+  .plat:hover{ transform:translateY(-4px); border-color:var(--line-2); }
+  .plat.you{ border-color:rgba(76,155,255,.65); box-shadow:0 0 0 1px rgba(76,155,255,.35), 0 24px 60px -30px rgba(63,140,255,.7); }
+  .plat .you-tag{ display:none; align-self:flex-start; font-family:var(--mono); font-size:11.5px; letter-spacing:.08em; text-transform:uppercase; color:var(--blue);
+                  border:1px solid rgba(76,155,255,.4); background:rgba(76,155,255,.1); border-radius:99px; padding:3px 10px; margin-bottom:14px; }
+  .plat.you .you-tag{ display:inline-block; }
+  .plat h3{ font-family:var(--display); font-size:22px; font-weight:600; margin:0; }
+  .plat .arch{ color:var(--muted); font-size:15px; margin:4px 0 16px; }
+  .plat ul{ list-style:none; margin:0 0 22px; padding:0; color:var(--muted); font-size:14.5px; display:grid; gap:7px; }
+  .plat li{ padding-left:22px; position:relative; }
+  .plat li::before{ content:""; position:absolute; left:2px; top:.55em; width:8px; height:8px; border-radius:50%; background:var(--green); opacity:.85; }
+  .plat .btn{ margin-top:auto; min-width:0; width:100%; justify-content:center; text-align:center; }
+  .plat .file{ margin-top:12px; font-family:var(--mono); font-size:12px; color:var(--dim); text-align:center; overflow-wrap:anywhere; }
+  .dl-note{ margin-top:26px; text-align:center; color:var(--dim); font-size:14px; }
+  .dl-note a{ color:var(--muted); border-bottom:1px solid var(--line-2); } .dl-note a:hover{ color:var(--ink); }
+
+  /* free / support */
+  .free .cols{ display:grid; grid-template-columns:1fr 1fr 1fr; gap:16px; margin-top:56px; }
+  .pillar{ padding:28px; border-radius:20px; border:1px solid var(--line); background:var(--panel); }
+  .pillar b{ display:block; font-family:var(--display); font-size:21px; font-weight:600; margin-bottom:8px; }
+  .pillar p{ margin:0; color:var(--muted); font-size:15.5px; }
+  .pillar a{ color:var(--ink); border-bottom:1px solid var(--line-2); }
+  .coffee{ margin-top:16px; display:flex; align-items:center; gap:28px; padding:30px 32px; border-radius:20px; border:1px solid rgba(74,222,128,.3);
+           background:radial-gradient(ellipse 70% 140% at 0% 50%,rgba(34,184,102,.2),transparent 65%),var(--panel); }
+  .coffee .cup{ font-size:44px; line-height:1; animation:float 5s ease-in-out infinite; }
+  .coffee b{ display:block; font-family:var(--display); font-size:22px; font-weight:600; }
+  .coffee p{ margin:6px 0 0; color:var(--muted); font-size:15.5px; max-width:60ch; }
+  .coffee .btn{ margin-left:auto; min-width:0; flex:none; border-color:transparent; color:#06210f; background:linear-gradient(135deg,#6ee7a0,#34c476); font-weight:700; }
+  .coffee .btn:hover{ background:linear-gradient(135deg,#86efb1,#43d184); }
+
+  /* faq */
+  .faq{ max-width:860px; margin:48px auto 0; display:grid; gap:10px; }
+  .faq details{ border:1px solid var(--line); border-radius:16px; background:var(--panel); transition:border-color .2s; }
+  .faq details[open]{ border-color:var(--line-2); }
+  .faq summary{ list-style:none; cursor:pointer; padding:19px 22px; font-family:var(--display); font-size:17.5px; font-weight:600; display:flex; align-items:center; gap:14px; }
+  .faq summary::-webkit-details-marker{ display:none; }
+  .faq summary::after{ content:"+"; margin-left:auto; font-size:24px; font-weight:400; color:var(--blue); transition:transform .25s; line-height:1; }
+  .faq details[open] summary::after{ transform:rotate(45deg); }
+  .faq p{ margin:0; padding:0 22px 20px; color:var(--muted); font-size:15.5px; }
+  .faq a{ color:var(--ink); border-bottom:1px solid var(--line-2); }
+
   /* cta */
   .cta .box{ position:relative; overflow:hidden; text-align:center; padding:84px 28px; border-radius:28px; border:1px solid var(--line-2);
              background:radial-gradient(ellipse 80% 120% at 50% 0%,rgba(47,111,228,.42),transparent 60%),radial-gradient(ellipse 60% 90% at 85% 100%,rgba(34,184,102,.24),transparent 60%),var(--panel); }
@@ -213,6 +266,8 @@
     .card,.card.wide,.card.half{ grid-column:span 6; }
     .engine .cols{ grid-template-columns:1fr; gap:44px; }
     .stats{ grid-template-columns:repeat(2,1fr); }
+    .steps,.plats,.free .cols{ grid-template-columns:1fr; }
+    .coffee{ flex-direction:column; align-items:flex-start; gap:18px; } .coffee .btn{ margin-left:0; width:100%; justify-content:center; }
     section{ padding:88px 0; }
     nav .link{ display:none; }
     .hero{ padding-top:124px; }
@@ -238,7 +293,9 @@
   <span class="spacer"></span>
   <a class="link" href="#features">Features</a>
   <a class="link" href="#engine">How it works</a>
-  <a class="link" href="#download">Download</a>
+  <a class="link" href="#downloads">Download</a>
+  <a class="link" href="#faq">FAQ</a>
+  <a class="link" href="#free">&#9749; Support</a>
   <a class="pill" href="https://github.com/oegea/FreeSCP">
     <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .5a11.5 11.5 0 0 0-3.64 22.41c.58.1.79-.25.79-.56v-2c-3.2.7-3.88-1.36-3.88-1.36-.52-1.33-1.28-1.69-1.28-1.69-1.05-.71.08-.7.08-.7 1.16.08 1.77 1.19 1.77 1.19 1.03 1.76 2.7 1.25 3.36.96.1-.75.4-1.25.73-1.54-2.55-.29-5.24-1.28-5.24-5.68 0-1.26.45-2.28 1.19-3.09-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.17 1.18a11 11 0 0 1 5.78 0c2.2-1.49 3.17-1.18 3.17-1.18.63 1.59.23 2.76.11 3.05.74.81 1.19 1.83 1.19 3.09 0 4.41-2.69 5.38-5.25 5.67.41.36.78 1.06.78 2.14v3.17c0 .31.21.67.8.56A11.5 11.5 0 0 0 12 .5Z"/></svg>
     GitHub
@@ -251,29 +308,28 @@
   <div class="gridfx" aria-hidden="true"></div>
   <canvas id="streams" aria-hidden="true"></canvas>
   <div class="wrap">
-    <a class="badge reveal" href="https://github.com/oegea/FreeSCP/releases/latest"><b>New</b> Now on Linux — x86-64 AppImage &nbsp;→</a>
+    <a class="badge reveal" href="https://github.com/oegea/FreeSCP/releases/latest"><b>v0.2</b> Intel Macs &amp; ARM Linux · WinSCP 6.7 engine &nbsp;→</a>
     <h1 class="reveal" style="--d:.08s">WinSCP. <span class="grad">Natively</span> on Mac &amp; Linux.</h1>
     <p class="sub reveal" style="--d:.16s">The dual-pane file manager people have loved on Windows for 20 years —
       <b>SFTP, FTP, SCP, WebDAV and S3</b> — now running natively on macOS and Linux. Free and open source.</p>
 
     <div class="btns reveal" id="download" style="--d:.24s">
-      <a class="btn primary" id="dl-mac" href="https://github.com/oegea/FreeSCP/releases/latest/download/FreeSCP-macOS-arm64.zip">
+      <a class="btn primary" id="dl-mac" href="https://github.com/oegea/FreeSCP/releases/latest/download/FreeSCP-macOS-universal.zip">
         <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M17.05 12.54c-.03-2.74 2.24-4.06 2.34-4.12-1.28-1.86-3.26-2.12-3.96-2.15-1.69-.17-3.29.99-4.15.99-.85 0-2.17-.97-3.57-.94-1.84.03-3.53 1.07-4.48 2.71-1.91 3.31-.49 8.21 1.37 10.9.91 1.31 2 2.79 3.42 2.74 1.37-.06 1.89-.89 3.55-.89s2.12.89 3.57.86c1.48-.03 2.41-1.34 3.31-2.66 1.04-1.52 1.47-3 1.5-3.07-.03-.02-2.87-1.1-2.9-4.37ZM14.32 4.5c.76-.92 1.27-2.19 1.13-3.46-1.09.04-2.41.73-3.19 1.64-.7.81-1.31 2.11-1.15 3.35 1.22.1 2.46-.62 3.21-1.53Z"/></svg>
-        <span>Download for macOS<small>Apple Silicon · signed &amp; notarized</small></span></a>
+        <span>Download for macOS<small>Apple Silicon &amp; Intel · signed &amp; notarized</small></span></a>
       <details class="dd">
         <summary class="btn" id="dl-linux">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2.5"/><path d="m7.5 9.5 3 2.5-3 2.5M13 15h3.5"/></svg>
-          <span>Download for Linux<small>choose architecture</small></span>
+          <span>Download for Linux<small>x86-64 or ARM64 · AppImage</small></span>
           <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
         </summary>
         <div class="dd-menu">
-          <a href="https://github.com/oegea/FreeSCP/releases/latest/download/FreeSCP-Linux-x86_64.AppImage">
-            x86-64 (Intel/AMD)<small>AppImage · chmod +x &amp; run</small></a>
-          <span class="disabled">ARM (aarch64)<small>coming soon</small></span>
+          <a href="https://github.com/oegea/FreeSCP/releases/latest/download/FreeSCP-Linux-x86_64.AppImage">x86-64 (Intel/AMD)<small>AppImage · chmod +x &amp; run</small></a>
+          <a href="https://github.com/oegea/FreeSCP/releases/latest/download/FreeSCP-Linux-aarch64.AppImage">ARM64 (aarch64)<small>AppImage · chmod +x &amp; run</small></a>
         </div>
       </details>
     </div>
-    <p class="hint reveal" id="hint" style="--d:.3s">Free forever · GPLv3 · no account, no telemetry</p>
+    <p class="hint reveal" id="hint" style="--d:.3s">100% free · open source · no account, no telemetry · <a href="#downloads">all downloads</a></p>
   </div>
 
   <div class="stage reveal" style="--d:.36s">
@@ -346,6 +402,19 @@
   </div>
 </div></section>
 
+<section id="start"><div class="wrap">
+  <div class="center">
+    <div class="eyebrow reveal">Get started</div>
+    <h2 class="reveal" style="--d:.06s">Connected in three steps.</h2>
+    <p class="lead reveal" style="--d:.12s">No installer, no account, nothing to configure first.</p>
+  </div>
+  <div class="steps">
+    <div class="step reveal"><h3>Download</h3><p>Grab the build for your computer. On macOS unzip it and drag <b>FreeSCP</b> to Applications; on Linux make the AppImage executable with <code>chmod +x</code>.</p></div>
+    <div class="step reveal" style="--d:.08s"><h3>Log in</h3><p>Pick the protocol &mdash; SFTP, SCP, FTP, WebDAV or S3 &mdash; and enter host, user and password, or choose your SSH key. Your OpenSSH keys work as they are.</p></div>
+    <div class="step reveal" style="--d:.16s"><h3>Transfer</h3><p>Your files on the left, the server on the right. Drag between panels or press <code>F5</code> to copy. Edit remote files in place; they upload when you save.</p></div>
+  </div>
+</div></section>
+
 <section class="engine" id="engine"><div class="wrap">
   <div class="cols">
     <div>
@@ -375,21 +444,90 @@
   </div>
 </div></section>
 
+<section id="downloads"><div class="wrap">
+  <div class="center">
+    <div class="eyebrow reveal">Download</div>
+    <h2 class="reveal" style="--d:.06s">Pick your platform.</h2>
+    <p class="lead reveal" style="--d:.12s">Version 0.2 &mdash; the same app everywhere, built from the same source.</p>
+  </div>
+  <div class="plats">
+    <div class="plat reveal" data-os="mac">
+      <span class="you-tag">Your computer</span>
+      <h3>macOS</h3><p class="arch">Apple Silicon &amp; Intel &mdash; one universal app</p>
+      <ul><li>macOS 12 Monterey or newer</li><li>Signed &amp; notarized by Apple</li><li>Unzip, drag to Applications</li></ul>
+      <a class="btn primary" href="https://github.com/oegea/FreeSCP/releases/latest/download/FreeSCP-macOS-universal.zip"><span>Download .zip</span></a>
+      <div class="file">FreeSCP-macOS-universal.zip</div>
+    </div>
+    <div class="plat reveal" data-os="linux-x64" style="--d:.08s">
+      <span class="you-tag">Your computer</span>
+      <h3>Linux</h3><p class="arch">x86-64 &mdash; Intel / AMD</p>
+      <ul><li>Any distro with glibc 2.35+<br>(Ubuntu 22.04, Debian 12, Fedora 36&hellip;)</li><li>Single file, nothing to install</li><li><code>chmod +x</code>, then run it</li></ul>
+      <a class="btn" href="https://github.com/oegea/FreeSCP/releases/latest/download/FreeSCP-Linux-x86_64.AppImage"><span>Download AppImage</span></a>
+      <div class="file">FreeSCP-Linux-x86_64.AppImage</div>
+    </div>
+    <div class="plat reveal" data-os="linux-arm" style="--d:.16s">
+      <span class="you-tag">Your computer</span>
+      <h3>Linux</h3><p class="arch">ARM64 &mdash; aarch64</p>
+      <ul><li>ARM laptops, servers, Raspberry Pi 4/5 (64-bit OS)</li><li>Same glibc 2.35+ requirement</li><li><code>chmod +x</code>, then run it</li></ul>
+      <a class="btn" href="https://github.com/oegea/FreeSCP/releases/latest/download/FreeSCP-Linux-aarch64.AppImage"><span>Download AppImage</span></a>
+      <div class="file">FreeSCP-Linux-aarch64.AppImage</div>
+    </div>
+  </div>
+  <p class="dl-note reveal">On Windows? Use the original <a href="https://winscp.net/" rel="noopener">WinSCP</a>. &nbsp;·&nbsp;
+    <a href="https://github.com/oegea/FreeSCP/releases">All releases &amp; changelog</a> &nbsp;·&nbsp;
+    <a href="https://github.com/oegea/FreeSCP#build-macos-apple-silicon">Build from source</a></p>
+</div></section>
+
+<section class="free engine" id="free"><div class="wrap">
+  <div class="center">
+    <div class="eyebrow reveal">The deal</div>
+    <h2 class="reveal" style="--d:.06s">Free. Open. <span class="grad">Private.</span></h2>
+    <p class="lead reveal" style="--d:.12s">No catch and no asterisk &mdash; this is the whole business model.</p>
+  </div>
+  <div class="cols">
+    <div class="pillar reveal"><b>100% free</b><p>Every feature, for everyone, forever. No paid tier, no trial, no ads, no account.</p></div>
+    <div class="pillar reveal" style="--d:.08s"><b>Open source</b><p>GPLv3. Read it, build it, change it &mdash; the code is on <a href="https://github.com/oegea/FreeSCP">GitHub</a>.</p></div>
+    <div class="pillar reveal" style="--d:.16s"><b>No telemetry</b><p>FreeSCP never phones home: no tracking, no usage data, no update pings. It only talks to the servers you connect to.</p></div>
+  </div>
+  <div class="coffee reveal">
+    <div class="cup" aria-hidden="true">&#9749;</div>
+    <div><b>Like it? Buy me a coffee.</b>
+      <p>FreeSCP is built in spare time. If it saves you time and you want to help its development, a coffee on Ko-fi goes a long way. Entirely optional &mdash; the app is the same either way.</p></div>
+    <a class="btn" href="https://ko-fi.com/oriolegea" rel="noopener"><span>Support on Ko-fi</span></a>
+  </div>
+</div></section>
+
+<section id="faq"><div class="wrap">
+  <div class="center">
+    <div class="eyebrow reveal">FAQ</div>
+    <h2 class="reveal" style="--d:.06s">Good questions.</h2>
+  </div>
+  <div class="faq reveal">
+    <details><summary>Is this the real WinSCP?</summary><p>It runs WinSCP's real protocol engine &mdash; the same open-source code, recompiled for macOS and Linux &mdash; behind an interface rebuilt in Qt. It is an independent community port, not made or endorsed by the WinSCP team. On Windows, use the original <a href="https://winscp.net/" rel="noopener">WinSCP</a>.</p></details>
+    <details><summary>Is it really free? What's the catch?</summary><p>There isn't one. It is GPLv3 open-source software with no paid version, no ads and no account. If you want to support the work you can <a href="https://ko-fi.com/oriolegea" rel="noopener">buy me a coffee</a>, but nothing is locked behind it.</p></details>
+    <details><summary>Does it collect any data?</summary><p>No. FreeSCP has no telemetry, analytics or crash reporting and does not check for updates on its own. The only network connections it makes are to the servers you tell it to connect to. Settings and cached host keys stay on your computer.</p></details>
+    <details><summary>Which Macs are supported?</summary><p>Any Mac running macOS 12 Monterey or newer, Apple Silicon or Intel &mdash; it is a single universal app. It is signed with a Developer ID and notarized by Apple, so it opens without security warnings.</p></details>
+    <details><summary>The AppImage does not start on my Linux.</summary><p>Make it executable first (<code>chmod +x FreeSCP-Linux-*.AppImage</code>). AppImages need FUSE 2; if your distro does not ship it, install <code>libfuse2</code> or run it with <code>--appimage-extract-and-run</code>. It needs glibc 2.35 or newer and an X11 or XWayland session.</p></details>
+    <details><summary>Which features of WinSCP are there?</summary><p>The Commander: dual panels, session tabs, directory tree, SFTP / SCP / FTP(S) / WebDAV / S3, public-key authentication, the transfer queue with parallel connections, remote editing, synchronized browsing, bookmarks, drag &amp; drop. Scripting, the Explorer-style interface and some advanced site settings are not there yet &mdash; see the <a href="https://github.com/oegea/FreeSCP/blob/main/docs/porting/ROADMAP.md">roadmap</a>.</p></details>
+    <details><summary>I found a bug or miss a feature.</summary><p>Please <a href="https://github.com/oegea/FreeSCP/issues">open an issue on GitHub</a> &mdash; with the protocol and server type if it is a connection problem. Pull requests are welcome too.</p></details>
+  </div>
+</div></section>
+
 <section class="cta"><div class="wrap">
   <div class="box reveal">
     <img src="icon.png" alt="">
     <h2>Ready when you are.</h2>
     <p class="lead" style="margin-inline:auto">Download FreeSCP and connect to your first server in under a minute.</p>
     <div class="btns">
-      <a class="btn primary" href="https://github.com/oegea/FreeSCP/releases/latest/download/FreeSCP-macOS-arm64.zip">
+      <a class="btn primary" href="#downloads">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11m0 0-4.5-4.5M12 15l4.5-4.5M5 20h14"/></svg>
-        <span>macOS<small>Apple Silicon · .zip</small></span></a>
-      <a class="btn" href="https://github.com/oegea/FreeSCP/releases/latest/download/FreeSCP-Linux-x86_64.AppImage">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11m0 0-4.5-4.5M12 15l4.5-4.5M5 20h14"/></svg>
-        <span>Linux<small>x86-64 · AppImage</small></span></a>
+        <span>Download<small>macOS · Linux x86-64 · Linux ARM64</small></span></a>
       <a class="btn" href="https://github.com/oegea/FreeSCP">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m8 8-4 4 4 4m8-8 4 4-4 4M13.5 5l-3 14"/></svg>
-        <span>Source code<small>Build it yourself</small></span></a>
+        <span>Source code<small>GPLv3 on GitHub</small></span></a>
+      <a class="btn" href="https://ko-fi.com/oriolegea" rel="noopener">
+        <span style="font-size:22px;line-height:1" aria-hidden="true">&#9749;</span>
+        <span>Buy me a coffee<small>Support development</small></span></a>
     </div>
   </div>
 </div></section>
@@ -402,6 +540,7 @@
     <a href="https://github.com/oegea/FreeSCP">GitHub</a>
     <a href="https://github.com/oegea/FreeSCP/releases">Releases</a>
     <a href="https://github.com/oegea/FreeSCP/issues">Report a bug</a>
+    <a href="https://ko-fi.com/oriolegea" rel="noopener">&#9749; Ko-fi</a>
   </div></div>
   <p class="disclaimer">
     FreeSCP is an independent, community-made port and is <b>not affiliated with, sponsored by, endorsed
@@ -425,7 +564,24 @@
   var ua = navigator.userAgent, plat = (navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || "";
   var isWin = /Win/i.test(plat) || /Windows/i.test(ua);
   var isLinux = !/Android/i.test(ua) && (/Linux/i.test(plat) || /Linux|X11/i.test(ua));
-  if (isLinux) { $("#dl-mac").classList.remove("primary"); $("#dl-linux").classList.add("primary"); }
+  var isMac = !isLinux && /Mac/i.test(plat) && !/iPhone|iPad/i.test(ua);
+  var isArm = /aarch64|arm64|armv8/i.test(ua + " " + plat);
+  function markYou(os){ var el = document.querySelector('.plat[data-os="' + os + '"]'); if (el) el.classList.add("you"); }
+  function linuxPrimary(arm){
+    $("#dl-mac").classList.remove("primary"); $("#dl-linux").classList.add("primary");
+    markYou(arm ? "linux-arm" : "linux-x64");
+  }
+  if (isLinux) {
+    linuxPrimary(isArm);
+    // the user-agent rarely says ARM on Linux; ask the browser when it can tell us
+    if (!isArm && navigator.userAgentData && navigator.userAgentData.getHighEntropyValues) {
+      navigator.userAgentData.getHighEntropyValues(["architecture"]).then(function(v){
+        if (v && v.architecture === "arm") {
+          $$(".plat.you").forEach(function(e){ e.classList.remove("you"); }); markYou("linux-arm");
+        }
+      }).catch(function(){});
+    }
+  } else if (isMac) { markYou("mac"); }
   if (isWin) $("#hint").innerHTML = 'On Windows? You want the original: <a href="https://winscp.net/" rel="noopener">WinSCP</a>.';
 
   // close the Linux dropdown on outside click / Escape
