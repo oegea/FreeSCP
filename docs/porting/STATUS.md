@@ -910,3 +910,25 @@ GUI offscreen: connect, 3-item queued download over parallel connections, exit c
   Windows width.
 - Release artifacts (v0.1.1) predate all of the above; a new signed build has not been cut.
 
+## Release pipeline for v0.2.0 (2026-11-13)
+
+Four targets, three files (see the README download table):
+
+| Asset | Built by | Tested by |
+|---|---|---|
+| `FreeSCP-macOS-universal.zip` (arm64 + x86_64, macOS 12+) | `.github/workflows/macos.yml` → `native/scripts/build-macos-universal.sh` (official Qt via aqtinstall, static OpenSSL from source); signed + notarized locally with `native/scripts/release-macos.sh <version> <FreeSCP.app>` | CI: ctest natively and under Rosetta, launch of the staged bundle on both architectures. Locally: `native/scripts/e2e-ssh.sh` on the signed app, natively and with `E2E_RUN="arch -x86_64"` |
+| `FreeSCP-Linux-x86_64.AppImage`, `FreeSCP-Linux-aarch64.AppImage` (glibc 2.35+) | `.github/workflows/linux.yml` on `ubuntu-22.04` / `ubuntu-22.04-arm` → `build-linux.sh` + `package-linux.sh`; attached to the release on `v*` tags | CI: ctest, `e2e-ssh.sh` against a local sshd (SFTP + SCP round trips, tree, failure paths, offscreen GUI), then the AppImage itself under xvfb (connect + queued download) |
+
+Why not Homebrew for the macOS release: its Qt/OpenSSL are single-architecture and built for the
+build machine's macOS version — the v0.2 development build linked that way required macOS 26.
+`build-macos.sh` (Homebrew) remains the quick developer build.
+
+Release procedure: bump `FREESCP_VERSION` (native/ui-qt/CMakeLists.txt) → push → take the
+`FreeSCP-macOS-unsigned` artifact of the macOS workflow → `release-macos.sh` → run `e2e-ssh.sh` on the
+result → `gh release create vX.Y.Z --draft` with the two macOS zips → push the tag (the Linux workflow
+attaches both AppImages) → publish the release → update the version strings on the website (`gh-pages`).
+
+The app now shows a first-launch dialog (and Help → Support FreeSCP): free, GPLv3, no telemetry,
+optional Ko-fi link. "No telemetry" is literal: the GUI contains no network code of its own
+(`grep QNetwork native/ui-qt` is empty) and the engine's usage counters are never sent anywhere.
+
