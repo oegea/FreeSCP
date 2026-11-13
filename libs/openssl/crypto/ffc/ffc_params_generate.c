@@ -1,5 +1,5 @@
 /*
- * Copyright 2019-2023 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 2019-2026 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -77,6 +77,13 @@ static int ffc_validate_LN(size_t L, size_t N, int type, int verify)
         ERR_raise(ERR_LIB_DH, DH_R_BAD_FFC_PARAMETERS);
 #endif
     } else if (type == FFC_PARAM_TYPE_DSA) {
+        if (N > 512) {
+#ifndef OPENSSL_NO_DSA
+            ERR_raise_data(ERR_LIB_DSA, DSA_R_BAD_FFC_PARAMETERS,
+                "N is %zu, but the maximum supported N is 512", N);
+#endif
+            return 0;
+        }
         if (L >= 3072 && N >= 256)
             return 128;
         if (L >= 2048 && N >= 224)
@@ -321,6 +328,9 @@ static int generate_q_fips186_4(BN_CTX *ctx, BIGNUM *q, const EVP_MD *evpmd,
     int mdsize = EVP_MD_get_size(evpmd);
     unsigned char *pmd;
     OSSL_LIB_CTX *libctx = ossl_bn_get_libctx(ctx);
+
+    if (mdsize <= 0)
+        goto err;
 
     /* find q */
     for (;;) {
@@ -814,6 +824,7 @@ int ossl_ffc_params_FIPS186_2_gen_verify(OSSL_LIB_CTX *libctx,
     BIGNUM *r0, *test, *tmp, *g = NULL, *q = NULL, *p = NULL;
     BN_MONT_CTX *mont = NULL;
     EVP_MD *md = NULL;
+    int md_size;
     size_t qsize;
     int n = 0, m = 0;
     int counter = 0, pcounter = 0, use_random_seed;
@@ -842,8 +853,11 @@ int ossl_ffc_params_FIPS186_2_gen_verify(OSSL_LIB_CTX *libctx,
     }
     if (md == NULL)
         goto err;
+    md_size = EVP_MD_get_size(md);
+    if (md_size <= 0)
+        goto err;
     if (N == 0)
-        N = EVP_MD_get_size(md) * 8;
+        N = md_size * 8;
     qsize = N >> 3;
 
     /*

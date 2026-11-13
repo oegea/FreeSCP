@@ -1,5 +1,5 @@
 /*
- * Copyright 2015-2024 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 2015-2026 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -14,6 +14,7 @@
 #include "internal/refcount.h"
 #include <openssl/asn1.h>
 #include <openssl/x509.h>
+#include <openssl/x509v3.h>
 #include <openssl/conf.h>
 #include "crypto/types.h"
 
@@ -292,6 +293,7 @@ struct pkcs8_priv_key_info_st {
     X509_ALGOR *pkeyalg;
     ASN1_OCTET_STRING *pkey;
     STACK_OF(X509_ATTRIBUTE) *attributes;
+    ASN1_OCTET_STRING *kpub;
 };
 
 struct X509_sig_st {
@@ -303,10 +305,8 @@ struct x509_object_st {
     /* one of the above types */
     X509_LOOKUP_TYPE type;
     union {
-        char *ptr;
         X509 *x509;
         X509_CRL *crl;
-        EVP_PKEY *pkey;
     } data;
 };
 
@@ -314,6 +314,8 @@ int ossl_a2i_ipadd(unsigned char *ipout, const char *ipasc);
 int ossl_x509_set1_time(int *modified, ASN1_TIME **ptm, const ASN1_TIME *tm);
 int ossl_x509_print_ex_brief(BIO *bio, X509 *cert, unsigned long neg_cflags);
 int ossl_x509v3_cache_extensions(X509 *x);
+X509_NAME *ossl_dist_point_name_full(const struct DIST_POINT_NAME_st *dpn,
+    const X509_NAME *iname);
 int ossl_x509_init_sig_info(X509 *x);
 
 int ossl_x509_set0_libctx(X509 *x, OSSL_LIB_CTX *libctx, const char *propq);
@@ -365,6 +367,7 @@ ECX_KEY *ossl_d2i_X448_PUBKEY(ECX_KEY **a,
     const unsigned char **pp, long length);
 int ossl_i2d_X448_PUBKEY(const ECX_KEY *a, unsigned char **pp);
 #endif /* OPENSSL_NO_EC */
+
 EVP_PKEY *ossl_d2i_PUBKEY_legacy(EVP_PKEY **a, const unsigned char **pp,
     long length);
 int ossl_x509_check_private_key(const EVP_PKEY *k, const EVP_PKEY *pkey);
@@ -373,7 +376,7 @@ int x509v3_add_len_value_uchar(const char *name, const unsigned char *value,
     size_t vallen, STACK_OF(CONF_VALUE) **extlist);
 /* Attribute addition functions not checking for duplicate attributes */
 STACK_OF(X509_ATTRIBUTE) *ossl_x509at_add1_attr(STACK_OF(X509_ATTRIBUTE) **x,
-    X509_ATTRIBUTE *attr);
+    const X509_ATTRIBUTE *attr);
 STACK_OF(X509_ATTRIBUTE) *ossl_x509at_add1_attr_by_OBJ(STACK_OF(X509_ATTRIBUTE) **x,
     const ASN1_OBJECT *obj,
     int type,
@@ -388,4 +391,13 @@ STACK_OF(X509_ATTRIBUTE) *ossl_x509at_add1_attr_by_txt(STACK_OF(X509_ATTRIBUTE) 
     int type,
     const unsigned char *bytes,
     int len);
+
+int ossl_print_attribute_value(BIO *out,
+    int obj_nid,
+    const ASN1_TYPE *av,
+    int indent);
+
+int ossl_serial_number_print(BIO *out, const ASN1_INTEGER *bs, int indent);
+int ossl_bio_print_hex(BIO *out, unsigned char *buf, int len);
+
 #endif /* OSSL_CRYPTO_X509_H */

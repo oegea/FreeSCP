@@ -1,32 +1,24 @@
 //---------------------------------------------------------------------------
-#define NO_WIN32_LEAN_AND_MEAN
-#include <vcl.h>
+#include <CorePCH.h>
 #pragma hdrstop
 
-#include "Common.h"
 #include "Exceptions.h"
-#include "TextsCore.h"
-#include "Interface.h"
-#include <StrUtils.hpp>
-#include <DateUtils.hpp>
-#include <System.IOUtils.hpp>
 #include <math.h>
 #include <shlobj.h>
-#include <limits>
-#include <algorithm>
-#include <memory>
 #include <shlwapi.h>
 #include <tlhelp32.h>
 #include <psapi.h>
-#include <CoreMain.h>
+#include <winioctl.h>
 #include <SessionInfo.h>
 #include <Soap.EncdDecd.hpp>
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wreserved-id-macro"
+#pragma clang diagnostic ignored "-Wold-style-cast"
 #include <openssl/pkcs12.h>
 #include <openssl/pem.h>
 #include <openssl/err.h>
 #include <openssl/ssl.h>
-//---------------------------------------------------------------------------
-#pragma package(smart_init)
+#pragma clang diagnostic pop
 //---------------------------------------------------------------------------
 const wchar_t * DSTModeNames = L"Win;Unix;Keep";
 //---------------------------------------------------------------------------
@@ -35,7 +27,7 @@ const UnicodeString AnyMask = L"*.*";
 const wchar_t EngShortMonthNames[12][4] =
   {L"Jan", L"Feb", L"Mar", L"Apr", L"May", L"Jun",
    L"Jul", L"Aug", L"Sep", L"Oct", L"Nov", L"Dec"};
-const char Bom[4] = "\xEF\xBB\xBF";
+const RawByteString Bom("\xEF\xBB\xBF");
 const UnicodeString XmlDeclaration(TraceInitStr(L"<?xml version=\"1.0\" encoding=\"UTF-8\"?>"));
 const wchar_t TokenPrefix = L'%';
 const wchar_t NoReplacement = wchar_t(false);
@@ -46,6 +38,7 @@ const UnicodeString PasswordMask(TraceInitStr(L"***"));
 const UnicodeString Ellipsis(TraceInitStr(L"..."));
 const UnicodeString TitleSeparator(TraceInitStr(L" \u2013 ")); // En-Dash
 const UnicodeString OfficialPackage(TraceInitStr(L"MartinPikryl.WinSCP_tvv458r3h9r5m"));
+const wchar_t HostKeyDelimiter = L';';
 //---------------------------------------------------------------------------
 UnicodeString ReplaceChar(UnicodeString Str, wchar_t A, wchar_t B)
 {
@@ -125,7 +118,7 @@ UnicodeString AnsiToString(const RawByteString & S)
 //---------------------------------------------------------------------------
 UnicodeString AnsiToString(const char * S, size_t Len)
 {
-  return UnicodeString(AnsiString(S, Len));
+  return UnicodeString(AnsiString(S, SizeToIntChecked(Len)));
 }
 //---------------------------------------------------------------------------
 UnicodeString UTFToString(const RawByteString & S)
@@ -352,27 +345,13 @@ UnicodeString ShellQuoteStr(const UnicodeString & Str)
 UnicodeString ExceptionLogString(Exception *E)
 {
   DebugAssert(E);
-  if (E->InheritsFrom(__classid(Exception)))
+  UnicodeString Msg = FORMAT(L"(%s) %s", (E->ClassName(), E->Message));
+  ExtException * EE = dynamic_cast<ExtException *>(E);
+  if ((EE != nullptr) && (EE->MoreMessages != nullptr))
   {
-    UnicodeString Msg;
-    Msg = FORMAT(L"(%s) %s", (E->ClassName(), E->Message));
-    if (E->InheritsFrom(__classid(ExtException)))
-    {
-      TStrings * MoreMessages = ((ExtException*)E)->MoreMessages;
-      if (MoreMessages)
-      {
-        Msg += L"\n" +
-          ReplaceStr(MoreMessages->Text, L"\r", L"");
-      }
-    }
-    return Msg;
+    Msg += L"\n" + ReplaceStr(EE->MoreMessages->Text, L"\r", L"");
   }
-  else
-  {
-    wchar_t Buffer[1024];
-    ExceptionErrorMessage(ExceptObject(), ExceptAddr(), Buffer, LENOF(Buffer));
-    return UnicodeString(Buffer);
-  }
+  return Msg;
 }
 //---------------------------------------------------------------------------
 UnicodeString __fastcall MainInstructions(const UnicodeString & S)
@@ -489,7 +468,7 @@ UnicodeString RemoveEmptyLines(const UnicodeString & S)
 bool IsNumber(const UnicodeString Str)
 {
   bool Result = (Str.Length() > 0);
-  for (int Index = 1; (Index < Str.Length()) && Result; Index++)
+  for (int Index = 1; (Index <= Str.Length()) && Result; Index++)
   {
     wchar_t C = Str[Index];
     if ((C < L'0') || (C > L'9'))
@@ -502,6 +481,7 @@ bool IsNumber(const UnicodeString Str)
 //---------------------------------------------------------------------------
 UnicodeString EncodeStrToBase64(const RawByteString & Str)
 {
+  // Can use TCustomBase64Encoding instead
   UnicodeString Result = EncodeBase64(Str.c_str(), Str.Length());
   Result = ReplaceStr(Result, sLineBreak, EmptyStr);
   return Result;
@@ -515,7 +495,7 @@ RawByteString DecodeBase64ToStr(const UnicodeString & Str)
   {
     // This might be the same as TEncoding::ASCII->GetString.
     // const_cast: The operator[] const is (badly?) implemented to return by value
-    Result = RawByteString(reinterpret_cast<const char *>(&const_cast<TBytes &>(Bytes)[0]), Bytes.Length);
+    Result = RawByteString(reinterpret_cast<const char *>(&const_cast<TBytes &>(Bytes)[0]), SizeToIntChecked(Bytes.Length));
   }
   return Result;
 }
@@ -685,7 +665,7 @@ UnicodeString __fastcall AddPathQuotes(UnicodeString Path)
 static wchar_t * __fastcall ReplaceChar(
   UnicodeString & FileName, wchar_t * InvalidChar, wchar_t InvalidCharsReplacement)
 {
-  int Index = InvalidChar - FileName.c_str() + 1;
+  int Index = SizeToIntChecked(InvalidChar - FileName.c_str() + 1);
   if (InvalidCharsReplacement == TokenReplacement)
   {
     // currently we do not support unicode chars replacement
@@ -724,7 +704,7 @@ UnicodeString __fastcall ValidLocalFileName(
     wchar_t * InvalidChar = FileName.c_str();
     while ((InvalidChar = wcspbrk(InvalidChar, Chars)) != NULL)
     {
-      int Pos = (InvalidChar - FileName.c_str() + 1);
+      int Pos = SizeToIntChecked(InvalidChar - FileName.c_str() + 1);
       wchar_t Char;
       if (ATokenReplacement &&
           (*InvalidChar == TokenPrefix) &&
@@ -756,6 +736,13 @@ UnicodeString __fastcall ValidLocalFileName(
         P = FileName.Length() + 1;
       }
       FileName.Insert(L"%00", P);
+    }
+  }
+  else
+  {
+    if (wcspbrk(FileName.c_str(), L"\\/") != nullptr)
+    {
+      throw Exception(FMTLOAD(INVALID_FILENAME, (FileName)));
     }
   }
   return FileName;
@@ -1056,7 +1043,7 @@ bool __fastcall IsReservedName(UnicodeString FileName)
       L"CON", L"PRN", L"AUX", L"NUL",
       L"COM1", L"COM2", L"COM3", L"COM4", L"COM5", L"COM6", L"COM7", L"COM8", L"COM9",
       L"LPT1", L"LPT2", L"LPT3", L"LPT4", L"LPT5", L"LPT6", L"LPT7", L"LPT8", L"LPT9" };
-    for (unsigned int Index = 0; Index < LENOF(Reserved); Index++)
+    for (unsigned int Index = 0; Index < std::size(Reserved); Index++)
     {
       if (SameText(FileName, Reserved[Index]))
       {
@@ -1071,6 +1058,7 @@ bool __fastcall IsReservedName(UnicodeString FileName)
 // Inspired by
 // https://stackoverflow.com/q/18580945/850848
 // This can be reimplemented using PathCchCanonicalizeEx on Windows 8 and later
+// There's also TPath.GetPosAfterExtendedPrefix.
 enum PATH_PREFIX_TYPE
 {
   PPT_UNKNOWN,
@@ -1106,10 +1094,10 @@ static int GetOffsetAfterPathRoot(const UnicodeString & Path, PATH_PREFIX_TYPE &
     UnicodeString WinPath = ReplaceChar(Path, L'/', L'\\');
 
      // Now call the API
-    LPCTSTR Buffer = PathSkipRoot(WinPath.c_str());
+    const wchar_t * Buffer = PathSkipRoot(WinPath.c_str());
     if (Buffer != NULL)
     {
-      Result = (Buffer - WinPath.c_str()) + 1;
+      Result = SizeToIntChecked(Buffer - WinPath.c_str()) + 1;
     }
 
     // Now determine the type of prefix
@@ -1156,7 +1144,7 @@ static int GetOffsetAfterPathRoot(const UnicodeString & Path, PATH_PREFIX_TYPE &
       {
         for(; Index <= Len; Index++)
         {
-          TCHAR z = Path[Index];
+          wchar_t z = Path[Index];
           if ((z == L'\\') || (z == L'/') || (Index >= Len))
           {
             Index++;
@@ -1543,6 +1531,7 @@ int __fastcall FindNextChecked(TSearchRecChecked & F)
   return FindCheck(FindNextUnchecked(F), F.Path);
 }
 //---------------------------------------------------------------------------
+// Might be optimized with use of GetFileAttributesEx or replaced with one of TFile methods
 bool __fastcall FileSearchRec(const UnicodeString FileName, TSearchRec & Rec)
 {
   int FindAttrs = faReadOnly | faHidden | faSysFile | faDirectory | faArchive;
@@ -1602,6 +1591,79 @@ void __fastcall ProcessLocalDirectory(UnicodeString DirName,
   }
 }
 //---------------------------------------------------------------------------
+// Similar structure might be a part of WINAPI eventually (VCLCOPY - sic)
+struct REPARSE_DATA_BUFFER
+{
+  ULONG  ReparseTag;
+  USHORT ReparseDataLength;
+  USHORT Reserved;
+  union
+  {
+    struct
+    {
+      USHORT SubstituteNameOffset;
+      USHORT SubstituteNameLength;
+      USHORT PrintNameOffset;
+      USHORT PrintNameLength;
+      ULONG  Flags;
+      WCHAR  PathBuffer[1];
+    } SymbolicLink;
+    struct
+    {
+      USHORT SubstituteNameOffset;
+      USHORT SubstituteNameLength;
+      USHORT PrintNameOffset;
+      USHORT PrintNameLength;
+      WCHAR  PathBuffer[1];
+    } MountPoint;
+  } ReparseBuffer;
+};
+//---------------------------------------------------------------------------
+// Contrary to VCL's FileGetSymLinkTarget, this does not try to open the target folder and does not throw an exception.
+// Also it would call CreateFile without FILE_FLAG_OPEN_REPARSE_POINT, what also tries to access the remote directory,
+// potentially stalling. And with FILE_FLAG_OPEN_REPARSE_POINT, the GetFinalPathNameByHandle does not work.
+bool FileGetSymLinkTargetSafe(const String & FileName, String & Target)
+{
+#ifndef _WIN32
+  // WINSCP-NATIVE-PORT: no reparse points; a POSIX readlink() neither opens the target nor throws.
+  return FileGetSymLinkTarget(FileName, Target);
+#else
+  bool Result = false;
+  HANDLE Handle =
+    CreateFile(
+      FileName.c_str(), 0, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL, OPEN_EXISTING,
+      FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, NULL);
+  if (Handle != INVALID_HANDLE_VALUE)
+  {
+    DWORD bytesReturned = 0;
+    char Buffer[MAXIMUM_REPARSE_DATA_BUFFER_SIZE];
+    auto Reparse = reinterpret_cast<REPARSE_DATA_BUFFER *>(Buffer);
+    if (DeviceIoControl(Handle, FSCTL_GET_REPARSE_POINT, NULL, 0, Reparse, sizeof(Buffer), &bytesReturned, NULL))
+    {
+      BYTE * NamePtr = nullptr;
+      USHORT NameSize = 0;
+      if (Reparse->ReparseTag == IO_REPARSE_TAG_SYMLINK)
+      {
+        NamePtr = reinterpret_cast<BYTE*>(Reparse->ReparseBuffer.SymbolicLink.PathBuffer) + Reparse->ReparseBuffer.SymbolicLink.PrintNameOffset;
+        NameSize = Reparse->ReparseBuffer.SymbolicLink.PrintNameLength;
+      }
+      else if (Reparse->ReparseTag == IO_REPARSE_TAG_MOUNT_POINT)
+      {
+        NamePtr = reinterpret_cast<BYTE*>(Reparse->ReparseBuffer.MountPoint.PathBuffer) + Reparse->ReparseBuffer.MountPoint.PrintNameOffset;
+        NameSize = Reparse->ReparseBuffer.MountPoint.PrintNameLength;
+      }
+      if (NamePtr != nullptr)
+      {
+        Target = String(reinterpret_cast<wchar_t *>(NamePtr), NameSize / sizeof(wchar_t));
+        Result = true;
+      }
+    }
+    CloseHandle(Handle);
+  }
+  return Result;
+#endif
+}
+//---------------------------------------------------------------------------
 int __fastcall FileGetAttrFix(const UnicodeString & FileName)
 {
   // Already called with ApiPath
@@ -1623,6 +1685,11 @@ int __fastcall FileGetAttrFix(const UnicodeString & FileName)
         // On Samba, InternalGetFileNameFromSymLink fails and returns true but empty target.
         // That confuses FileGetAttr, which returns attributes of the parent folder instead.
         // Using FileGetSymLinkTarget solves the problem, as it returns false.
+
+        // Might want to use FileGetSymLinkTargetSafe here for consistency,
+        // but flaws/limitations of VCL FileGetSymLinkTarget probably does not matter here.
+        // The FileGetSymLinkTarget does not return the target when it cannot open it.
+        // But then GetFileAttributes would fail anyway too, so we return -1 is either case.
         if (!FileGetSymLinkTarget(FileName, TargetName))
         {
           // FileGetAttr would return faInvalid (-1), but we want to allow an upload from Samba,
@@ -1635,10 +1702,12 @@ int __fastcall FileGetAttrFix(const UnicodeString & FileName)
       }
       catch (EOSError & E)
       {
+        DebugUsedParam(E);
         Result = -1;
       }
       catch (EDirectoryNotFoundException & E) // throws by FileSystemAttributes
       {
+        DebugUsedParam(E);
         Result = -1;
       }
     }
@@ -1699,9 +1768,7 @@ struct TDateTimeParams
   long BaseDifferenceSec;
   // All Current* are actually global, not per-year and
   // are valid for Year 0 (current) only
-  double CurrentDaylightDifference;
   long CurrentDaylightDifferenceSec;
-  double CurrentDifference;
   long CurrentDifferenceSec;
   double StandardDifference;
   long StandardDifferenceSec;
@@ -1713,8 +1780,6 @@ struct TDateTimeParams
   TDateTime DaylightDate;
   UnicodeString StandardName;
   UnicodeString DaylightName;
-  // This is actually global, not per-year
-  bool DaylightHack;
 
   bool HasDST() const
   {
@@ -1767,7 +1832,7 @@ static const TDateTimeParams * __fastcall GetDateTimeParams(unsigned short Year)
     HINSTANCE Kernel32 = GetModuleHandle(kernel32);
     typedef BOOL WINAPI (* TGetTimeZoneInformationForYear)(USHORT wYear, PDYNAMIC_TIME_ZONE_INFORMATION pdtzi, LPTIME_ZONE_INFORMATION ptzi);
     TGetTimeZoneInformationForYear GetTimeZoneInformationForYear =
-      (TGetTimeZoneInformationForYear)GetProcAddress(Kernel32, "GetTimeZoneInformationForYear");
+      reinterpret_cast<TGetTimeZoneInformationForYear>(GetProcAddress(Kernel32, "GetTimeZoneInformationForYear"));
 
     if ((Year == 0) || (GetTimeZoneInformationForYear == NULL))
     {
@@ -1804,12 +1869,8 @@ static const TDateTimeParams * __fastcall GetDateTimeParams(unsigned short Year)
 
     Result->CurrentDifferenceSec = TZI.Bias +
       Result->CurrentDaylightDifferenceSec;
-    Result->CurrentDifference =
-      double(Result->CurrentDifferenceSec) / MinsPerDay;
     Result->CurrentDifferenceSec *= SecsPerMin;
 
-    Result->CurrentDaylightDifference =
-      double(Result->CurrentDaylightDifferenceSec) / MinsPerDay;
     Result->CurrentDaylightDifferenceSec *= SecsPerMin;
 
     Result->DaylightDifferenceSec = TZI.DaylightBias * SecsPerMin;
@@ -1829,8 +1890,6 @@ static const TDateTimeParams * __fastcall GetDateTimeParams(unsigned short Year)
 
     Result->StandardName = TZI.StandardName;
     Result->DaylightName = TZI.DaylightName;
-
-    Result->DaylightHack = !IsWin7();
   }
 
   return Result;
@@ -1903,11 +1962,6 @@ static bool __fastcall IsDateInDST(const TDateTime & DateTime)
   return Result;
 }
 //---------------------------------------------------------------------------
-bool __fastcall UsesDaylightHack()
-{
-  return GetDateTimeParams(0)->DaylightHack;
-}
-//---------------------------------------------------------------------------
 TDateTime __fastcall UnixToDateTime(__int64 TimeStamp, TDSTMode DSTMode)
 {
   DebugAssert(int(EncodeDateVerbose(1970, 1, 1)) == UnixDateDelta);
@@ -1915,23 +1969,7 @@ TDateTime __fastcall UnixToDateTime(__int64 TimeStamp, TDSTMode DSTMode)
   TDateTime Result = UnixDateDelta + (double(TimeStamp) / SecsPerDay);
 
   const TDateTimeParams * Params = GetDateTimeParams(DecodeYear(Result));
-
-  if (Params->DaylightHack)
-  {
-    if ((DSTMode == dstmWin) || (DSTMode == dstmUnix))
-    {
-      const TDateTimeParams * CurrentParams = GetDateTimeParams(0);
-      Result -= CurrentParams->CurrentDifference;
-    }
-    else if (DSTMode == dstmKeep)
-    {
-      Result -= Params->BaseDifference;
-    }
-  }
-  else
-  {
-    Result -= Params->BaseDifference;
-  }
+  Result -= Params->BaseDifference;
 
   if ((DSTMode == dstmUnix) || (DSTMode == dstmKeep))
   {
@@ -2036,8 +2074,8 @@ bool TryStrToDateTimeStandard(const UnicodeString & S, TDateTime & Value)
   TFormatSettings FormatSettings = TFormatSettings::Create(GetDefaultLCID());
   FormatSettings.DateSeparator = L'-';
   FormatSettings.TimeSeparator = L':';
-  FormatSettings.ShortDateFormat = "yyyy/mm/dd";
-  FormatSettings.ShortTimeFormat = "hh:nn:ss";
+  FormatSettings.ShortDateFormat = L"yyyy/mm/dd";
+  FormatSettings.ShortTimeFormat = L"hh:nn:ss";
 
   return TryStrToDateTime(S, Value, FormatSettings);
 }
@@ -2132,27 +2170,23 @@ FILETIME __fastcall DateTimeToFileTime(const TDateTime DateTime,
   __int64 UnixTimeStamp = ::DateTimeToUnix(DateTime);
 
   const TDateTimeParams * Params = GetDateTimeParams(DecodeYear(DateTime));
-  if (!Params->DaylightHack)
-  {
-    // We should probably use reversed code of FileTimeToDateTime here instead of custom implementation
+  // We should probably use reversed code of FileTimeToDateTime here instead of custom implementation
 
-    // We are incrementing and decrementing BaseDifferenceSec because it
-    // can actually change between years
-    // (as it did in Belarus from GMT+2 to GMT+3 between 2011 and 2012)
+  // We are incrementing and decrementing BaseDifferenceSec because it
+  // can actually change between years
+  // (as it did in Belarus from GMT+2 to GMT+3 between 2011 and 2012)
 
-    UnixTimeStamp += (IsDateInDST(DateTime) ?
-      Params->DaylightDifferenceSec : Params->StandardDifferenceSec) +
-      Params->BaseDifferenceSec;
+  UnixTimeStamp += (IsDateInDST(DateTime) ?
+    Params->DaylightDifferenceSec : Params->StandardDifferenceSec) +
+    Params->BaseDifferenceSec;
 
-    const TDateTimeParams * CurrentParams = GetDateTimeParams(0);
-    UnixTimeStamp -=
-      CurrentParams->CurrentDaylightDifferenceSec +
-      CurrentParams->BaseDifferenceSec;
-
-  }
+  const TDateTimeParams * CurrentParams = GetDateTimeParams(0);
+  UnixTimeStamp -=
+    CurrentParams->CurrentDaylightDifferenceSec +
+    CurrentParams->BaseDifferenceSec;
 
   FILETIME Result;
-  (*(__int64*)&(Result) = (__int64(UnixTimeStamp) + 11644473600LL) * 10000000LL);
+  *reinterpret_cast<__int64*>(&Result) = (__int64(UnixTimeStamp) + 11644473600LL) * 10000000LL;
 
   return Result;
 }
@@ -2171,18 +2205,9 @@ TDateTime __fastcall FileTimeToDateTime(const FILETIME & FileTime)
   else
   {
     SYSTEMTIME SysTime;
-    if (!UsesDaylightHack())
-    {
-      SYSTEMTIME UniverzalSysTime;
-      FileTimeToSystemTime(&FileTime, &UniverzalSysTime);
-      SystemTimeToTzSpecificLocalTime(NULL, &UniverzalSysTime, &SysTime);
-    }
-    else
-    {
-      FILETIME LocalFileTime;
-      FileTimeToLocalFileTime(&FileTime, &LocalFileTime);
-      FileTimeToSystemTime(&LocalFileTime, &SysTime);
-    }
+    SYSTEMTIME UniverzalSysTime;
+    FileTimeToSystemTime(&FileTime, &UniverzalSysTime);
+    SystemTimeToTzSpecificLocalTime(NULL, &UniverzalSysTime, &SysTime);
     Result = SystemTimeToDateTimeVerbose(SysTime);
   }
   return Result;
@@ -2191,41 +2216,18 @@ TDateTime __fastcall FileTimeToDateTime(const FILETIME & FileTime)
 __int64 __fastcall ConvertTimestampToUnix(const FILETIME & FileTime,
   TDSTMode DSTMode)
 {
-  __int64 Result = ((*(const __int64*)&(FileTime)) / 10000000LL - 11644473600LL);
+  __int64 Result = ((*reinterpret_cast<const __int64*>(&FileTime)) / 10000000LL - 11644473600LL);
 
-  if (UsesDaylightHack())
+  if (DSTMode == dstmWin)
   {
-    if ((DSTMode == dstmUnix) || (DSTMode == dstmKeep))
-    {
-      FILETIME LocalFileTime;
-      SYSTEMTIME SystemTime;
-      FileTimeToLocalFileTime(&FileTime, &LocalFileTime);
-      FileTimeToSystemTime(&LocalFileTime, &SystemTime);
-      TDateTime DateTime = SystemTimeToDateTimeVerbose(SystemTime);
-      const TDateTimeParams * Params = GetDateTimeParams(DecodeYear(DateTime));
-      Result += (IsDateInDST(DateTime) ?
-        Params->DaylightDifferenceSec : Params->StandardDifferenceSec);
-
-      if (DSTMode == dstmKeep)
-      {
-        const TDateTimeParams * CurrentParams = GetDateTimeParams(0);
-        Result -= CurrentParams->CurrentDaylightDifferenceSec;
-      }
-    }
-  }
-  else
-  {
-    if (DSTMode == dstmWin)
-    {
-      FILETIME LocalFileTime;
-      SYSTEMTIME SystemTime;
-      FileTimeToLocalFileTime(&FileTime, &LocalFileTime);
-      FileTimeToSystemTime(&LocalFileTime, &SystemTime);
-      TDateTime DateTime = SystemTimeToDateTimeVerbose(SystemTime);
-      const TDateTimeParams * Params = GetDateTimeParams(DecodeYear(DateTime));
-      Result -= (IsDateInDST(DateTime) ?
-        Params->DaylightDifferenceSec : Params->StandardDifferenceSec);
-    }
+    FILETIME LocalFileTime;
+    SYSTEMTIME SystemTime;
+    FileTimeToLocalFileTime(&FileTime, &LocalFileTime);
+    FileTimeToSystemTime(&LocalFileTime, &SystemTime);
+    TDateTime DateTime = SystemTimeToDateTimeVerbose(SystemTime);
+    const TDateTimeParams * Params = GetDateTimeParams(DecodeYear(DateTime));
+    Result -= (IsDateInDST(DateTime) ?
+      Params->DaylightDifferenceSec : Params->StandardDifferenceSec);
   }
 
   return Result;
@@ -2238,12 +2240,6 @@ TDateTime __fastcall ConvertTimestampToUTC(TDateTime DateTime)
   DateTime += DSTDifferenceForTime(DateTime);
   DateTime += Params->BaseDifference;
 
-  if (Params->DaylightHack)
-  {
-    const TDateTimeParams * CurrentParams = GetDateTimeParams(0);
-    DateTime += CurrentParams->CurrentDaylightDifference;
-  }
-
   return DateTime;
 }
 //---------------------------------------------------------------------------
@@ -2253,12 +2249,6 @@ TDateTime __fastcall ConvertTimestampFromUTC(TDateTime DateTime)
   const TDateTimeParams * Params = GetDateTimeParams(DecodeYear(DateTime));
   DateTime -= DSTDifferenceForTime(DateTime);
   DateTime -= Params->BaseDifference;
-
-  if (Params->DaylightHack)
-  {
-    const TDateTimeParams * CurrentParams = GetDateTimeParams(0);
-    DateTime -= CurrentParams->CurrentDaylightDifference;
-  }
 
   return DateTime;
 }
@@ -2296,34 +2286,9 @@ double __fastcall DSTDifferenceForTime(TDateTime DateTime)
 //---------------------------------------------------------------------------
 TDateTime __fastcall AdjustDateTimeFromUnix(TDateTime DateTime, TDSTMode DSTMode)
 {
-  const TDateTimeParams * Params = GetDateTimeParams(DecodeYear(DateTime));
-
-  if (Params->DaylightHack)
+  if (DSTMode == dstmWin)
   {
-    if ((DSTMode == dstmWin) || (DSTMode == dstmUnix))
-    {
-      const TDateTimeParams * CurrentParams = GetDateTimeParams(0);
-      DateTime = DateTime - CurrentParams->CurrentDaylightDifference;
-    }
-
-    if (!IsDateInDST(DateTime))
-    {
-      if (DSTMode == dstmWin)
-      {
-        DateTime = DateTime - Params->DaylightDifference;
-      }
-    }
-    else
-    {
-      DateTime = DateTime - Params->StandardDifference;
-    }
-  }
-  else
-  {
-    if (DSTMode == dstmWin)
-    {
-      DateTime = DateTime + DSTDifferenceForTime(DateTime);
-    }
+    DateTime = DateTime + DSTDifferenceForTime(DateTime);
   }
 
   return DateTime;
@@ -2431,6 +2396,7 @@ bool __fastcall AdjustClockForDSTEnabled()
   // Windows XP deletes the DisableAutoDaylightTimeSet value when it is off
   // (the later versions set it to DynamicDaylightTimeDisabled to 0)
   bool DynamicDaylightTimeDisabled = false;
+  // SYSTEM is shared, so no need for WOW flags
   TRegistry * Registry = new TRegistry(KEY_READ);
   try
   {
@@ -2739,7 +2705,7 @@ TLibModule * __fastcall FindModule(void * Instance)
 
   while (CurModule)
   {
-    if (CurModule->Instance == (unsigned)Instance)
+    if (CurModule->Instance == reinterpret_cast<unsigned>(Instance))
     {
       break;
     }
@@ -2771,7 +2737,7 @@ UnicodeString __fastcall LoadStr(int Ident, unsigned int MaxLength)
 {
   TLibModule * MainModule = FindModule(HInstance);
   DebugAssert(MainModule != NULL);
-  return DoLoadStrFrom((HINSTANCE)MainModule->ResInstance, Ident, MaxLength);
+  return DoLoadStrFrom(reinterpret_cast<HINSTANCE>(MainModule->ResInstance), Ident, MaxLength);
 }
 //---------------------------------------------------------------------------
 UnicodeString __fastcall LoadStrPart(int Ident, int Part)
@@ -3027,6 +2993,9 @@ void AddToShellFileListCommandLine(UnicodeString & List, const UnicodeString & V
 //---------------------------------------------------------------------------
 bool IsWin64()
 {
+  #ifdef _WIN64
+  return true;
+  #else
   static int Result = -1;
   if (Result < 0)
   {
@@ -3042,11 +3011,7 @@ bool IsWin64()
   }
 
   return (Result > 0);
-}
-//---------------------------------------------------------------------------
-bool __fastcall IsWin7()
-{
-  return CheckWin32Version(6, 1);
+  #endif
 }
 //---------------------------------------------------------------------------
 bool __fastcall IsWin8()
@@ -3096,7 +3061,7 @@ static void NeedUWPData()
     HINSTANCE Kernel32 = GetModuleHandle(kernel32);
     typedef LONG WINAPI (* GetCurrentPackageFamilyNameProc)(UINT32 * packageFamilyNameLength, PWSTR packageFamilyName);
     GetCurrentPackageFamilyNameProc GetCurrentPackageFamilyName =
-      (GetCurrentPackageFamilyNameProc)GetProcAddress(Kernel32, "GetCurrentPackageFamilyName");
+      reinterpret_cast<GetCurrentPackageFamilyNameProc>(GetProcAddress(Kernel32, "GetCurrentPackageFamilyName"));
     UINT32 NameLen = 0;
     if ((GetCurrentPackageFamilyName != NULL) &&
         (GetCurrentPackageFamilyName(&NameLen, NULL) == ERROR_INSUFFICIENT_BUFFER))
@@ -3173,12 +3138,12 @@ UnicodeString __fastcall WindowsProductName()
     HMODULE WinBrandLib = LoadLibrary(L"winbrand.dll");
     if (WinBrandLib != NULL)
     {
-      typedef LPWSTR WINAPI (* TBrandingFormatString)(LPCWSTR);
+      typedef wchar_t * WINAPI (* TBrandingFormatString)(const wchar_t *);
       TBrandingFormatString BrandingFormatString =
         reinterpret_cast<TBrandingFormatString>(GetProcAddress(WinBrandLib, "BrandingFormatString"));
       if (BrandingFormatString != NULL)
       {
-        LPWSTR Brand = BrandingFormatString(L"%WINDOWS_LONG%");
+        wchar_t * Brand = BrandingFormatString(L"%WINDOWS_LONG%");
         if (Brand != NULL)
         {
           Result = Brand;
@@ -3193,7 +3158,7 @@ UnicodeString __fastcall WindowsProductName()
     try
     {
       // JCL GetWindowsProductName claims that reading 64-bit key gets correct values, but on Windows 11, neither works
-      unsigned int Access = KEY_READ | FLAGMASK(IsWin64(), KEY_WOW64_64KEY);
+      unsigned int Access = KEY_READ | KEY_WOW64_64KEY;
       std::unique_ptr<TRegistry> Registry(new TRegistry(Access));
       Registry->RootKey = HKEY_LOCAL_MACHINE;
       if (Registry->OpenKey(L"SOFTWARE", false) &&
@@ -3222,6 +3187,21 @@ UnicodeString __fastcall WindowsVersionLong()
   UnicodeString Result = WindowsVersion();
   AddToList(Result, Win32CSDVersion(), L" ");
   return Result;
+}
+//---------------------------------------------------------------------------
+UnicodeString GetPlatformName(bool IsWin64)
+{
+  return IsWin64 ? L"64-bit" : L"32-bit";
+}
+//---------------------------------------------------------------------------
+UnicodeString GetPlatformName()
+{
+  #ifdef _WIN64
+  const bool IsWin64 = true;
+  #else
+  const bool IsWin64 = false;
+  #endif
+  return GetPlatformName(IsWin64);
 }
 //---------------------------------------------------------------------------
 bool __fastcall IsDirectoryWriteable(const UnicodeString & Path)
@@ -3441,7 +3421,7 @@ UnicodeString __fastcall FormatVersion(int MajorVersion, int MinorVersion, int R
 //---------------------------------------------------------------------------
 TFormatSettings __fastcall GetEngFormatSettings()
 {
-  return TFormatSettings::Create((TLocaleID)1033);
+  return TFormatSettings::Create(static_cast<TLocaleID>(1033));
 }
 //---------------------------------------------------------------------------
 int __fastcall ParseShortEngMonthName(const UnicodeString & MonthStr)
@@ -3532,7 +3512,7 @@ static int PemPasswordCallback(char * Buf, int Size, int /*RWFlag*/, void * User
   strncpy(Buf, UtfPassphrase.c_str(), Size);
   Shred(UtfPassphrase);
   Buf[Size - 1] = '\0';
-  return strlen(Buf);
+  return SizeToIntChecked(strlen(Buf));
 }
 //---------------------------------------------------------------------------
 static bool __fastcall IsTlsPassphraseError(unsigned long Error, bool HasPassphrase)
@@ -4298,7 +4278,7 @@ void __fastcall LoadScriptFromFile(UnicodeString FileName, TStrings * Lines, boo
   int Offset = 0;
   do
   {
-    Read = Stream->Read(Buffer, Offset, Buffer.Length - Offset);
+    Read = Stream->Read(Buffer, Offset, SizeToIntChecked(Buffer.Length - Offset));
     Offset += Read;
     if (Offset > Buffer.Length / 2)
     {
@@ -4313,7 +4293,7 @@ void __fastcall LoadScriptFromFile(UnicodeString FileName, TStrings * Lines, boo
   UnicodeString S;
   try
   {
-    S = Encoding->GetString(Buffer, PreambleSize, Buffer.Length - PreambleSize);
+    S = Encoding->GetString(Buffer, PreambleSize, SizeToIntChecked(Buffer.Length - PreambleSize));
   }
   catch (EEncodingError & E)
   {
@@ -4400,7 +4380,7 @@ DWORD __fastcall GetParentProcessId(HANDLE Snapshot, DWORD ProcessId)
   DWORD Result = 0;
 
   PROCESSENTRY32 ProcessEntry;
-  memset(&ProcessEntry, sizeof(ProcessEntry), 0);
+  memset(&ProcessEntry, 0, sizeof(ProcessEntry));
   ProcessEntry.dwSize = sizeof(PROCESSENTRY32);
 
   if (Process32First(Snapshot, &ProcessEntry))
@@ -4467,7 +4447,7 @@ UnicodeString __fastcall GetAncestorProcessName(int Levels)
         TProcesses::const_iterator I = std::find(Processes.begin(), Processes.end(), ProcessId);
         if (I != Processes.end())
         {
-          int Index = I - Processes.begin();
+          int Index = SizeToIntChecked(I - Processes.begin());
           AddToList(Result, FORMAT(L"cycle-%d", (Index)), Sep);
           ProcessId = 0;
         }
@@ -4529,6 +4509,43 @@ UnicodeString GetAncestorProcessNames()
     AncestorProcessNames = GetAncestorProcessName(-1);
   }
   return AncestorProcessNames;
+}
+//---------------------------------------------------------------------------
+void LogModules()
+{
+  if (ApplicationLog->Logging)
+  {
+    const int Max = 1024;
+    HMODULE Modules[Max];
+    HANDLE Process = GetCurrentProcess();
+    DWORD Needed;
+    if (!EnumProcessModules(Process, Modules, sizeof(Modules), &Needed))
+    {
+      AppLog(L"Failed to enumerate modules");
+    }
+    else
+    {
+      int NeededCount = Needed / sizeof(HMODULE);
+      int Count = NeededCount;
+      if (Count > Max)
+      {
+        AppLog(L"Too many modules");
+        Count = Max;
+      }
+      for (int Index = 0; Index < Count; ++Index)
+      {
+        wchar_t ModuleFileName[MAX_PATH];
+        if (!GetModuleFileNameEx(Process, Modules[Index], ModuleFileName, MAX_PATH))
+        {
+          AppLog(L"Failed to retrieve module path");
+        }
+        else
+        {
+          AppLogFmt(L"Module: %s", (ModuleFileName));
+        }
+      }
+    }
+  }
 }
 //---------------------------------------------------------------------------
 NORETURN void NotImplemented()
@@ -4625,5 +4642,20 @@ TStrings * ProcessFeatures(TStrings * Features, const UnicodeString & AFeaturesO
     Result->AddStrings(AddFeatures.get());
   }
   return Result.release();
+}
+//---------------------------------------------------------------------------
+static TDateTime LastStartupStartupSequence(Now());
+UnicodeString StartupSequence;
+//---------------------------------------------------------------------------
+int TensOfSecondBetween(TDateTime ANow, TDateTime AThen)
+{
+  return static_cast<int>(MilliSecondsBetween(ANow, AThen) / 100);
+}
+//---------------------------------------------------------------------------
+void AddStartupSequence(const UnicodeString & Tag)
+{
+  int SequenceTensOfSecond = TensOfSecondBetween(Now(), LastStartupStartupSequence);
+  LastStartupStartupSequence = Now();
+  AddToList(StartupSequence, FORMAT(L"%s:%d", (Tag, SequenceTensOfSecond)), L",");
 }
 //---------------------------------------------------------------------

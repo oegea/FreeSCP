@@ -1,5 +1,5 @@
 /*
- * Copyright 1999-2023 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 1999-2026 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -42,6 +42,7 @@ static int check_purpose_ocsp_helper(const X509_PURPOSE *xp, const X509 *x,
 static int xp_cmp(const X509_PURPOSE *const *a, const X509_PURPOSE *const *b);
 static void xptable_free(X509_PURPOSE *p);
 
+/* note that the id must be unique and for the standard entries == idx + 1 */
 static X509_PURPOSE xstandard[] = {
     { X509_PURPOSE_SSL_CLIENT, X509_TRUST_SSL_CLIENT, 0,
         check_purpose_ssl_client, "SSL client", "sslclient", NULL },
@@ -70,6 +71,7 @@ static X509_PURPOSE xstandard[] = {
 
 #define X509_PURPOSE_COUNT OSSL_NELEM(xstandard)
 
+/* the id must be unique, but there may be gaps and maybe table is not sorted */
 static STACK_OF(X509_PURPOSE) *xptable = NULL;
 
 static int xp_cmp(const X509_PURPOSE *const *a, const X509_PURPOSE *const *b)
@@ -100,9 +102,10 @@ int X509_check_purpose(X509 *x, int id, int non_leaf)
     return pt->check_purpose(pt, x, non_leaf);
 }
 
+/* resets to default (any) purpose if purpose == X509_PURPOSE_DEFAULT_ANY (0) */
 int X509_PURPOSE_set(int *p, int purpose)
 {
-    if (X509_PURPOSE_get_by_id(purpose) == -1) {
+    if (purpose != X509_PURPOSE_DEFAULT_ANY && X509_PURPOSE_get_by_id(purpose) == -1) {
         ERR_raise(ERR_LIB_X509V3, X509V3_R_INVALID_PURPOSE);
         return 0;
     }
@@ -115,6 +118,16 @@ int X509_PURPOSE_get_count(void)
     if (!xptable)
         return X509_PURPOSE_COUNT;
     return sk_X509_PURPOSE_num(xptable) + X509_PURPOSE_COUNT;
+}
+
+/* find smallest identifier not yet taken - note there might be gaps */
+int X509_PURPOSE_get_unused_id(ossl_unused OSSL_LIB_CTX *libctx)
+{
+    int id = X509_PURPOSE_MAX + 1;
+
+    while (X509_PURPOSE_get_by_id(id) != -1)
+        id++;
+    return id; /* is guaranteed to be unique and > X509_PURPOSE_MAX and != 0 */
 }
 
 X509_PURPOSE *X509_PURPOSE_get0(int idx)
@@ -156,26 +169,49 @@ int X509_PURPOSE_get_by_id(int purpose)
     return idx + X509_PURPOSE_COUNT;
 }
 
+/*
+ * Add purpose entry identified by |sname|. |id| must be >= X509_PURPOSE_MIN.
+ * May also be used to modify existing entry, including changing its id.
+ */
 int X509_PURPOSE_add(int id, int trust, int flags,
     int (*ck)(const X509_PURPOSE *, const X509 *, int),
     const char *name, const char *sname, void *arg)
 {
+    int old_id = 0;
     int idx;
     X509_PURPOSE *ptmp;
+
+    if (id < X509_PURPOSE_MIN) {
+        ERR_raise(ERR_LIB_X509V3, X509V3_R_INVALID_PURPOSE);
+        return 0;
+    }
+    if (trust < X509_TRUST_DEFAULT || name == NULL || sname == NULL || ck == NULL) {
+        ERR_raise(ERR_LIB_X509V3, ERR_R_PASSED_INVALID_ARGUMENT);
+        return 0;
+    }
 
     /* This is set according to what we change: application can't set it */
     flags &= ~X509_PURPOSE_DYNAMIC;
     /* This will always be set for application modified trust entries */
     flags |= X509_PURPOSE_DYNAMIC_NAME;
+
     /* Get existing entry if any */
-    idx = X509_PURPOSE_get_by_id(id);
-    /* Need a new entry */
-    if (idx == -1) {
+    idx = X509_PURPOSE_get_by_sname(sname);
+    if (idx == -1) { /* Need a new entry */
+        if (X509_PURPOSE_get_by_id(id) != -1) {
+            ERR_raise(ERR_LIB_X509V3, X509V3_R_PURPOSE_NOT_UNIQUE);
+            return 0;
+        }
         if ((ptmp = OPENSSL_malloc(sizeof(*ptmp))) == NULL)
             return 0;
         ptmp->flags = X509_PURPOSE_DYNAMIC;
     } else {
         ptmp = X509_PURPOSE_get0(idx);
+        old_id = ptmp->purpose;
+        if (id != old_id && X509_PURPOSE_get_by_id(id) != -1) {
+            ERR_raise(ERR_LIB_X509V3, X509V3_R_PURPOSE_NOT_UNIQUE);
+            return 0;
+        }
     }
 
     /* OPENSSL_free existing name if dynamic */
@@ -209,6 +245,9 @@ int X509_PURPOSE_add(int id, int trust, int flags,
             ERR_raise(ERR_LIB_X509V3, ERR_R_CRYPTO_LIB);
             goto err;
         }
+    } else if (id != old_id) {
+        /* on changing existing entry id, make sure to reset 'sorted' */
+        (void)sk_X509_PURPOSE_set(xptable, idx, ptmp);
     }
     return 1;
 err:
@@ -306,12 +345,17 @@ int X509_supported_extension(X509_EXTENSION *ex)
     return 0;
 }
 
-/* Returns 1 on success, 0 if x is invalid, -1 on (internal) error. */
-static int setup_dp(const X509 *x, DIST_POINT *dp)
+/*
+ * The full name of a nameRelativeToCRLIssuer distribution point is not
+ * computed here.  Doing so for every parsed certificate cost an
+ * X509_NAME_dup() of the issuer name per relative distribution point,
+ * which a certificate with many such entries could turn into hundreds of
+ * megabytes of heap on a plain TLS handshake, while the result is only
+ * needed when a CRL is actually being matched against the certificate.
+ * That name is now built on demand in the CRL checking code instead.
+ */
+static int setup_dp(DIST_POINT *dp)
 {
-    const X509_NAME *iname = NULL;
-    int i;
-
     if (dp->distpoint == NULL && sk_GENERAL_NAME_num(dp->CRLissuer) <= 0) {
         ERR_raise(ERR_LIB_X509, X509_R_INVALID_DISTPOINT);
         return 0;
@@ -325,30 +369,10 @@ static int setup_dp(const X509 *x, DIST_POINT *dp)
     } else {
         dp->dp_reasons = CRLDP_ALL_REASONS;
     }
-    if (dp->distpoint == NULL || dp->distpoint->type != 1)
-        return 1;
-
-    /* Handle name fragment given by nameRelativeToCRLIssuer */
-    /*
-     * Note that the below way of determining iname is not really compliant
-     * with https://tools.ietf.org/html/rfc5280#section-4.2.1.13
-     * According to it, sk_GENERAL_NAME_num(dp->CRLissuer) MUST be <= 1
-     * and any CRLissuer could be of type different to GEN_DIRNAME.
-     */
-    for (i = 0; i < sk_GENERAL_NAME_num(dp->CRLissuer); i++) {
-        GENERAL_NAME *gen = sk_GENERAL_NAME_value(dp->CRLissuer, i);
-
-        if (gen->type == GEN_DIRNAME) {
-            iname = gen->d.directoryName;
-            break;
-        }
-    }
-    if (iname == NULL)
-        iname = X509_get_issuer_name(x);
-    return DIST_POINT_set_dpname(dp->distpoint, iname) ? 1 : -1;
+    return 1;
 }
 
-/* Return 1 on success, 0 if x is invalid, -1 on (internal) error. */
+/* Return 1 on success, 0 on error. */
 static int setup_crldp(X509 *x)
 {
     int i;
@@ -358,10 +382,8 @@ static int setup_crldp(X509 *x)
         return 0;
 
     for (i = 0; i < sk_DIST_POINT_num(x->crldp); i++) {
-        int res = setup_dp(x, sk_DIST_POINT_value(x->crldp, i));
-
-        if (res < 1)
-            return res;
+        if (!setup_dp(sk_DIST_POINT_value(x->crldp, i)))
+            return 0;
     }
     return 1;
 }

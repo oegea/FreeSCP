@@ -1,5 +1,5 @@
 /*
- * Copyright 2020-2025 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 2020-2026 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -15,7 +15,8 @@
 #include <openssl/core_names.h>
 #include <openssl/evp.h>
 #include <openssl/err.h>
-#include <openssl/randerr.h>
+#include <openssl/proverr.h>
+#include "prov/securitycheck.h"
 #include "prov/providercommon.h"
 #include "prov/provider_ctx.h"
 #include "prov/provider_util.h"
@@ -197,8 +198,14 @@ static int test_rng_get_ctx_params(void *vtest, OSSL_PARAM params[])
         return 0;
 
     p = OSSL_PARAM_locate(params, OSSL_RAND_PARAM_GENERATE);
-    if (p != NULL && OSSL_PARAM_set_uint(p, t->generate))
+    if (p != NULL && !OSSL_PARAM_set_uint(p, t->generate))
         return 0;
+
+#ifdef FIPS_MODULE
+    p = OSSL_PARAM_locate(params, OSSL_RAND_PARAM_FIPS_APPROVED_INDICATOR);
+    if (p != NULL && !OSSL_PARAM_set_int(p, 0))
+        return 0;
+#endif /* FIPS_MODULE */
     return 1;
 }
 
@@ -210,7 +217,8 @@ static const OSSL_PARAM *test_rng_gettable_ctx_params(ossl_unused void *vtest,
         OSSL_PARAM_uint(OSSL_RAND_PARAM_STRENGTH, NULL),
         OSSL_PARAM_size_t(OSSL_RAND_PARAM_MAX_REQUEST, NULL),
         OSSL_PARAM_uint(OSSL_RAND_PARAM_GENERATE, NULL),
-        OSSL_PARAM_END
+        OSSL_FIPS_IND_GETTABLE_CTX_PARAM()
+            OSSL_PARAM_END
     };
     return known_gettable_ctx_params;
 }
@@ -222,7 +230,7 @@ static int test_rng_set_ctx_params(void *vtest, const OSSL_PARAM params[])
     void *ptr = NULL;
     size_t size = 0;
 
-    if (params == NULL)
+    if (ossl_param_is_empty(params))
         return 1;
 
     p = OSSL_PARAM_locate_const(params, OSSL_RAND_PARAM_STRENGTH);
@@ -297,7 +305,7 @@ static int test_rng_enable_locking(void *vtest)
     if (t != NULL && t->lock == NULL) {
         t->lock = CRYPTO_THREAD_lock_new();
         if (t->lock == NULL) {
-            ERR_raise(ERR_LIB_PROV, RAND_R_FAILED_TO_CREATE_LOCK);
+            ERR_raise(ERR_LIB_PROV, PROV_R_FAILED_TO_CREATE_LOCK);
             return 0;
         }
     }

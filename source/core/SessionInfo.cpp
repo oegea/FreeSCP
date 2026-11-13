@@ -1,23 +1,14 @@
 //---------------------------------------------------------------------------
-#include <vcl.h>
+#include <CorePCH.h>
 #pragma hdrstop
 
-#include <stdio.h>
 #include <lmcons.h>
 #define SECURITY_WIN32
 #include <sspi.h>
 #include <secext.h>
 
-#include "Common.h"
 #include "SessionInfo.h"
-#include "Exceptions.h"
-#include "TextsCore.h"
-#include "CoreMain.h"
 #include "Script.h"
-#include <System.IOUtils.hpp>
-#include <DateUtils.hpp>
-//---------------------------------------------------------------------------
-#pragma package(smart_init)
 //---------------------------------------------------------------------------
 UnicodeString __fastcall DoXmlEscape(UnicodeString Str, bool NewLine)
 {
@@ -58,7 +49,7 @@ UnicodeString __fastcall DoXmlEscape(UnicodeString Str, bool NewLine)
       case L'\x1D':
       case L'\x1E':
       case L'\x1F':
-        Repl = L"#x" + ByteToHex((unsigned char)Ch) + L";";
+        Repl = L"#x" + ByteToHex(static_cast<unsigned char>(Ch)) + L";";
         break;
 
       case L'\xFFFE':
@@ -364,11 +355,11 @@ public:
 
     if (RecordLocal)
     {
-      SynchronizeChecklistItemFileInfo(Item->GetLocalPath(), Item->IsDirectory, Item->Local);
+      SynchronizeChecklistItemFileInfo(Item->GetLocalPath(), Item->IsDirectory, Item->Info1);
     }
     if (RecordRemote)
     {
-      SynchronizeChecklistItemFileInfo(Item->GetRemotePath(), Item->IsDirectory, Item->Remote);
+      SynchronizeChecklistItemFileInfo(Item->GetRemotePath(), Item->IsDirectory, Item->Info2);
     }
   }
 
@@ -854,9 +845,9 @@ void __fastcall TSessionLog::DoAddToSelf(TLogLineType Type, const UnicodeString 
       }
       int Writing = UtfLine.Length();
       CheckSize(Writing);
-      FCurrentFileSize += fwrite(UtfLine.c_str(), 1, Writing, (FILE *)FFile);
+      FCurrentFileSize += fwrite(UtfLine.c_str(), 1, Writing, static_cast<FILE *>(FFile));
 #ifndef _WIN32
-      fflush((FILE *)FFile);   // flush every line so a stalled/killed session still leaves a usable log
+      fflush(static_cast<FILE *>(FFile));   // flush every line so a stalled/killed session still leaves a usable log
 #endif
     }
   }
@@ -1004,7 +995,7 @@ void __fastcall TSessionLog::CloseLogFile()
 {
   if (FFile != NULL)
   {
-    fclose((FILE *)FFile);
+    fclose(static_cast<FILE *>(FFile));
     FFile = NULL;
   }
   FCurrentLogFileName = L"";
@@ -1146,7 +1137,7 @@ void __fastcall TSessionLog::DoAddStartupInfo(TAddLogEntryEvent AddLogEntry, TCo
   }
 
   wchar_t UserName[UNLEN + 1];
-  unsigned long UserNameSize = LENOF(UserName);
+  unsigned long UserNameSize = std::size(UserName);
   if (DebugAlwaysFalse(!GetUserNameEx(NameSamCompatible, UserName, &UserNameSize)))
   {
     wcscpy(UserName, L"<Failed to retrieve username>");
@@ -1238,13 +1229,13 @@ void __fastcall TSessionLog::DoAddStartupInfo(TSessionData * Data)
     {
       HostName = FORMAT(L"%s [%s]", (HostName, Data->HostNameSource));
     }
-    ADF(L"Host name: %s (%sPort: %d)", (HostName, AddressFamily, Data->PortNumber));
+    ADF(L"Hostname: %s (%sPort: %d)", (HostName, AddressFamily, Data->PortNumber));
     UnicodeString UserName = Data->UserNameExpanded;
     if (!Data->UserNameSource.IsEmpty())
     {
       UserName = FORMAT(L"%s [%s]", (UserName, Data->UserNameSource));
     }
-    ADF(L"User name: %s (Password: %s, Key file: %s, Passphrase: %s)",
+    ADF(L"Username: %s (Password: %s, Key file: %s, Passphrase: %s)",
       (UserName, LogSensitive(Data->Password),
        LogSensitive(Data->ResolvePublicKeyFile()), LogSensitive(Data->Passphrase)));
     if (Data->UsesSsh)
@@ -1252,8 +1243,8 @@ void __fastcall TSessionLog::DoAddStartupInfo(TSessionData * Data)
       ADF(L"Tunnel: %s", (BooleanToEngStr(Data->Tunnel)));
       if (Data->Tunnel)
       {
-        ADF(L"Tunnel: Host name: %s (Port: %d)", (Data->TunnelHostName, Data->TunnelPortNumber));
-        ADF(L"Tunnel: User name: %s (Password: %s, Key file: %s)",
+        ADF(L"Tunnel: Hostname: %s (Port: %d)", (Data->TunnelHostName, Data->TunnelPortNumber));
+        ADF(L"Tunnel: Username: %s (Password: %s, Key file: %s)",
           (Data->TunnelUserName,
            LogSensitive(Data->TunnelPassword),
            LogSensitive(Data->TunnelPublicKeyFile)));
@@ -1325,7 +1316,7 @@ void __fastcall TSessionLog::DoAddStartupInfo(TSessionData * Data)
       UnicodeString Bugs;
       for (int Index = 0; Index < BUG_COUNT; Index++)
       {
-        AddToList(Bugs, EnumName(Data->Bug[(TSshBug)Index], AutoSwitchNames), L",");
+        AddToList(Bugs, EnumName(Data->Bug[static_cast<TSshBug>(Index)], AutoSwitchNames), L",");
       }
       ADF(L"SSH Bugs: %s", (Bugs));
       ADF(L"Simple channel: %s", (BooleanToEngStr(Data->SshSimple)));
@@ -1348,7 +1339,7 @@ void __fastcall TSessionLog::DoAddStartupInfo(TSessionData * Data)
       UnicodeString Bugs;
       for (int Index = 0; Index < SFTP_BUG_COUNT; Index++)
       {
-        AddToList(Bugs, EnumName(Data->SFTPBug[(TSftpBug)Index], AutoSwitchNames), L",");
+        AddToList(Bugs, EnumName(Data->SFTPBug[static_cast<TSftpBug>(Index)], AutoSwitchNames), L",");
       }
       ADF(L"SFTP Bugs: %s", (Bugs));
       ADF(L"SFTP Server: %s", ((Data->SftpServer.IsEmpty()? UnicodeString(L"default") : Data->SftpServer)));
@@ -1411,7 +1402,18 @@ void __fastcall TSessionLog::DoAddStartupInfo(TSessionData * Data)
       FtpsOn = (Data->Ftps != ftpsNone);
       ADF(L"HTTPS: %s [Client certificate: %s]",
         (BooleanToEngStr(FtpsOn), LogSensitive(Data->TlsCertificateFile)));
-      ADF(L"WebDAV: Tolerate non-encoded: %s", (BooleanToEngStr(Data->WebDavLiberalEscaping)));
+      if (Data->WebDavLiberalEscaping)
+      {
+        ADF(L"WebDAV: Tolerate non-encoded: %s", (BooleanToEngStr(Data->WebDavLiberalEscaping)));
+      }
+      if (Data->WebDavCrossDomainRedirects)
+      {
+        ADF(L"WebDAV: Cross-domain redirects: %s", (BooleanToEngStr(Data->WebDavCrossDomainRedirects)));
+      }
+      if (Data->WebDavUnencryptedRedirects)
+      {
+        ADF(L"WebDAV: Unencrypted redirects: %s", (BooleanToEngStr(Data->WebDavUnencryptedRedirects)));
+      }
     }
     if (Data->FSProtocol == fsS3)
     {
@@ -1566,7 +1568,7 @@ void __fastcall TActionLog::Add(const UnicodeString & Line)
       {
         UTF8String UtfLine = UTF8String(Line);
         size_t Written =
-          fwrite(UtfLine.c_str(), 1, UtfLine.Length(), (FILE *)FFile);
+          fwrite(UtfLine.c_str(), 1, UtfLine.Length(), static_cast<FILE *>(FFile));
         if (Written != static_cast<size_t>(UtfLine.Length()))
         {
           throw ECRTExtException(L"");
@@ -1574,7 +1576,7 @@ void __fastcall TActionLog::Add(const UnicodeString & Line)
         #ifdef _DEBUG
         #endif
         Written =
-          fwrite("\n", 1, 1, (FILE *)FFile);
+          fwrite("\n", 1, 1, static_cast<FILE *>(FFile));
         if (Written != 1)
         {
           throw ECRTExtException(L"");
@@ -1688,7 +1690,7 @@ void __fastcall TActionLog::CloseLogFile()
 {
   if (FFile != NULL)
   {
-    fclose((FILE *)FFile);
+    fclose(static_cast<FILE *>(FFile));
     FFile = NULL;
   }
   FCurrentLogFileName = L"";
@@ -1818,7 +1820,7 @@ void TApplicationLog::AddStartupInfo()
 //---------------------------------------------------------------------------
 void __fastcall TApplicationLog::Log(const UnicodeString & S)
 {
-  if (FFile != NULL)
+  if (Logging)
   {
     TDateTime N = Now();
     UnicodeString Timestamp = FormatDateTime(L"yyyy-mm-dd hh:nn:ss.zzz", N);
@@ -1830,7 +1832,10 @@ void __fastcall TApplicationLog::Log(const UnicodeString & S)
 
     {
       TGuard Guard(FCriticalSection.get());
-      fwrite(UtfLine.c_str(), 1, Writting, static_cast<FILE *>(FFile));
+      if (FFile != NULL)
+      {
+        fwrite(UtfLine.c_str(), 1, Writting, static_cast<FILE *>(FFile));
+      }
 
       __int64 SecondsSinceLastMemoryCheck = SecondsBetween(N, FLastMemoryCheck);
       CheckMemory = (SecondsSinceLastMemoryCheck >= 10);

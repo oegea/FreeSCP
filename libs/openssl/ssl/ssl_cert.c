@@ -1,5 +1,5 @@
 /*
- * Copyright 1995-2025 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 1995-2026 The OpenSSL Project Authors. All Rights Reserved.
  * Copyright (c) 2002, Oracle and/or its affiliates. All rights reserved
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
@@ -7,6 +7,8 @@
  * in the file LICENSE in the source distribution or at
  * https://www.openssl.org/source/license.html
  */
+
+#include "internal/e_os.h"
 
 #include <stdio.h>
 #include <sys/types.h>
@@ -24,6 +26,7 @@
 #include "ssl_local.h"
 #include "ssl_cert_table.h"
 #include "internal/thread_once.h"
+#include "internal/ssl_unwrap.h"
 #ifndef OPENSSL_NO_POSIX_IO
 #include <sys/stat.h>
 #ifdef _WIN32
@@ -115,8 +118,9 @@ CERT *ssl_cert_dup(CERT *cert)
     }
 
     if (cert->dh_tmp != NULL) {
+        if (!EVP_PKEY_up_ref(cert->dh_tmp))
+            goto err;
         ret->dh_tmp = cert->dh_tmp;
-        EVP_PKEY_up_ref(ret->dh_tmp);
     }
 
     ret->dh_tmp_cb = cert->dh_tmp_cb;
@@ -127,13 +131,15 @@ CERT *ssl_cert_dup(CERT *cert)
         CERT_PKEY *rpk = ret->pkeys + i;
 
         if (cpk->x509 != NULL) {
+            if (!X509_up_ref(cpk->x509))
+                goto err;
             rpk->x509 = cpk->x509;
-            X509_up_ref(rpk->x509);
         }
 
         if (cpk->privatekey != NULL) {
+            if (!EVP_PKEY_up_ref(cpk->privatekey))
+                goto err;
             rpk->privatekey = cpk->privatekey;
-            EVP_PKEY_up_ref(cpk->privatekey);
         }
 
         if (cpk->chain) {
@@ -197,12 +203,14 @@ CERT *ssl_cert_dup(CERT *cert)
     ret->cert_cb_arg = cert->cert_cb_arg;
 
     if (cert->verify_store) {
-        X509_STORE_up_ref(cert->verify_store);
+        if (!X509_STORE_up_ref(cert->verify_store))
+            goto err;
         ret->verify_store = cert->verify_store;
     }
 
     if (cert->chain_store) {
-        X509_STORE_up_ref(cert->chain_store);
+        if (!X509_STORE_up_ref(cert->chain_store))
+            goto err;
         ret->chain_store = cert->chain_store;
     }
 
@@ -298,7 +306,7 @@ int ssl_cert_set0_chain(SSL_CONNECTION *s, SSL_CTX *ctx, STACK_OF(X509) *chain)
     for (i = 0; i < sk_X509_num(chain); i++) {
         X509 *x = sk_X509_value(chain, i);
 
-        r = ssl_security_cert(s, ctx, x, 0, 0);
+        r = ssl_security_cert(s, ctx, x, 0);
         if (r != 1) {
             ERR_raise(ERR_LIB_SSL, r);
             return 0;
@@ -332,7 +340,7 @@ int ssl_cert_add0_chain_cert(SSL_CONNECTION *s, SSL_CTX *ctx, X509 *x)
 
     if (!cpk)
         return 0;
-    r = ssl_security_cert(s, ctx, x, 0, 0);
+    r = ssl_security_cert(s, ctx, x, 0);
     if (r != 1) {
         ERR_raise(ERR_LIB_SSL, r);
         return 0;
@@ -346,9 +354,12 @@ int ssl_cert_add0_chain_cert(SSL_CONNECTION *s, SSL_CTX *ctx, X509 *x)
 
 int ssl_cert_add1_chain_cert(SSL_CONNECTION *s, SSL_CTX *ctx, X509 *x)
 {
-    if (!ssl_cert_add0_chain_cert(s, ctx, x))
+    if (!X509_up_ref(x))
         return 0;
-    X509_up_ref(x);
+    if (!ssl_cert_add0_chain_cert(s, ctx, x)) {
+        X509_free(x);
+        return 0;
+    }
     return 1;
 }
 
@@ -745,6 +756,10 @@ STACK_OF(X509_NAME) *SSL_load_client_CA_file_ex(const char *file,
     LHASH_OF(X509_NAME) *name_hash = lh_X509_NAME_new(xname_hash, xname_cmp);
     OSSL_LIB_CTX *prev_libctx = NULL;
 
+    if (file == NULL) {
+        ERR_raise(ERR_LIB_SSL, ERR_R_PASSED_NULL_PARAMETER);
+        goto err;
+    }
     if (name_hash == NULL) {
         ERR_raise(ERR_LIB_SSL, ERR_R_CRYPTO_LIB);
         goto err;
@@ -812,16 +827,14 @@ STACK_OF(X509_NAME) *SSL_load_client_CA_file(const char *file)
     return SSL_load_client_CA_file_ex(file, NULL, NULL);
 }
 
-int SSL_add_file_cert_subjects_to_stack(STACK_OF(X509_NAME) *stack,
-    const char *file)
+static int add_file_cert_subjects_to_stack(STACK_OF(X509_NAME) *stack,
+    const char *file,
+    LHASH_OF(X509_NAME) *name_hash)
 {
     BIO *in;
     X509 *x = NULL;
     X509_NAME *xn = NULL;
     int ret = 1;
-    int (*oldcmp)(const X509_NAME *const *a, const X509_NAME *const *b);
-
-    oldcmp = sk_X509_NAME_set_cmp_func(stack, xname_sk_cmp);
 
     in = BIO_new(BIO_s_file());
 
@@ -841,12 +854,15 @@ int SSL_add_file_cert_subjects_to_stack(STACK_OF(X509_NAME) *stack,
         xn = X509_NAME_dup(xn);
         if (xn == NULL)
             goto err;
-        if (sk_X509_NAME_find(stack, xn) >= 0) {
+        if (lh_X509_NAME_retrieve(name_hash, xn) != NULL) {
             /* Duplicate. */
             X509_NAME_free(xn);
         } else if (!sk_X509_NAME_push(stack, xn)) {
             X509_NAME_free(xn);
             goto err;
+        } else {
+            /* Successful insert, add to hash table */
+            lh_X509_NAME_insert(name_hash, xn);
         }
     }
 
@@ -858,7 +874,47 @@ err:
 done:
     BIO_free(in);
     X509_free(x);
-    (void)sk_X509_NAME_set_cmp_func(stack, oldcmp);
+    return ret;
+}
+
+int SSL_add_file_cert_subjects_to_stack(STACK_OF(X509_NAME) *stack,
+    const char *file)
+{
+    X509_NAME *xn = NULL;
+    int ret = 1;
+    int idx = 0;
+    int num = 0;
+    LHASH_OF(X509_NAME) *name_hash = lh_X509_NAME_new(xname_hash, xname_cmp);
+
+    if (file == NULL) {
+        ERR_raise(ERR_LIB_SSL, ERR_R_PASSED_NULL_PARAMETER);
+        goto err;
+    }
+
+    if (name_hash == NULL) {
+        ERR_raise(ERR_LIB_SSL, ERR_R_CRYPTO_LIB);
+        goto err;
+    }
+
+    /*
+     * Pre-populate the lhash with the existing entries of the stack, since
+     * using the LHASH_OF is much faster for duplicate checking. That's because
+     * xname_cmp converts the X509_NAMEs to DER involving a memory allocation
+     * for every single invocation of the comparison function.
+     */
+    num = sk_X509_NAME_num(stack);
+    for (idx = 0; idx < num; idx++) {
+        xn = sk_X509_NAME_value(stack, idx);
+        lh_X509_NAME_insert(name_hash, xn);
+    }
+
+    ret = add_file_cert_subjects_to_stack(stack, file, name_hash);
+    goto done;
+
+err:
+    ret = 0;
+done:
+    lh_X509_NAME_free(name_hash);
     return ret;
 }
 
@@ -868,8 +924,27 @@ int SSL_add_dir_cert_subjects_to_stack(STACK_OF(X509_NAME) *stack,
     OPENSSL_DIR_CTX *d = NULL;
     const char *filename;
     int ret = 0;
+    X509_NAME *xn = NULL;
+    int idx = 0;
+    int num = 0;
+    LHASH_OF(X509_NAME) *name_hash = lh_X509_NAME_new(xname_hash, xname_cmp);
 
-    /* Note that a side effect is that the CAs will be sorted by name */
+    if (name_hash == NULL) {
+        ERR_raise(ERR_LIB_SSL, ERR_R_CRYPTO_LIB);
+        goto err;
+    }
+
+    /*
+     * Pre-populate the lhash with the existing entries of the stack, since
+     * using the LHASH_OF is much faster for duplicate checking. That's because
+     * xname_cmp converts the X509_NAMEs to DER involving a memory allocation
+     * for every single invocation of the comparison function.
+     */
+    num = sk_X509_NAME_num(stack);
+    for (idx = 0; idx < num; idx++) {
+        xn = sk_X509_NAME_value(stack, idx);
+        lh_X509_NAME_insert(name_hash, xn);
+    }
 
     while ((filename = OPENSSL_DIR_read(&d, dir))) {
         char buf[1024];
@@ -898,7 +973,7 @@ int SSL_add_dir_cert_subjects_to_stack(STACK_OF(X509_NAME) *stack,
 #endif
         if (r <= 0 || r >= (int)sizeof(buf))
             goto err;
-        if (!SSL_add_file_cert_subjects_to_stack(stack, buf))
+        if (!add_file_cert_subjects_to_stack(stack, buf, name_hash))
             goto err;
     }
 
@@ -914,6 +989,7 @@ int SSL_add_dir_cert_subjects_to_stack(STACK_OF(X509_NAME) *stack,
 err:
     if (d)
         OPENSSL_DIR_end(&d);
+    lh_X509_NAME_free(name_hash);
 
     return ret;
 }
@@ -1073,7 +1149,7 @@ int ssl_build_cert_chain(SSL_CONNECTION *s, SSL_CTX *ctx, int flags)
      */
     for (i = 0; i < sk_X509_num(chain); i++) {
         x = sk_X509_value(chain, i);
-        rv = ssl_security_cert(s, ctx, x, 0, 0);
+        rv = ssl_security_cert(s, ctx, x, 0);
         if (rv != 1) {
             ERR_raise(ERR_LIB_SSL, rv);
             OSSL_STACK_OF_X509_free(chain);
@@ -1096,14 +1172,17 @@ err:
 int ssl_cert_set_cert_store(CERT *c, X509_STORE *store, int chain, int ref)
 {
     X509_STORE **pstore;
+
+    if (ref && store && !X509_STORE_up_ref(store))
+        return 0;
+
     if (chain)
         pstore = &c->chain_store;
     else
         pstore = &c->verify_store;
     X509_STORE_free(*pstore);
     *pstore = store;
-    if (ref && store)
-        X509_STORE_up_ref(store);
+
     return 1;
 }
 

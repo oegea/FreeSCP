@@ -10,6 +10,9 @@
 # Copyright (c) 2017      Tomasz Kłoczko <kloczek@fedoraproject.org>
 # Copyright (c) 2019      David Loffredo <loffredo@steptools.com>
 # Copyright (c) 2026      Gordon Messmer <gordon.messmer@gmail.com>
+# Copyright (c) 2026      Nick Begg <nick@stunttruck.net>
+# Copyright (c) 2026      Matthew Fernandez <matthew.fernandez@gmail.com>
+# Copyright (c) 2026      Funda Wang <fundawang@yeah.net>
 # Licensed under the MIT license:
 #
 # Permission is  hereby granted,  free of charge,  to any  person obtaining
@@ -43,17 +46,55 @@ endif
 
 libexpat_la_LDFLAGS = \
     @AM_LDFLAGS@ \
-    @LIBM@ \
     -no-undefined \
     -version-info @LIBCURRENT@:@LIBREVISION@:@LIBAGE@
 if HAVE_VSCRIPT
 libexpat_la_LDFLAGS += $(VSCRIPT_LDFLAGS),@builddir@/libexpat.map
 endif
 
+libexpat_la_LIBADD = @LIBM@
+
 libexpat_la_SOURCES = \
+    xcs.c \
     xmlparse.c \
     xmltok.c \
     xmlrole.c
+
+if WITH_ARC4RANDOM
+    libexpat_la_SOURCES += \
+        random_arc4random.c \
+        random_arc4random.h
+endif
+
+if WITH_ARC4RANDOM_BUF
+    libexpat_la_SOURCES += \
+        random_arc4random_buf.c \
+        random_arc4random_buf.h
+endif
+
+if ! MINGW
+    libexpat_la_SOURCES += \
+        random_dev_urandom.c \
+        random_dev_urandom.h
+endif
+
+if WITH_GETENTROPY
+    libexpat_la_SOURCES += \
+        random_getentropy.c \
+        random_getentropy.h
+endif
+
+if WITH_EITHER_GETRANDOM
+    libexpat_la_SOURCES += \
+        random_getrandom.c \
+        random_getrandom.h
+endif
+
+if MINGW
+    libexpat_la_SOURCES += \
+        random_rand_s.c \
+        random_rand_s.h
+endif
 
 if WITH_TESTS
 libtestpat_la_CPPFLAGS = -DXML_TESTING
@@ -74,16 +115,21 @@ uninstall-local:
 EXTRA_DIST = \
     ascii.h \
     asciitab.h \
+    entities.h \
     expat_external.h \
     expat.h \
+    fallthrough.h \
+    hash_table.h \
     iasciitab.h \
     internal.h \
     latin1tab.h \
     libexpat.def.cmake \
+    memory_sanitizer.h \
     nametab.h \
     siphash.h \
     utf8tab.h \
     winconfig.h \
+    xcs.h \
     xmlrole.h \
     xmltok.h \
     xmltok_impl.c \

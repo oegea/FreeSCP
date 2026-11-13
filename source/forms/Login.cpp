@@ -1,29 +1,15 @@
 //---------------------------------------------------------------------
-#include <vcl.h>
+#include <FormsPCH.h>
 #pragma hdrstop
 
-#include <StrUtils.hpp>
-#include <CoreMain.h>
-#include <Common.h>
 #include <PuttyTools.h>
-#include <TextsWin.h>
-#include <TextsCore.h>
-#include <HelpWin.h>
-#include <VCLCommon.h>
-#include <limits>
-
-#include "WinInterface.h"
 #include "Login.h"
-#include "GUITools.h"
-#include "Tools.h"
 #include "Setup.h"
-#include "WinConfiguration.h"
 #include "ProgParams.h"
 #include "WinApi.h"
 #include "S3FileSystem.h"
 //---------------------------------------------------------------------
 #pragma link "ComboEdit"
-#pragma link "PasswordEdit"
 #pragma link "UpDownEdit"
 #pragma resource "*.dfm"
 //---------------------------------------------------------------------------
@@ -38,14 +24,14 @@ const int LoginImageIndex = 0;
 const int OpenWorkspaceImageIndex = 5;
 const int OpenFolderImageIndex = 6;
 //---------------------------------------------------------------------------
-bool __fastcall DoLoginDialog(TList * DataList, TForm * LinkedForm)
+bool DoLoginDialog(TList * DataList, TForm * LinkedForm, bool NeedTerminal)
 {
   DebugAssert(DataList != NULL);
   TLoginDialog * LoginDialog = SafeFormCreate<TLoginDialog>();
   bool Result;
   try
   {
-    LoginDialog->Init(LinkedForm);
+    LoginDialog->Init(LinkedForm, NeedTerminal);
     Result = LoginDialog->Execute(DataList);
   }
   __finally
@@ -77,6 +63,7 @@ __fastcall TLoginDialog::TLoginDialog(TComponent* AOwner)
   FLinkedForm = NULL;
   FRestoring = false;
   FPrevPos = TPoint(std::numeric_limits<LONG>::min(), std::numeric_limits<LONG>::min());
+  FNeedTerminal = false;
 
   // we need to make sure that window procedure is set asap
   // (so that CM_SHOWINGCHANGED handling is applied)
@@ -107,9 +94,10 @@ void __fastcall TLoginDialog::InvalidateSessionData()
   FSessionData = NULL;
 }
 //---------------------------------------------------------------------
-void __fastcall TLoginDialog::Init(TForm * LinkedForm)
+void TLoginDialog::Init(TForm * LinkedForm, bool NeedTerminal)
 {
   FLinkedForm = LinkedForm;
+  FNeedTerminal = NeedTerminal;
   LoadSessions();
   UnicodeString Dummy;
   RunPageantAction->Visible = FindTool(PageantTool, Dummy);
@@ -493,7 +481,7 @@ void __fastcall TLoginDialog::Default()
 //---------------------------------------------------------------------
 void __fastcall TLoginDialog::LoadContents()
 {
-  bool UseContentsPanel;
+  bool UseContentsPanel = false;
   TTreeNode * Node = SessionTree->Selected;
   if (IsSessionNode(Node))
   {
@@ -1261,7 +1249,7 @@ void __fastcall TLoginDialog::ActionListUpdate(TBasicAction * BasicAction,
   }
   else if (Action == LoginAction)
   {
-    LoginAction->Enabled = CanOpen();
+    LoginAction->Enabled = FNeedTerminal ? IsSiteAndCanOpen() : CanOpen();
     LoginAction->Caption = FolderOrWorkspaceSelected ? LoadStr(LOGIN_OPEN) : LoadStr(LOGIN_LOGIN);
     LoginAction->ImageIndex = FolderOrWorkspaceSelected ? (WorkspaceSelected ? OpenWorkspaceImageIndex : OpenFolderImageIndex) : LoginImageIndex;
     UpdateLoginButton();
@@ -1270,6 +1258,7 @@ void __fastcall TLoginDialog::ActionListUpdate(TBasicAction * BasicAction,
   {
     TSessionData * Data = GetSessionData();
     Action->Enabled =
+      // IsLocalBrowser is an excess test as a stored site cannot be a local browser and such test is not done in other similar situations
       (IsSiteAndCanOpen() && !Data->IsLocalBrowser && !Data->Tunnel) ||
       (IsFolderOrWorkspaceAndCanOpen() && IsFolderNode(SessionTree->Selected));
   }
@@ -1287,7 +1276,6 @@ void __fastcall TLoginDialog::ActionListUpdate(TBasicAction * BasicAction,
   }
   else if (Action == SaveAsSessionAction)
   {
-    // Save as is needed for new site only when !SupportsSplitButton()
     SaveAsSessionAction->Enabled = Editable;
   }
   else if (Action == NewSessionFolderAction)
@@ -1299,7 +1287,7 @@ void __fastcall TLoginDialog::ActionListUpdate(TBasicAction * BasicAction,
     UnicodeString ClipboardUrl;
     Action->Enabled =
       NonEmptyTextFromClipboard(ClipboardUrl) &&
-      StoredSessions->IsUrl(ClipboardUrl);
+      FLAGSET(StoredSessions->GetUrlInfo(ClipboardUrl), piProtocolDefined);
   }
   else if (Action == GenerateUrlAction2)
   {
@@ -1733,7 +1721,7 @@ void __fastcall TLoginDialog::Dispatch(void * Message)
   DebugAssert(M);
   if (M->Msg == CM_DIALOGKEY)
   {
-    CMDialogKey(*((TWMKeyDown *)Message));
+    CMDialogKey(*static_cast<TWMKeyDown *>(Message));
   }
   else if (M->Msg == WM_MANAGES_CAPTION)
   {
@@ -1808,36 +1796,37 @@ void __fastcall TLoginDialog::DesktopIconActionExecute(TObject * /*Sender*/)
   UnicodeString Message;
   UnicodeString Name;
   UnicodeString AdditionalParams = TProgramParams::FormatSwitch(DESKTOP_SWITCH);
-  int IconIndex = 0;
+  TSessionShortCut SessionShortCut;
   if (IsSiteNode(Node))
   {
     Name = GetNodeSession(Node)->Name;
     Message = FMTLOAD(CONFIRM_CREATE_SHORTCUT, (Name));
     AddToList(AdditionalParams, TProgramParams::FormatSwitch(UPLOAD_IF_ANY_SWITCH), L" ");
-    IconIndex = SITE_ICON;
+    SessionShortCut = sscSite;
   }
   else if (IsFolderNode(Node))
   {
     Name = SessionNodePath(SessionTree->Selected);
     Message = FMTLOAD(CONFIRM_CREATE_SHORTCUT_FOLDER, (Name));
-    IconIndex = SITE_FOLDER_ICON;
+    SessionShortCut = sscFolder;
   }
   else if (IsWorkspaceNode(Node))
   {
     Name = SessionNodePath(SessionTree->Selected);
     Message = FMTLOAD(CONFIRM_CREATE_SHORTCUT_WORKSPACE, (Name));
-    IconIndex = WORKSPACE_ICON;
+    SessionShortCut = sscWorkspace;
   }
   else
   {
     DebugFail();
+    SessionShortCut = TSessionShortCut();
   }
 
   Message = MainInstructions(Message);
   if (MessageDialog(Message, qtConfirmation, qaYes | qaNo, HELP_CREATE_SHORTCUT) == qaYes)
   {
     TInstantOperationVisualizer Visualizer;
-    CreateDesktopSessionShortCut(Name, L"", AdditionalParams, -1, IconIndex);
+    CreateDesktopSessionShortCut(Name, L"", AdditionalParams, nullptr, SessionShortCut);
   }
 }
 //---------------------------------------------------------------------------
@@ -1853,10 +1842,11 @@ void __fastcall TLoginDialog::SendToHookActionExecute(TObject * /*Sender*/)
     UnicodeString AdditionalParams =
       TProgramParams::FormatSwitch(SEND_TO_HOOK_SWITCH) + L" " +
       TProgramParams::FormatSwitch(UPLOAD_SWITCH);
-    CreateDesktopSessionShortCut(SelectedSession->Name,
+    REFKNOWNFOLDERID FolderID = FOLDERID_SendTo;
+    CreateDesktopSessionShortCut(
+      SelectedSession->Name,
       FMTLOAD(SESSION_SENDTO_HOOK_NAME2, (SelectedSession->LocalName, AppName)),
-      AdditionalParams,
-      CSIDL_SENDTO, SITE_ICON);
+      AdditionalParams, &FolderID, sscSite);
   }
 }
 //---------------------------------------------------------------------------
@@ -1900,6 +1890,14 @@ void __fastcall TLoginDialog::SessionTreeCustomDrawItem(
   }
 
   Sender->Canvas->Font->Style = Styles;
+
+  DebugAssert(Sender == SessionTree);
+  if (Node->Selected && !SessionTree->Focused() && UseDarkModeForControl(SessionTree))
+  {
+    // Otherwise it is rendered black on black. See also TCustomDriveView.InternalOnDrawItem.
+    SessionTree->Canvas->Font->Color = SessionTree->Font->Color;
+  }
+
   DefaultDraw = true;
 }
 //---------------------------------------------------------------------------
@@ -2115,7 +2113,7 @@ int __fastcall TLoginDialog::FSProtocolToIndex(TFSProtocol FSProtocol,
 //---------------------------------------------------------------------------
 TFSProtocol __fastcall TLoginDialog::IndexToFSProtocol(int Index, bool AllowScpFallback)
 {
-  bool InBounds = (Index >= 0) && (Index < static_cast<int>(LENOF(FSOrder)));
+  bool InBounds = (Index >= 0) && (Index < static_cast<int>(std::size(FSOrder)));
   // can be temporary "unselected" while new language is being loaded
   DebugAssert(InBounds || (Index == -1));
   TFSProtocol Result = fsSFTP;
@@ -2651,7 +2649,7 @@ void __fastcall TLoginDialog::PortNumberEditChange(TObject * Sender)
   if (!NoUpdate)
   {
     bool WellKnownPort = false;
-    TFSProtocol FSProtocol;
+    TFSProtocol FSProtocol = TFSProtocol(); // shut up
     TFtps Ftps = ftpsNone;
 
     // For ambiguous port numbers, keep the current protocol, even if it is not the default protocol for the port
@@ -3164,7 +3162,8 @@ void __fastcall TLoginDialog::PuttyActionExecute(TObject * /*Sender*/)
   }
   // following may take some time, so cache the shift key state,
   // in case user manages to release it before following finishes
-  bool Close = !OpenInNewWindow();
+  bool AOpenInNewWindow = (OpenInNewWindow() != WinConfiguration->KeepLoginAfterOpenInPutty);
+  bool Close = !AOpenInNewWindow && !FNeedTerminal;
 
   std::unique_ptr<TList> DataList(new TList());
   SaveDataList(DataList.get());
@@ -3185,12 +3184,11 @@ void __fastcall TLoginDialog::LoginButtonDropDownClick(TObject * /*Sender*/)
   MenuPopup(LoginDropDownMenu, LoginButton);
 }
 //---------------------------------------------------------------------------
-void TLoginDialog::DoParseUrl(TSessionData * SessionData, const UnicodeString & Url)
+void TLoginDialog::DoParseUrl(TSessionData * SessionData, const UnicodeString & Url, int & ParsedInfo)
 {
   // We do not want to pass in StoredSessions as we do not want the URL be
   // parsed as pointing to a stored site.
-  bool DefaultsOnly; // unused
-  SessionData->ParseUrl(Url, NULL, NULL, DefaultsOnly, NULL, NULL, NULL, pufPreferProtocol);
+  SessionData->ParseUrl(Url, NULL, NULL, ParsedInfo, NULL, NULL, pufPreferProtocol);
   SessionData->RequireDirectories = false;
 }
 //---------------------------------------------------------------------------
@@ -3212,7 +3210,13 @@ void __fastcall TLoginDialog::ParseUrl(const UnicodeString & Url)
   }
   else
   {
-    DoParseUrl(SessionData.get(), Url);
+    int ParsedInfo;
+    DoParseUrl(SessionData.get(), Url, ParsedInfo);
+    if (FLAGSET(ParsedInfo, piUnsafeSettings) &&
+        (MessageDialog(LoadStr(UNSAFE_SESSION), qtConfirmation, qaOK | qaCancel, HELP_NONE) != qaOK))
+    {
+      Abort();
+    }
   }
 
   LoadSession(SessionData.get());
@@ -3248,7 +3252,8 @@ void __fastcall TLoginDialog::ParseHostName()
   {
     // All this check is probably unnecessary, keeping it just to be safe
     std::unique_ptr<TSessionData> SessionData(new TSessionData(EmptyStr));
-    DoParseUrl(SessionData.get(), HostName);
+    int ParsedInfo; // unused
+    DoParseUrl(SessionData.get(), HostName, ParsedInfo);
     std::unique_ptr<TSessionData> HostNameSessionData(new TSessionData(EmptyStr));
     HostNameSessionData->HostName = HostName;
     if ((HostNameSessionData->HostName != HostName) || // Has legacy HostName property parsing intervened?
@@ -3395,5 +3400,11 @@ void __fastcall TLoginDialog::SearchSiteStartActionExecute(TObject *)
 void __fastcall TLoginDialog::SitesIncrementalSearchPanelContextPopup(TObject * Sender, TPoint & MousePos, bool & Handled)
 {
   MenuPopup(Sender, MousePos, Handled);
+}
+//---------------------------------------------------------------------------
+void __fastcall TLoginDialog::CreateWnd()
+{
+  TForm::CreateWnd();
+  ApplyColorMode(this);
 }
 //---------------------------------------------------------------------------

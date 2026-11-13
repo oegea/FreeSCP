@@ -24,6 +24,9 @@
 /* Define to 1 if you have the <fcntl.h> header file. */
 #undef HAVE_FCNTL_H
 
+/* Define to 1 if you have the `getentropy' function. */
+#undef HAVE_GETENTROPY
+
 /* Define to 1 if you have the 'getpagesize' function. */
 #undef HAVE_GETPAGESIZE
 
@@ -109,10 +112,6 @@
 #  undef WORDS_BIGENDIAN
 # endif
 #endif
-
-/* Define to allow retrieving the byte offsets for attribute names and values.
-   */
-#undef XML_ATTR_INFO
 
 /* Define to specify how much context to retain around the current parse
    point, 0 to disable. */

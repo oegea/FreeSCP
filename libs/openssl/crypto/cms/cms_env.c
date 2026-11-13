@@ -1,5 +1,5 @@
 /*
- * Copyright 2008-2024 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 2008-2026 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -354,8 +354,12 @@ static int cms_RecipientInfo_ktri_init(CMS_RecipientInfo *ri, X509 *recip,
     if (!ossl_cms_set1_SignerIdentifier(ktri->rid, recip, idtype, ctx))
         return 0;
 
-    X509_up_ref(recip);
-    EVP_PKEY_up_ref(pk);
+    if (!X509_up_ref(recip))
+        return 0;
+    if (!EVP_PKEY_up_ref(pk)) {
+        X509_free(recip);
+        return 0;
+    }
 
     ktri->pkey = pk;
     ktri->recip = recip;
@@ -614,13 +618,6 @@ static int cms_RecipientInfo_ktri_decrypt(CMS_ContentInfo *cms,
 
     if (!ossl_cms_env_asn1_ctrl(ri, 1))
         goto err;
-
-    if (EVP_PKEY_is_a(pkey, "RSA"))
-        /* upper layer CMS code incorrectly assumes that a successful RSA
-         * decryption means that the key matches ciphertext (which never
-         * was the case, implicit rejection or not), so to make it work
-         * disable implicit rejection for RSA keys */
-        EVP_PKEY_CTX_ctrl_str(ktri->pctx, "rsa_pkcs1_implicit_rejection", "0");
 
     if (evp_pkey_decrypt_alloc(ktri->pctx, &ek, &eklen, fixlen,
             ktri->encryptedKey->data,
@@ -931,6 +928,7 @@ static int cms_RecipientInfo_kekri_decrypt(CMS_ContentInfo *cms,
     CMS_EncryptedContentInfo *ec;
     CMS_KEKRecipientInfo *kekri;
     unsigned char *ukey = NULL;
+    size_t ukey_alloc_len = 0;
     int ukeylen;
     int r = 0, wrap_nid;
     EVP_CIPHER *cipher = NULL;
@@ -968,7 +966,8 @@ static int cms_RecipientInfo_kekri_decrypt(CMS_ContentInfo *cms,
         goto err;
     }
 
-    ukey = OPENSSL_malloc(kekri->encryptedKey->length - 8);
+    ukey_alloc_len = (size_t)kekri->encryptedKey->length - 8;
+    ukey = OPENSSL_malloc(ukey_alloc_len);
     if (ukey == NULL)
         goto err;
 
@@ -997,7 +996,7 @@ static int cms_RecipientInfo_kekri_decrypt(CMS_ContentInfo *cms,
 err:
     EVP_CIPHER_free(cipher);
     if (!r)
-        OPENSSL_free(ukey);
+        OPENSSL_clear_free(ukey, ukey_alloc_len);
     EVP_CIPHER_CTX_free(ctx);
 
     return r;
@@ -1131,7 +1130,8 @@ static BIO *cms_EnvelopedData_Decryption_init_bio(CMS_ContentInfo *cms)
 {
     CMS_EncryptedContentInfo *ec = cms->d.envelopedData->encryptedContentInfo;
     BIO *contentBio = ossl_cms_EncryptedContent_init_bio(ec,
-        ossl_cms_get0_cmsctx(cms));
+        ossl_cms_get0_cmsctx(cms),
+        0);
     EVP_CIPHER_CTX *ctx = NULL;
 
     if (contentBio == NULL)
@@ -1169,7 +1169,7 @@ static BIO *cms_EnvelopedData_Encryption_init_bio(CMS_ContentInfo *cms)
     /* Get BIO first to set up key */
 
     ec = env->encryptedContentInfo;
-    ret = ossl_cms_EncryptedContent_init_bio(ec, ossl_cms_get0_cmsctx(cms));
+    ret = ossl_cms_EncryptedContent_init_bio(ec, ossl_cms_get0_cmsctx(cms), 0);
 
     /* If error end of processing */
     if (!ret)
@@ -1206,6 +1206,35 @@ BIO *ossl_cms_EnvelopedData_init_bio(CMS_ContentInfo *cms)
     return cms_EnvelopedData_Decryption_init_bio(cms);
 }
 
+/* The DER encoding of authAttrs, with the universal SET OF tag, is the AAD */
+static int cms_AuthEnvelopedData_set_aad(BIO *b,
+    STACK_OF(X509_ATTRIBUTE) *authAttrs)
+{
+    EVP_CIPHER_CTX *ctx;
+    unsigned char *aad = NULL;
+    int aadlen, outl, ok = 0;
+    const ASN1_ITEM *item;
+
+    if (!BIO_get_cipher_ctx(b, &ctx))
+        return 0;
+    item = EVP_CIPHER_CTX_is_encrypting(ctx)
+        ? ASN1_ITEM_rptr(CMS_Attributes_AadEncrypt)
+        : ASN1_ITEM_rptr(CMS_Attributes_AadDecrypt);
+    aadlen = ASN1_item_i2d((ASN1_VALUE *)authAttrs, &aad, item);
+    if (aadlen <= 0 || aad == NULL) {
+        ERR_raise(ERR_LIB_CMS, ERR_R_ASN1_LIB);
+        goto err;
+    }
+    if (EVP_CipherUpdate(ctx, NULL, &outl, aad, aadlen) <= 0) {
+        ERR_raise(ERR_LIB_CMS, CMS_R_CTRL_FAILURE);
+        goto err;
+    }
+    ok = 1;
+err:
+    OPENSSL_free(aad);
+    return ok;
+}
+
 BIO *ossl_cms_AuthEnvelopedData_init_bio(CMS_ContentInfo *cms)
 {
     CMS_EncryptedContentInfo *ec;
@@ -1221,10 +1250,17 @@ BIO *ossl_cms_AuthEnvelopedData_init_bio(CMS_ContentInfo *cms)
         ec->tag = aenv->mac->data;
         ec->taglen = aenv->mac->length;
     }
-    ret = ossl_cms_EncryptedContent_init_bio(ec, ossl_cms_get0_cmsctx(cms));
+    ret = ossl_cms_EncryptedContent_init_bio(ec, ossl_cms_get0_cmsctx(cms), 1);
+    if (ret == NULL)
+        return NULL;
 
-    /* If error or no cipher end of processing */
-    if (ret == NULL || ec->cipher == NULL)
+    /* authAttrs, if present, are the AEAD associated data */
+    if (aenv->authAttrs != NULL
+        && !cms_AuthEnvelopedData_set_aad(ret, aenv->authAttrs))
+        goto err;
+
+    /* If no cipher end of processing */
+    if (ec->cipher == NULL)
         return ret;
 
     /* Now encrypt content key according to each RecipientInfo type */

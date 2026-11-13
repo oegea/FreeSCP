@@ -224,6 +224,7 @@ ASN1_NDEF_SEQUENCE(CMS_EnvelopedData) = {
     ASN1_SIMPLE(CMS_EnvelopedData, encryptedContentInfo, CMS_EncryptedContentInfo),
     ASN1_IMP_SET_OF_OPT(CMS_EnvelopedData, unprotectedAttrs, X509_ATTRIBUTE, 1)
 } ASN1_NDEF_SEQUENCE_END(CMS_EnvelopedData)
+IMPLEMENT_ASN1_DUP_FUNCTION(CMS_EnvelopedData)
 
 ASN1_NDEF_SEQUENCE(CMS_DigestedData) = {
     ASN1_EMBED(CMS_DigestedData, version, INT32),
@@ -244,9 +245,9 @@ ASN1_NDEF_SEQUENCE(CMS_AuthEnvelopedData) = {
     ASN1_IMP_OPT(CMS_AuthEnvelopedData, originatorInfo, CMS_OriginatorInfo, 0),
     ASN1_SET_OF(CMS_AuthEnvelopedData, recipientInfos, CMS_RecipientInfo),
     ASN1_SIMPLE(CMS_AuthEnvelopedData, authEncryptedContentInfo, CMS_EncryptedContentInfo),
-    ASN1_IMP_SET_OF_OPT(CMS_AuthEnvelopedData, authAttrs, X509_ALGOR, 2),
+    ASN1_IMP_SET_OF_OPT(CMS_AuthEnvelopedData, authAttrs, X509_ATTRIBUTE, 1),
     ASN1_SIMPLE(CMS_AuthEnvelopedData, mac, ASN1_OCTET_STRING),
-    ASN1_IMP_SET_OF_OPT(CMS_AuthEnvelopedData, unauthAttrs, X509_ALGOR, 3)
+    ASN1_IMP_SET_OF_OPT(CMS_AuthEnvelopedData, unauthAttrs, X509_ATTRIBUTE, 2)
 } ASN1_NDEF_SEQUENCE_END(CMS_AuthEnvelopedData)
 
 ASN1_NDEF_SEQUENCE(CMS_AuthenticatedData) = {
@@ -256,9 +257,9 @@ ASN1_NDEF_SEQUENCE(CMS_AuthenticatedData) = {
     ASN1_SIMPLE(CMS_AuthenticatedData, macAlgorithm, X509_ALGOR),
     ASN1_IMP(CMS_AuthenticatedData, digestAlgorithm, X509_ALGOR, 1),
     ASN1_SIMPLE(CMS_AuthenticatedData, encapContentInfo, CMS_EncapsulatedContentInfo),
-    ASN1_IMP_SET_OF_OPT(CMS_AuthenticatedData, authAttrs, X509_ALGOR, 2),
+    ASN1_IMP_SET_OF_OPT(CMS_AuthenticatedData, authAttrs, X509_ATTRIBUTE, 2),
     ASN1_SIMPLE(CMS_AuthenticatedData, mac, ASN1_OCTET_STRING),
-    ASN1_IMP_SET_OF_OPT(CMS_AuthenticatedData, unauthAttrs, X509_ALGOR, 3)
+    ASN1_IMP_SET_OF_OPT(CMS_AuthenticatedData, unauthAttrs, X509_ATTRIBUTE, 3)
 } static_ASN1_NDEF_SEQUENCE_END(CMS_AuthenticatedData)
 
 ASN1_NDEF_SEQUENCE(CMS_CompressedData)

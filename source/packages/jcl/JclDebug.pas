@@ -103,7 +103,7 @@ type
     FDynamicBuild: Boolean;
     FSystemModulesOnly: Boolean;
     FRefCount: Integer;
-    function GetItems(Index: Integer): TJclModuleInfo;
+    function GetItems(Index: TJclListSize): TJclModuleInfo;
     function GetModuleFromAddress(Addr: Pointer): TJclModuleInfo;
   protected
     procedure BuildModulesList;
@@ -114,7 +114,7 @@ type
     function IsSystemModuleAddress(Addr: Pointer): Boolean;
     function IsValidModuleAddress(Addr: Pointer): Boolean;
     property DynamicBuild: Boolean read FDynamicBuild;
-    property Items[Index: Integer]: TJclModuleInfo read GetItems;
+    property Items[Index: TJclListSize]: TJclModuleInfo read GetItems;
     property ModuleFromAddress[Addr: Pointer]: TJclModuleInfo read GetModuleFromAddress;
   end;
 
@@ -233,6 +233,7 @@ type
     VA: DWORD; // VA relative to (module base address + $10000)
     LineNumber: Integer;
     UnitName: PJclMapString;
+    SourceName: PJclMapString; // source file the line number was emitted for
   end;
 
   TJclMapScanner = class(TJclAbstractMapParser)
@@ -244,7 +245,7 @@ type
     FSourceNames: array of TJclMapProcName;
     FLineNumbersCnt: Integer;
     FLineNumberErrors: Integer;
-    FNewUnitFileName: PJclMapString;
+    FCurrentUnitFileName: PJclMapString;
     FCurrentUnitName: PJclMapString;
     FProcNamesCnt: Integer;
     FSegmentCnt: Integer;
@@ -252,6 +253,7 @@ type
     function IndexOfSegment(Addr: DWORD): Integer;
   protected
     function MAPAddrToVA(const Addr: DWORD): DWORD;
+    procedure BuildSourceNames;
     procedure ClassTableItem(const Address: TJclMapAddress; Len: Integer; SectionName, GroupName: PJclMapString); override;
     procedure SegmentItem(const Address: TJclMapAddress; Len: Integer; GroupName, UnitName: PJclMapString); override;
     function CanHandlePublicsByName: Boolean; override;
@@ -355,6 +357,7 @@ function ConvertMapFileToJdbgFile(const MapFileName: TFileName; out LinkerBugUni
 function ConvertMapFileToJdbgFile(const MapFileName: TFileName; out LinkerBugUnit: string;
   out LineNumberErrors, MapFileSize, JdbgFileSize: Integer): Boolean; overload;
 
+{$IFNDEF WINSCP}
 function InsertDebugDataIntoExecutableFile(const ExecutableFileName,
   MapFileName: TFileName; out LinkerBugUnit: string;
   out MapFileSize, JclDebugDataSize: Integer): Boolean; overload;
@@ -368,6 +371,7 @@ function InsertDebugDataIntoExecutableFile(const ExecutableFileName: TFileName;
 function InsertDebugDataIntoExecutableFile(const ExecutableFileName: TFileName;
   BinDebug: TJclBinDebugGenerator; out LinkerBugUnit: string;
   out MapFileSize, JclDebugDataSize, LineNumberErrors: Integer): Boolean; overload;
+{$ENDIF}
 
 // Source Locations
 type
@@ -499,7 +503,7 @@ type
   TJclDebugInfoList = class(TObjectList)
   private
     function GetItemFromModule(const Module: HMODULE): TJclDebugInfoSource;
-    function GetItems(Index: Integer): TJclDebugInfoSource;
+    function GetItems(Index: TJclListSize): TJclDebugInfoSource;
   protected
     function CreateDebugInfo(const Module: HMODULE): TJclDebugInfoSource;
   public
@@ -512,7 +516,7 @@ type
     class procedure NeedInfoSourceClassList;
     function GetLocationInfo(const Addr: Pointer; out Info: TJclLocationInfo): Boolean;
     property ItemFromModule[const Module: HMODULE]: TJclDebugInfoSource read GetItemFromModule;
-    property Items[Index: Integer]: TJclDebugInfoSource read GetItems;
+    property Items[Index: TJclListSize]: TJclDebugInfoSource read GetItems;
   end;
 
   // Various source location implementations
@@ -525,6 +529,8 @@ type
     function GetLocationInfo(const Addr: Pointer; out Info: TJclLocationInfo): Boolean; override;
     function GetAddress(const UnitName, ProcName: string): Pointer; override;
   end;
+
+  {$IFNDEF WINSCP}
 
   TJclDebugInfoBinary = class(TJclDebugInfoSource)
   private
@@ -554,7 +560,6 @@ type
   end;
 
   {$IFDEF BORLAND}
-  {$IFNDEF WINSCP}
   TJclDebugInfoTD32 = class(TJclDebugInfoSource)
   private
     FImage: TJclPeBorTD32Image;
@@ -565,7 +570,6 @@ type
     function GetLocationInfo(const Addr: Pointer; out Info: TJclLocationInfo): Boolean; override;
     function GetAddress(const UnitName, ProcName: string): Pointer; override;
   end;
-  {$ENDIF ~WINSCP}
   {$ENDIF BORLAND}
 
   TJclDebugInfoSymbols = class(TJclDebugInfoSource)
@@ -578,6 +582,7 @@ type
     function GetLocationInfo(const Addr: Pointer; out Info: TJclLocationInfo): Boolean; override;
     function GetAddress(const UnitName, ProcName: string): Pointer; override;
   end;
+  {$ENDIF ~WINSCP}
 
 // Source location functions
 function Caller(Level: Integer = 0; FastStackWalk: Boolean = False): Pointer;
@@ -694,7 +699,7 @@ type
     {$IFDEF CPU64}
     procedure CaptureBackTrace;
     {$ENDIF CPU64}
-    function GetItems(Index: Integer): TJclStackInfoItem;
+    function GetItems(Index: TJclListSize): TJclStackInfoItem;
     function NextStackFrame(var StackFrame: PStackFrame; var StackInfo: TStackInfo): Boolean;
     procedure StoreToList(const StackInfo: TStackInfo);
     procedure TraceStackFrames;
@@ -721,7 +726,7 @@ type
       IncludeAddressOffset: Boolean = False; IncludeStartProcLineOffset: Boolean = False;
       IncludeVAddress: Boolean = False);
     property DelayedTrace: Boolean read FDelayedTrace;
-    property Items[Index: Integer]: TJclStackInfoItem read GetItems; default;
+    property Items[Index: TJclListSize]: TJclStackInfoItem read GetItems; default;
     property IgnoreLevels: Integer read FIgnoreLevels;
     property Count: Integer read GetCount;
     property Raw: Boolean read FRaw;
@@ -824,13 +829,13 @@ type
   TJclExceptFrameList = class(TJclStackBaseList)
   private
     FIgnoreLevels: Integer;
-    function GetItems(Index: Integer): TJclExceptFrame;
+    function GetItems(Index: TJclListSize): TJclExceptFrame;
   protected
     function AddFrame(AFrame: PExcFrame): TJclExceptFrame;
   public
     constructor Create(AIgnoreLevels: Integer);
     procedure TraceExceptionFrames;
-    property Items[Index: Integer]: TJclExceptFrame read GetItems;
+    property Items[Index: TJclListSize]: TJclExceptFrame read GetItems;
     property IgnoreLevels: Integer read FIgnoreLevels write FIgnoreLevels;
   end;
 
@@ -838,8 +843,10 @@ function JclCreateExceptFrameList(AIgnoreLevels: Integer): TJclExceptFrameList;
 function JclLastExceptFrameList: TJclExceptFrameList;
 function JclGetExceptFrameList(ThreadID: DWORD): TJclExceptFrameList;
 
+{$IFNDEF WINSCP}
 function JclStartExceptionTracking: Boolean;
 function JclStopExceptionTracking: Boolean;
+{$ENDIF}
 function JclExceptionTrackingActive: Boolean;
 
 function JclTrackExceptionsFromLibraries: Boolean;
@@ -1007,8 +1014,10 @@ type
 
 function JclDebugThreadList: TJclDebugThreadList;
 
+{$IFNDEF WINSCP}
 function JclHookThreads: Boolean;
 function JclUnhookThreads: Boolean;
+{$ENDIF WINSCP}
 function JclThreadsHooked: Boolean;
 
 // Miscellanuous
@@ -1323,7 +1332,7 @@ begin
     Add(Result);
 end;
 
-function TJclModuleInfoList.GetItems(Index: Integer): TJclModuleInfo;
+function TJclModuleInfoList.GetItems(Index: TJclListSize): TJclModuleInfo;
 begin
   Result := TJclModuleInfo(Get(Index));
 end;
@@ -1447,6 +1456,7 @@ class function TJclAbstractMapParser.MapStringToStr(MapString: PJclMapString;
   IgnoreSpaces: Boolean): string;
 var
   P: PJclMapString;
+  TemplateDepth: Integer; // WINSCP
 begin
   if MapString = nil then
   begin
@@ -1463,12 +1473,49 @@ begin
   else
   begin
     P := MapString;
-    if IgnoreSpaces then
-      while (P^ <> #0) and not (P^ in ['(', #10, #13]) do
-        Inc(P)
-    else
-      while (P^ <> #0) and (P^ <> '(') and (P^ > ' ') do
-        Inc(P);
+    // WINSCP (updated to remove arguments for complex C++ symbols (like templates)
+    TemplateDepth := 0;
+    while P^ <> #0 do
+    begin
+      if (P^ in [#10, #13]) or ((not IgnoreSpaces) and (P^ <= ' ')) then
+        Break;
+
+      // Skip "operatorXX" so it doesn't mess up bracket counting or break prematurely
+      if (P^ = 'o') and (StrLCompA(P, 'operator', 8) = 0) then
+      begin
+        Inc(P, 8);
+
+        while (P^ <> #0) and (P^ <= ' ') do
+          Inc(P);
+
+        if (P^ = '(') and ((P+1)^ = ')') then
+        begin
+          Inc(P, 2);
+          Continue;
+        end
+        else if (P^ = '[') and ((P+1)^ = ']') then
+        begin
+          Inc(P, 2);
+          Continue;
+        end
+        else
+        begin
+          while P^ in ['+', '-', '*', '/', '%', '^', '&', '|', '~', '!', '=', '<', '>', ','] do
+            Inc(P);
+          Continue;
+        end;
+      end;
+
+      if P^ = '<' then
+        Inc(TemplateDepth)
+      else if P^ = '>' then
+        Dec(TemplateDepth);
+
+      if (P^ = '(') and (TemplateDepth <= 0) then
+        Break;
+
+      Inc(P);
+    end;
   end;
   SetString(Result, MapString, P - MapString);
 end;
@@ -1766,7 +1813,11 @@ begin
         ReadAddress(A);
         SkipWhiteSpace;
         L := ReadHexValue;
+        {$IFDEF CPU64} // WINSCP
+        FindParam('S');
+        {$ELSE}
         FindParam('C');
+        {$ENDIF}
         P1 := ReadString;
         FindParam('M');
         P2 := ReadString;
@@ -1907,6 +1958,80 @@ begin
     Result := Addr;
 end;
 
+procedure TJclMapScanner.BuildSourceNames;
+var
+  i, LCount, LSegIndex, LLastSegIndex, LNameEnd: Integer;
+  LPCurrentLine: PJclMapLineNumber;
+  LPMapProcName: PJclMapProcName;
+  LPLastSourceName: PJclMapString;
+  LLastName, LName, LUnitName: string;
+begin
+  LCount := 0;
+  LLastSegIndex := Low(Integer);
+  LPLastSourceName := nil;
+
+  for i := 0 to High(FLineNumbers) do
+  begin
+    LPCurrentLine := @FLineNumbers[i];
+
+    if LPCurrentLine.SourceName = nil then
+      Continue;
+
+    // SourceNameFromAddr rejects an entry that starts in another unit, so a crossing needs an entry
+    // of its own even when the source file has not changed.}
+    LSegIndex := IndexOfSegment(LPCurrentLine.VA);
+    if LSegIndex = LLastSegIndex then
+    begin
+      // One block shares one pointer, so this skips most line numbers without converting anything.
+      // Separate blocks for the same file need the name comparison.}
+      if LPCurrentLine.SourceName = LPLastSourceName then
+        Continue;
+
+      LName := MapStringToStr(LPCurrentLine.SourceName);
+      if LName = LLastName then
+      begin
+        LPLastSourceName := LPCurrentLine.SourceName;
+        Continue;
+      end;
+    end
+    else
+      LName := MapStringToStr(LPCurrentLine.SourceName);
+
+    // A unit's line numbers end one past its last instruction, which is the next unit's first address,
+    // so two units can claim one address and the sort does not order them - the segment does.  UnitName
+    // points at a "<unit>(<source file>) segment <section>" heading here rather than at a segment line,
+    // hence the manual split.
+    LUnitName := MapStringToStr(LPCurrentLine.UnitName);
+    LNameEnd := Pos('(', LUnitName);
+    if LNameEnd > 0 then
+      SetLength(LUnitName, LNameEnd - 1);
+    if (LCount > 0) and (FSourceNames[LCount - 1].VA = LPCurrentLine.VA) then
+    begin
+      if (LSegIndex < 0) or (LUnitName <> MapStringCacheToModuleName(FSegments[LSegIndex].UnitName)) then
+        Continue;
+
+      Dec(LCount);
+    end;
+
+    LLastSegIndex := LSegIndex;
+    LPLastSourceName := LPCurrentLine.SourceName;
+    LLastName := LName;
+
+    if LCount >= Length(FSourceNames) then
+      SetLength(FSourceNames, LCount * 2 + 256);
+
+    LPMapProcName := @FSourceNames[LCount];
+    LPMapProcName.Segment := LPCurrentLine.Segment;
+    LPMapProcName.VA := LPCurrentLine.VA;
+    LPMapProcName.ProcName.RawValue := LPLastSourceName;
+    LPMapProcName.ProcName.CachedValue := LName;
+
+    Inc(LCount);
+  end;
+
+  SetLength(FSourceNames, LCount);
+end;
+
 class function TJclMapScanner.MapStringCacheToFileName(
   var MapString: TJclMapStringCache): string;
 begin
@@ -2012,7 +2137,7 @@ end;
 
 procedure TJclMapScanner.LineNumbersItem(LineNumber: Integer; const Address: TJclMapAddress);
 var
-  SegIndex, C: Integer;
+  SegIndex: Integer;
   VA: DWORD;
   Added: Boolean;
 begin
@@ -2043,17 +2168,9 @@ begin
     FLineNumbers[FLineNumbersCnt].VA := VA;
     FLineNumbers[FLineNumbersCnt].LineNumber := LineNumber;
     FLineNumbers[FLineNumbersCnt].UnitName := FCurrentUnitName;
+    FLineNumbers[FLineNumbersCnt].SourceName := FCurrentUnitFileName;
     Inc(FLineNumbersCnt);
     Added := True;
-    if FNewUnitFileName <> nil then
-    begin
-      C := Length(FSourceNames);
-      SetLength(FSourceNames, C + 1);
-      FSourceNames[C].Segment := FSegmentClasses[SegIndex].Segment;
-      FSourceNames[C].VA := VA;
-      FSourceNames[C].ProcName.RawValue := FNewUnitFileName;
-      FNewUnitFileName := nil;
-    end;
     Break;
   end;
   if not Added then
@@ -2062,7 +2179,7 @@ end;
 
 procedure TJclMapScanner.LineNumberUnitItem(UnitName, UnitFileName: PJclMapString);
 begin
-  FNewUnitFileName := UnitFileName;
+  FCurrentUnitFileName := UnitFileName;
   FCurrentUnitName := UnitName;
 end;
 
@@ -2315,7 +2432,7 @@ begin
   if FProcNames <> nil then
     SortProcNames(PJclMapProcNameArray(FProcNames), 0, Length(FProcNames) - 1);
   SortDynArray(FSegments, SizeOf(FSegments[0]), Sort_MapSegment);
-  SortDynArray(FSourceNames, SizeOf(FSourceNames[0]), Sort_MapProcName);
+  BuildSourceNames;
 end;
 
 procedure TJclMapScanner.SegmentItem(const Address: TJclMapAddress; Len: Integer;
@@ -2593,6 +2710,7 @@ begin
   end;
 end;
 
+{$IFNDEF WINSCP}
 function InsertDebugDataIntoExecutableFile(const ExecutableFileName, MapFileName: TFileName;
   out LinkerBugUnit: string; out MapFileSize, JclDebugDataSize: Integer): Boolean;
 var
@@ -2651,7 +2769,13 @@ var
     I: Integer;
   begin
     for I := Low(ImageSectionHeaders) to High(ImageSectionHeaders) do
-      ImageSectionHeaders[I].PointerToRawData := ImageSectionHeaders[I].PointerToRawData + AOffset;
+    begin
+      // Sections with no raw data on disk (e.g. .bss, .tls) have PointerToRawData = 0
+      // and must keep it. Only shift sections that actually have raw data, otherwise
+      // they end up with a bogus non-zero file offset.
+      if ImageSectionHeaders[I].PointerToRawData <> 0 then
+        ImageSectionHeaders[I].PointerToRawData := ImageSectionHeaders[I].PointerToRawData + AOffset;
+    end;
   end;
 
   procedure FillZeros(AStream: TStream; ACount: Integer);
@@ -2717,13 +2841,20 @@ var
       raise EJclPeImageError.CreateRes(@SWriteError);
   end;
 
-  procedure CheckHeadersSpace(AStream: TStream);
+  procedure AdjustHeadersSpace(AStream: TStream; AFileAlignment: DWORD; var ASizeOfHeaders: DWORD);
   begin
     if ImageSectionHeaders[0].PointerToRawData < ImageSectionHeadersPosition +
        (SizeOf(TImageSectionHeader) * (Length(ImageSectionHeaders) + 1)) then
     begin
-      MoveData(AStream, ImageSectionHeaders[0].PointerToRawData, NtHeaders64.OptionalHeader.FileAlignment);
-      MovePointerToRawData(NtHeaders64.OptionalHeader.FileAlignment);
+      MoveData(AStream, ImageSectionHeaders[0].PointerToRawData, AFileAlignment);
+      MovePointerToRawData(AFileAlignment);
+
+      // The header area was grown by one FileAlignment block to make room for the new
+      // section header. SizeOfHeaders must grow with it; otherwise the section table
+      // extends past SizeOfHeaders and the first section's raw data no longer starts at
+      // SizeOfHeaders. The Windows loader tolerates that, but strict PE validators
+      // (e.g. signtool) reject the image with ERROR_BAD_EXE_FORMAT (0x800700C1).
+      Inc(ASizeOfHeaders, AFileAlignment);
       WriteSectionHeaders(AStream, ImageSectionHeadersPosition);
     end;
   end;
@@ -2779,6 +2910,9 @@ begin
               Exit;
             end;
 
+            // Make room for an additional section header (and grow SizeOfHeaders) if needed
+            AdjustHeadersSpace(ImageStream, NtHeaders32.OptionalHeader.FileAlignment, NtHeaders32.OptionalHeader.SizeOfHeaders);
+
             JclDebugSectionPosition := ImageSectionHeadersPosition + (SizeOf(ImageSectionHeaders[0]) * Length(ImageSectionHeaders));
             LastSection := @ImageSectionHeaders[High(ImageSectionHeaders)];
 
@@ -2821,8 +2955,8 @@ begin
               Exit;
             end;
 
-            // Check if there is enough space for additional header
-            CheckHeadersSpace(ImageStream);
+            // Make room for an additional section header (and grow SizeOfHeaders) if needed
+            AdjustHeadersSpace(ImageStream, NtHeaders64.OptionalHeader.FileAlignment, NtHeaders64.OptionalHeader.SizeOfHeaders);
 
             JclDebugSectionPosition := ImageSectionHeadersPosition + (SizeOf(ImageSectionHeaders[0]) * Length(ImageSectionHeaders));
             LastSection := @ImageSectionHeaders[High(ImageSectionHeaders)];
@@ -2877,7 +3011,15 @@ begin
   finally
     ImageStream.Free;
   end;
+
+  // Inserting the section invalidated the original PE checksum. Recompute it now that
+  // the exclusive stream is closed (MapAndLoad needs its own handle). Signing tools
+  // rewrite the checksum themselves, but a correct value is expected by some loaders
+  // and validators.
+  if Result then
+    PeUpdateCheckSum(ExecutableFileName);
 end;
+{$ENDIF}
 
 //=== { TJclBinDebugGenerator } ==============================================
 
@@ -3093,15 +3235,9 @@ begin
     for I := 0 to Length(FSourceNames) - 1 do
       if IsSegmentStored(FSourceNames[I].Segment) then
       begin
-        // FSourceNames[] is sorted by VA, so if the source file name is the same as the previous
-        // we don't need to store it because the VA will be matched by the previous entry.
-        // This removes a lot of "Generics.Collections.pas" entries.
         S := MapStringCacheToStr(FSourceNames[I].ProcName);
-        if (I = 0) or (FSourceNames[I - 1].ProcName.CachedValue <> S) then
-        begin
-          WriteValueOfs(FSourceNames[I].VA, L1);
-          WriteValueOfs(AddWord(S), L2);
-        end;
+        WriteValueOfs(FSourceNames[I].VA, L1);
+        WriteValueOfs(AddWord(S), L2);
       end;
     WriteValue(MaxInt);
 
@@ -3543,21 +3679,13 @@ begin
   begin
     Inc(StartAddr, Value);
     if Addr < StartAddr then
-    begin
-      if ItemAddr < ModuleStartAddr then
-        Name := 0
-      else
-        Found := True;
       Break;
-    end
-    else
-    begin
-      ItemAddr := StartAddr;
-      ReadValue(P, Value);
-      Inc(Name, Value);
-    end;
+    ItemAddr := StartAddr;
+    ReadValue(P, Value);
+    Inc(Name, Value);
+    Found := True;
   end;
-  if Found then
+  if Found and (ItemAddr >= ModuleStartAddr) then
     Result := DataToStr(Name)
   else
     Result := '';
@@ -4007,7 +4135,7 @@ begin
   end;
 end;
 
-function TJclDebugInfoList.GetItems(Index: Integer): TJclDebugInfoSource;
+function TJclDebugInfoList.GetItems(Index: TJclListSize): TJclDebugInfoSource;
 begin
   Result := TJclDebugInfoSource(Get(Index));
 end;
@@ -4029,23 +4157,25 @@ begin
   if not Assigned(InfoSourceClassList) then
   begin
     InfoSourceClassList := TList.Create;
+    {$IFNDEF WINSCP}
     {$IFNDEF DEBUG_NO_BINARY}
     InfoSourceClassList.Add(Pointer(TJclDebugInfoBinary));
     {$ENDIF !DEBUG_NO_BINARY}
     {$IFNDEF DEBUG_NO_TD32}
-    {$IFNDEF WINSCP}
     InfoSourceClassList.Add(Pointer(TJclDebugInfoTD32));
-    {$ENDIF ~WINSCP}
     {$ENDIF !DEBUG_NO_TD32}
+    {$ENDIF ~WINSCP}
     {$IFNDEF DEBUG_NO_MAP}
     InfoSourceClassList.Add(Pointer(TJclDebugInfoMap));
     {$ENDIF !DEBUG_NO_MAP}
+    {$IFNDEF WINSCP}
     {$IFNDEF DEBUG_NO_SYMBOLS}
     InfoSourceClassList.Add(Pointer(TJclDebugInfoSymbols));
     {$ENDIF !DEBUG_NO_SYMBOLS}
     {$IFNDEF DEBUG_NO_EXPORTS}
     InfoSourceClassList.Add(Pointer(TJclDebugInfoExports));
     {$ENDIF !DEBUG_NO_EXPORTS}
+    {$ENDIF ~WINSCP}
   end;
 end;
 
@@ -4120,6 +4250,8 @@ begin
   if Result then
     FScanner := TJclMapScanner.Create(MapFileName, Module);
 end;
+
+{$IFNDEF WINSCP}
 
 //=== { TJclDebugInfoBinary } ================================================
 
@@ -4374,8 +4506,6 @@ end;
 
 {$IFDEF BORLAND}
 
-{$IFNDEF WINSCP}
-
 //=== { TJclDebugInfoTD32 } ==================================================
 
 destructor TJclDebugInfoTD32.Destroy;
@@ -4428,8 +4558,6 @@ procedure TJclDebugInfoTD32.GenerateUnmangledNames;
 begin
   FImage.TD32Scanner.GenerateUnmangledNames;
 end;
-
-{$ENDIF ~WINSCP}
 
 {$ENDIF BORLAND}
 
@@ -4846,6 +4974,8 @@ begin
   SymGetLineFromAddrWFunc := nil;
 end;
 
+{$ENDIF ~WINSCP}
+
 //=== Source location functions ==============================================
 
 {$STACKFRAMES ON}
@@ -5022,7 +5152,14 @@ begin
         if IncludeVAddress then
           ModulePosition := 2 * (ModulePosition - 1) + 1;
         if ModulePosition < Length(Result) then
-          ModuleName := ModuleName + '.';
+        begin
+          ModuleName := ModuleName + '.'
+        end
+          else
+        begin
+          while Length(Result) < ModulePosition - 1 do
+            Result := Result + ' ';
+        end;
         Insert(ModuleName, Result, ModulePosition);
       end;
     end;
@@ -5635,7 +5772,9 @@ var
   TBI: THREAD_BASIC_INFORMATION;
   ReturnedLength: ULONG;
 begin
+  {$IFNDEF SUPPORTS_NORETURN}
   Result := 0;
+  {$ENDIF ~SUPPORTS_NORETURN}
   ReturnedLength := 0;
   if (NtQueryInformationThread(ThreadHandle, ThreadBasicInformation, @TBI, SizeOf(TBI), @ReturnedLength) < $80000000) and
      (ReturnedLength = SizeOf(TBI)) then
@@ -5649,10 +5788,30 @@ begin
     RaiseLastOSError;
 end;
 
+{$IFDEF CPU64}
+function RtlLookupFunctionEntry(
+  ControlPc: ULONG64; out ImageBase: ULONG64; HistoryTable: Pointer): PImageRuntimeFunctionEntry; stdcall;
+  external kernel32 name 'RtlLookupFunctionEntry';
+type
+  TRtlVirtualUnwind = function(
+    HandlerType: DWORD; ImageBase: ULONG64; ControlPc: ULONG64; FunctionEntry: PImageRuntimeFunctionEntry;
+    ContextRecord: PContext; out HandlerData: PVOID; out EstablisherFrame: ULONG64; ContextPointers: Pointer): Pointer; stdcall;
+{$ENDIF CPU64}
+
 function JclCreateThreadStackTrace(Raw: Boolean; const ThreadHandle: THandle): TJclStackInfoList;
 var
   ContextMemory: Pointer;
   AlignedContext: PContext;
+  {$IFDEF CPU64}
+  ContextRecord: TContext;
+  RuntimeFunction: PImageRuntimeFunctionEntry;
+  ImageBase: ULONG64;
+  EstablisherFrame: ULONG64;
+  HandlerData: PVOID;
+  StackInfo: TStackInfo;
+  Kernel32Handle: THandle;
+  RtlVirtualUnwindFunc: TRtlVirtualUnwind;
+  {$ENDIF CPU64}
 begin
   Result := nil;
   ContextMemory := AllocMem(SizeOf(TContext) + 15);
@@ -5670,10 +5829,47 @@ begin
                   Pointer(GetThreadTopOfStack(ThreadHandle)));
     end;
     {$ENDIF CPU32}
+    // Fixed for WINSCP. Code mostly generated by Gemini based on .map files from C++Builder 11.
     {$IFDEF CPU64}
-    if GetThreadContext(ThreadHandle, AlignedContext^) then
-      Result := JclCreateStackList(Raw, -1, Pointer(AlignedContext^.Rip), False, Pointer(AlignedContext^.Rbp),
-                  Pointer(GetThreadTopOfStack(ThreadHandle)));
+    Kernel32Handle := GetModuleHandle(kernel32);
+    RtlVirtualUnwindFunc := GetProcAddress(Kernel32Handle, 'RtlVirtualUnwind');
+    if Assigned(RtlVirtualUnwindFunc) and GetThreadContext(ThreadHandle, AlignedContext^) then
+    begin
+      // 1. Create the list. JCL's constructor will wrongly capture the current thread.
+      Result := JclCreateStackList(Raw, -1, nil, False, nil, nil);
+      Result.Clear; // Clear the incorrect trace
+
+      // 2. Set up the actual target thread context
+      ContextRecord := AlignedContext^;
+      ResetMemory(StackInfo, SizeOf(StackInfo));
+      StackInfo.CallerAddr := ContextRecord.Rip;
+      StackInfo.Level := 0;
+      Result.StoreToList(StackInfo);
+
+      // 3. Unwind the 64-bit stack manually
+      while True do
+      begin
+        RuntimeFunction := RtlLookupFunctionEntry(ContextRecord.Rip, ImageBase, nil);
+        if Assigned(RuntimeFunction) then
+        begin
+          // UNW_FLAG_NHANDLER is 0
+          RtlVirtualUnwindFunc(0, ImageBase, ContextRecord.Rip, RuntimeFunction, @ContextRecord, HandlerData, EstablisherFrame, nil);
+        end
+          else
+        begin
+          // Leaf function (no exception frame), pop the return address manually
+          ContextRecord.Rip := PULONG64(ContextRecord.Rsp)^;
+          ContextRecord.Rsp := ContextRecord.Rsp + 8;
+        end;
+
+        if ContextRecord.Rip = 0 then
+          Break;
+
+        Inc(StackInfo.Level);
+        StackInfo.CallerAddr := ContextRecord.Rip;
+        Result.StoreToList(StackInfo);
+      end;
+    end;
     {$ENDIF CPU64}
   finally
     FreeMem(ContextMemory);
@@ -5880,7 +6076,7 @@ begin
   end;
 end;
 
-function TJclStackInfoList.GetItems(Index: Integer): TJclStackInfoItem;
+function TJclStackInfoList.GetItems(Index: TJclListSize): TJclStackInfoItem;
 begin
   ForceStackTracing;
   Result := TJclStackInfoItem(Get(Index));
@@ -6677,10 +6873,12 @@ begin
           // 7 bytes, "CALL NEAR [EAX+EAX+$1234567]" (FF /2) where Reg = 010, Mod = 10 and RM = 100
           CallInstructionSize := 7
         else
+{$IFNDEF CPUX64} //The 9A cp call opcode is not valid in 64-bit mode
         if ((CodeDWORD8 and $0000FF00) = $00009A00) then
           // 7 bytes, "CALL FAR $1234:12345678" (9A ptr16:32)
           CallInstructionSize := 7
         else
+{$ENDIF}
           Result := False;
         // Because we're not doing a complete disassembly, we will potentially report
         // false positives. If there is odd code that uses the CALL 16:32 format, we
@@ -6897,7 +7095,7 @@ begin
   Add(Result);
 end;
 
-function TJclExceptFrameList.GetItems(Index: Integer): TJclExceptFrame;
+function TJclExceptFrameList.GetItems(Index: TJclListSize): TJclExceptFrame;
 begin
   Result := TJclExceptFrame(Get(Index));
 end;
@@ -7061,6 +7259,7 @@ begin
   end;
 end;
 
+{$IFNDEF WINSCP}
 function JclStartExceptionTracking: Boolean;
 begin
   {Increment the tracking count only if exceptions are already being tracked or tracking can be started
@@ -7099,6 +7298,7 @@ begin
     Result := False;
   end;
 end;
+{$ENDIF WINSCP}
 
 function JclExceptionTrackingActive: Boolean;
 begin
@@ -7158,6 +7358,7 @@ begin
   Kernel32_ExitThread(ExitCode);
 end;
 
+{$IFNDEF WINSCP}
 function JclHookThreads: Boolean;
 var
   ProcAddrCache: Pointer;
@@ -7201,6 +7402,7 @@ begin
   else
     Result := True;
 end;
+{$ENDIF WINSCP}
 
 function JclThreadsHooked: Boolean;
 begin
@@ -8141,7 +8343,9 @@ begin
   FreeAndNil(IgnoredExceptionClassNames);
   FreeAndNil(IgnoredExceptionClassNamesCritSect);
 
+  {$IFNDEF WINSCP}
   TJclDebugInfoSymbols.CleanupDebugSymbols;
+  {$ENDIF ~WINSCP}
 end;
 
 initialization
@@ -8162,10 +8366,12 @@ finalization
   UnregisterUnitVersion(HInstance);
   {$ENDIF UNITVERSIONING}
 
+  {$IFNDEF WINSCP}
   { TODO -oPV -cInvestigate : Calling JclStopExceptionTracking causes linking of various classes to
     the code without a real need. Although there doesn't seem to be a way to unhook exceptions
     safely because we need to be covered by JclHookExcept.Notifiers critical section }
   JclStopExceptionTracking;
+  {$ENDIF}
 
   GlobalStackList.Clear;
   JclDebugFinalized := True;

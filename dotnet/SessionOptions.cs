@@ -47,7 +47,7 @@ namespace WinSCP
     [Guid("2D4EF368-EE80-4C15-AE77-D12AEAF4B00A")]
     [ClassInterface(Constants.ClassInterface)]
     [ComVisible(true)]
-    public sealed class SessionOptions
+    public sealed class SessionOptions : ISessionOptions
     {
         public SessionOptions()
         {
@@ -190,7 +190,7 @@ namespace WinSCP
 
             if (string.IsNullOrEmpty(HostName))
             {
-                throw new ArgumentException("No host name", nameof(url));
+                throw new ArgumentException("No hostname", nameof(url));
             }
 
             if (string.IsNullOrEmpty(portNumber))
@@ -252,6 +252,7 @@ namespace WinSCP
                     }
                     else if (parameterName.StartsWith(RawSettingsPrefix, StringComparison.OrdinalIgnoreCase))
                     {
+                        // Needs UnMungeStr-like decoding
                         parameterName = UriUnescape(parameterName.Substring(RawSettingsPrefix.Length));
                         if (parameterName.Equals("name", StringComparison.OrdinalIgnoreCase))
                         {

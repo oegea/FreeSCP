@@ -319,7 +319,7 @@ def _closure_bind_addr(m):
 # 3) closure passed as a call argument to a known closure-taking method: f(Method) -> bind.
 #    (WinSCP funcs that take a Delphi event/closure by a member-method name, optionally with an
 #    explicit receiver: f(Method) -> this-bound, f(obj.Method) -> obj-bound.)
-CLOSURE_ARG_FUNCS = ['RunAction', 'TimeoutPrompt', 'RegisterReceiveHandler', 'UnregisterReceiveHandler']
+CLOSURE_ARG_FUNCS = ['RunAction', 'StartAction', 'TimeoutPrompt', 'RegisterReceiveHandler', 'UnregisterReceiveHandler']
 CLOSURE_ARG_RE = re.compile(
     r'\b(?P<fn>' + '|'.join(CLOSURE_ARG_FUNCS) + r')\(\s*'
     r'(?:(?P<recv>[A-Za-z_]\w*)\s*\.\s*)?'
@@ -327,7 +327,8 @@ CLOSURE_ARG_RE = re.compile(
 
 def _closure_arg(m):
     rhs = m.group('rhs')
-    if rhs in _BIND_SKIP or re.match(r'F[A-Z]', rhs):
+    # `Action` is the already-bound TNotifyEvent parameter RunAction forwards to StartAction (6.6+)
+    if rhs in _BIND_SKIP or rhs == 'Action' or re.match(r'F[A-Z]', rhs):
         return m.group(0)
     recv = m.group('recv')
     if recv:
@@ -421,10 +422,12 @@ SLOT_RULES = [
 # 4d) 3-arg <-> 4-arg process-file event arity casts (std::function won't convert; the bridge
 #     funcs live guarded in Terminal.h). Only single-identifier operands (passed-through event
 #     vars), so this never touches closure/lambda constructions.
-EVENTEX_CAST_RE = re.compile(r'\(\s*TProcessFileEventEx\s*\)\s*(?P<x>[A-Za-z_]\w*)')
-EVENT_CAST_RE   = re.compile(r'\bTProcessFileEvent\(\s*(?P<x>[A-Za-z_]\w*)\s*\)')
-def _eventex_cast(m): return '::WinscpToEventEx(%s)' % m.group('x')
-def _event_cast(m):   return '::WinscpToEvent(%s)' % m.group('x')
+# Upstream writes these casts C-style `(TProcessFileEventEx)X` / functional `TProcessFileEvent(X)`
+# up to 6.5 and as `reinterpret_cast<T>(X)` from 6.6 on; accept both spellings.
+EVENTEX_CAST_RE = re.compile(r'(?:\(\s*TProcessFileEventEx\s*\)\s*(?P<x>[A-Za-z_]\w*)|\breinterpret_cast\s*<\s*TProcessFileEventEx\s*>\s*\(\s*(?P<y>[A-Za-z_]\w*)\s*\))')
+EVENT_CAST_RE   = re.compile(r'(?:\bTProcessFileEvent\(\s*(?P<x>[A-Za-z_]\w*)\s*\)|\breinterpret_cast\s*<\s*TProcessFileEvent\s*>\s*\(\s*(?P<y>[A-Za-z_]\w*)\s*\))')
+def _eventex_cast(m): return '::WinscpToEventEx(%s)' % (m.group('x') or m.group('y'))
+def _event_cast(m):   return '::WinscpToEvent(%s)' % (m.group('x') or m.group('y'))
 
 # 4c) FileOperationLoop(Method, ...) — 1st arg is the operation's callback event (this-bound).
 FILEOPLOOP_RE = re.compile(r'FileOperationLoop\(\s*(?P<meth>[A-Za-z_]\w*)\s*,')

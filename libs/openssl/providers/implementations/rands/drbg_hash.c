@@ -1,5 +1,5 @@
 /*
- * Copyright 2011-2024 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 2011-2026 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -22,6 +22,9 @@
 #include "prov/provider_util.h"
 #include "prov/implementations.h"
 #include "drbg_local.h"
+#include "crypto/evp.h"
+#include "crypto/evp/evp_local.h"
+#include "internal/provider.h"
 
 static OSSL_FUNC_rand_newctx_fn drbg_hash_new_wrapper;
 static OSSL_FUNC_rand_freectx_fn drbg_hash_free;
@@ -423,6 +426,8 @@ static int drbg_hash_new(PROV_DRBG *ctx)
     if (hash == NULL)
         return 0;
 
+    OSSL_FIPS_IND_INIT(ctx)
+
     ctx->data = hash;
     ctx->seedlen = HASH_PRNG_MAX_SEEDLEN;
     ctx->max_entropylen = DRBG_MAX_LENGTH;
@@ -495,9 +500,49 @@ static const OSSL_PARAM *drbg_hash_gettable_ctx_params(ossl_unused void *vctx,
     static const OSSL_PARAM known_gettable_ctx_params[] = {
         OSSL_PARAM_utf8_string(OSSL_DRBG_PARAM_DIGEST, NULL, 0),
         OSSL_PARAM_DRBG_GETTABLE_CTX_COMMON,
-        OSSL_PARAM_END
+        OSSL_FIPS_IND_GETTABLE_CTX_PARAM()
+            OSSL_PARAM_END
     };
     return known_gettable_ctx_params;
+}
+
+static int drbg_fetch_digest_from_prov(const OSSL_PARAM params[],
+    OSSL_LIB_CTX *libctx,
+    EVP_MD **digest,
+    const char *propq)
+{
+    const OSSL_PARAM *p;
+    EVP_MD *md = NULL;
+    int ret = 0;
+    const char *propquery = NULL;
+
+#ifndef FIPS_MODULE
+    if (propq == NULL)
+        propquery = "provider=default";
+    else
+        propquery = propq;
+#endif
+
+    if (digest == NULL)
+        return 0;
+
+    p = OSSL_PARAM_locate_const(params, OSSL_ALG_PARAM_DIGEST);
+    if (p == NULL) {
+        ret = 1;
+        goto done;
+    }
+
+    if (p->data_type != OSSL_PARAM_UTF8_STRING)
+        goto done;
+
+    md = EVP_MD_fetch(libctx, p->data, propquery);
+    if (md) {
+        EVP_MD_free(*digest);
+        *digest = md;
+        ret = 1;
+    }
+done:
+    return ret;
 }
 
 static int drbg_hash_set_ctx_params_locked(void *vctx, const OSSL_PARAM params[])
@@ -505,18 +550,46 @@ static int drbg_hash_set_ctx_params_locked(void *vctx, const OSSL_PARAM params[]
     PROV_DRBG *ctx = (PROV_DRBG *)vctx;
     PROV_DRBG_HASH *hash = (PROV_DRBG_HASH *)ctx->data;
     OSSL_LIB_CTX *libctx = PROV_LIBCTX_OF(ctx->provctx);
+    EVP_MD *prov_md = NULL;
     const EVP_MD *md;
+    int md_size;
+    const OSSL_PARAM *p;
 
-    if (!ossl_prov_digest_load_from_params(&hash->digest, params, libctx))
+    if (!OSSL_FIPS_IND_SET_CTX_PARAM(ctx, OSSL_FIPS_IND_SETTABLE0, params,
+            OSSL_DRBG_PARAM_FIPS_DIGEST_CHECK))
         return 0;
+
+    /* try to fetch digest from provider */
+    p = OSSL_PARAM_locate_const(params, OSSL_DRBG_PARAM_PROPERTIES);
+    (void)ERR_set_mark();
+    if (!drbg_fetch_digest_from_prov(params, libctx, &prov_md,
+            (p != NULL && p->data_type == OSSL_PARAM_UTF8_STRING) ? p->data : NULL)) {
+        (void)ERR_pop_to_mark();
+        /*
+         * Its possible for drbg_fetch_digest_from_prov to return 0 after having set prov_md
+         * so we need to ensure we free it here
+         */
+        EVP_MD_free(prov_md);
+
+        /* fall back to full implementation search */
+        if (!ossl_prov_digest_load_from_params(&hash->digest, params, libctx))
+            return 0;
+    } else {
+        (void)ERR_clear_last_mark();
+        if (prov_md)
+            ossl_prov_digest_set_md(&hash->digest, prov_md);
+    }
 
     md = ossl_prov_digest_md(&hash->digest);
     if (md != NULL) {
-        if (!ossl_drbg_verify_digest(libctx, md))
+        if (!ossl_drbg_verify_digest(ctx, libctx, md))
             return 0; /* Error already raised for us */
 
         /* These are taken from SP 800-90 10.1 Table 2 */
-        hash->blocklen = EVP_MD_get_size(md);
+        md_size = EVP_MD_get_size(md);
+        if (md_size <= 0)
+            return 0;
+        hash->blocklen = md_size;
         /* See SP800-57 Part1 Rev4 5.6.1 Table 3 */
         ctx->strength = 64 * (hash->blocklen >> 3);
         if (ctx->strength > 256)
@@ -556,7 +629,8 @@ static const OSSL_PARAM *drbg_hash_settable_ctx_params(ossl_unused void *vctx,
         OSSL_PARAM_utf8_string(OSSL_DRBG_PARAM_PROPERTIES, NULL, 0),
         OSSL_PARAM_utf8_string(OSSL_DRBG_PARAM_DIGEST, NULL, 0),
         OSSL_PARAM_DRBG_SETTABLE_CTX_COMMON,
-        OSSL_PARAM_END
+        OSSL_FIPS_IND_SETTABLE_CTX_PARAM(OSSL_DRBG_PARAM_FIPS_DIGEST_CHECK)
+            OSSL_PARAM_END
     };
     return known_settable_ctx_params;
 }

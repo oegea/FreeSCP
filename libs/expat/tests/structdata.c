@@ -7,8 +7,9 @@
                                  |_| XML parser
 
    Copyright (c) 2017      Rhodri James <rhodri@wildebeest.org.uk>
-   Copyright (c) 2017-2023 Sebastian Pipping <sebastian@pipping.org>
+   Copyright (c) 2017-2026 Sebastian Pipping <sebastian@pipping.org>
    Copyright (c) 2022      Sean McBride <sean@rogue-research.com>
+   Copyright (c) 2026      Matthew Fernandez <matthew.fernandez@gmail.com>
    Licensed under the MIT license:
 
    Permission is  hereby granted,  free of charge,  to any  person obtaining
@@ -29,6 +30,8 @@
    DAMAGES OR  OTHER LIABILITY, WHETHER  IN AN  ACTION OF CONTRACT,  TORT OR
    OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
    USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+   SPDX-License-Identifier: MIT
 */
 
 #if defined(NDEBUG)
@@ -44,24 +47,21 @@
 
 #include "structdata.h"
 #include "minicheck.h"
+#include "../lib/xcs.h"
 
 #define STRUCT_EXTENSION_COUNT 8
 
 #ifdef XML_UNICODE_WCHAR_T
 #  include <wchar.h>
 #  define XML_FMT_STR "ls"
-#  define xcstrlen(s) wcslen(s)
-#  define xcstrcmp(s, t) wcscmp((s), (t))
 #else
 #  define XML_FMT_STR "s"
-#  define xcstrlen(s) strlen(s)
-#  define xcstrcmp(s, t) strcmp((s), (t))
 #endif
 
 static XML_Char *
 xmlstrdup(const XML_Char *s) {
-  size_t byte_count = (xcstrlen(s) + 1) * sizeof(XML_Char);
-  XML_Char *const dup = (XML_Char *)malloc(byte_count);
+  size_t byte_count = (xcslen(s) + 1) * sizeof(XML_Char);
+  XML_Char *const dup = malloc(byte_count);
 
   assert(dup != NULL);
   memcpy(dup, s, byte_count);
@@ -87,8 +87,8 @@ StructData_AddItem(StructData *storage, const XML_Char *s, int data0, int data1,
     StructDataEntry *new_entries;
 
     storage->max_count += STRUCT_EXTENSION_COUNT;
-    new_entries = (StructDataEntry *)realloc(
-        storage->entries, storage->max_count * sizeof(StructDataEntry));
+    new_entries = realloc(storage->entries,
+                          storage->max_count * sizeof(StructDataEntry));
     assert(new_entries != NULL);
     storage->entries = new_entries;
   }
@@ -125,7 +125,7 @@ StructData_CheckItems(StructData *storage, const StructDataEntry *expected,
       assert(got != NULL);
       assert(want != NULL);
 
-      if (xcstrcmp(got->str, want->str) != 0) {
+      if (xcscmp(got->str, want->str) != 0) {
         StructData_Dispose(storage);
         fail("structure got bad string");
       } else {

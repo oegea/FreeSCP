@@ -73,3 +73,8 @@ void wingss_cleanup(void) {}
 
 /* retrieve_host_key lives in uxstore.c (shares the in-memory host-key cache with store_host_key). */
 const char *in_memory_key_data(const Filename *fn) { (void)fn; return 0; }
+
+/* Which SSH agent protocol endpoint to talk to (windows/agent-client.c; Pageant vs the Windows
+ * OpenSSH named pipe). TConfiguration reads/writes it; the Unix agent client is still a stub. */
+#include "puttyexp.h"
+AuthAgentImplementation auth_agent_implementation = AAI_PAGEANT;

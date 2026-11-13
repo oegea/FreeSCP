@@ -107,6 +107,7 @@ double __fastcall DaysBetween(const TDateTime & A, const TDateTime & B) { return
 double __fastcall HoursBetween(const TDateTime & A, const TDateTime & B) { return DaysBetween(A,B) * 24; }
 double __fastcall MinutesBetween(const TDateTime & A, const TDateTime & B) { return DaysBetween(A,B) * MinsPerDay; }
 double __fastcall SecondsBetween(const TDateTime & A, const TDateTime & B) { return DaysBetween(A,B) * SecsPerDay; }
+__int64 __fastcall MilliSecondsBetween(const TDateTime & A, const TDateTime & B) { return static_cast<__int64>(DaysBetween(A,B) * SecsPerDay * 1000.0 + 0.5); }
 double __fastcall MonthsBetween(const TDateTime & A, const TDateTime & B) { return DaysBetween(A,B) / 30.4375; }
 double __fastcall YearsBetween(const TDateTime & A, const TDateTime & B) { return DaysBetween(A,B) / 365.25; }
 int __fastcall MilliSecondOfTheDay(const TDateTime & DT) { long d; double f; Split(DT,d,f); return static_cast<int>(std::llround(f * MSecsPerDay)); }
@@ -598,6 +599,7 @@ long  __fastcall SHGetFolderPath(HWND, int CSIdl, HANDLE, DWORD, wchar_t * Path)
 BOOL  __fastcall GetProductInfo(DWORD, DWORD, DWORD, DWORD, DWORD *) { return FALSE; }
 DWORD __fastcall GetTimeZoneInformation(TIME_ZONE_INFORMATION *) { return TIME_ZONE_ID_UNKNOWN; }
 DWORD __fastcall GetModuleFileNameEx(HANDLE, HMODULE, wchar_t *, DWORD) { return 0; }
+BOOL  __fastcall EnumProcessModules(HANDLE, HMODULE *, DWORD, DWORD * Needed) { if (Needed) *Needed = 0; return FALSE; }
 BOOL  __fastcall IsWow64Process(HANDLE, BOOL * w) { if (w) *w = FALSE; return TRUE; }
 void  __fastcall GlobalFree(void *) {}
 long  __fastcall FindMimeFromData(void *, const wchar_t *, void *, DWORD, const wchar_t *, DWORD, wchar_t **, DWORD) { return -1; }

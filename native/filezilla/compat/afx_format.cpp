@@ -105,3 +105,30 @@ HANDLE FindFirstFile(const wchar_t * name, WIN32_FIND_DATAW * data)
   data->nFileSizeHigh = (DWORD)((unsigned long long)st.st_size >> 32);
   return (HANDLE)(intptr_t)1;   // non-NULL, non-INVALID sentinel; FindClose is a no-op
 }
+
+//---------------------------------------------------------------------------
+// Bridges to the engine RTL (rtlcompat): the pieces of upstream's UnicodeString-backed MFC subset
+// (libs/mfc, 6.6+) that need the complete UnicodeString / exception types.
+//---------------------------------------------------------------------------
+#include <vcl.h>
+#include <Global.h>
+#include <Common.h>
+
+CString::CString(const UnicodeString & str) : s_(str.raw()) {}
+
+void CString::Format(unsigned id, ...)
+{
+  UnicodeString fmt = LoadStr(static_cast<int>(id));
+  va_list ap; va_start(ap, id); FormatV(fmt.c_str(), ap); va_end(ap);
+}
+
+std::string fz_path_utf8(const wchar_t * name)
+{
+  return std::string(UTF8String(UnicodeString(name)).c_str());
+}
+
+void fz_raise_os_error(int err)
+{
+  RaiseLastOSError(err);   // throws EOSError, which the FileZilla transfer code catches
+  throw EOSError(UnicodeString(L"File I/O error"));   // not reached; keeps callers from continuing if it ever returns
+}

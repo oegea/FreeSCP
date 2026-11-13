@@ -8,7 +8,10 @@ set(EXPAT_DIR ${CMAKE_SOURCE_DIR}/../libs/expat)
 add_library(expat STATIC
   ${EXPAT_DIR}/lib/xmlparse.c
   ${EXPAT_DIR}/lib/xmlrole.c
-  ${EXPAT_DIR}/lib/xmltok.c)
+  ${EXPAT_DIR}/lib/xmltok.c
+  # Expat 2.9+ split these out of xmlparse.c
+  ${EXPAT_DIR}/lib/xcs.c
+  ${EXPAT_DIR}/lib/random_getentropy.c)
 target_compile_definitions(expat PRIVATE HAVE_EXPAT_CONFIG_H XML_STATIC)
 target_include_directories(expat PUBLIC ${EXPAT_DIR} ${EXPAT_DIR}/lib)
 target_compile_options(expat PRIVATE -w -Wno-everything)

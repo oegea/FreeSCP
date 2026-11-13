@@ -8,7 +8,9 @@
 
 #ifdef WINSCP
 
-bool free_sysdir = false;
+#include "puttyexp.h"
+
+static bool free_sysdir = false;
 
 void win_misc_cleanup()
 {
@@ -28,6 +30,8 @@ const char *get_system_dir(void)
     if (free_sysdir)
     {
         sfree(sysdir);
+        sysdir = NULL;
+        sysdirsize = 0;
         return NULL;
     }
     #endif

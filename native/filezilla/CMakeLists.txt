@@ -28,7 +28,6 @@ set(FZ_SOURCES
   ${FZ_DIR}/FtpControlSocket.cpp
   # compat runtime
   ${COMPAT_DIR}/afx_format.cpp
-  ${COMPAT_DIR}/afx_statics.cpp
   ${COMPAT_DIR}/winmsg.cpp)
 
 add_library(winscpfilezilla STATIC ${FZ_SOURCES})

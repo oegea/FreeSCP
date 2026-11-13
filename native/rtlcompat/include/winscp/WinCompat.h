@@ -13,6 +13,8 @@
 typedef long           LONG;
 typedef unsigned int   UINT32;
 typedef unsigned short USHORT;
+typedef unsigned long  ULONG;
+typedef wchar_t        WCHAR;
 typedef wchar_t        TCHAR;
 typedef wchar_t *      LPWSTR;
 typedef wchar_t *      PWSTR;
@@ -55,6 +57,12 @@ typedef long           HRESULT;
 
 //--- HRESULT / error codes ---
 #define SUCCEEDED(hr) (((HRESULT)(hr)) >= 0)
+//--- COM names Common.h's TComPtr<T> template mentions (never instantiated in the port) ---
+#ifndef DELPHI_PACKAGE
+#define DELPHI_PACKAGE
+#endif
+struct _GUID;
+typedef const struct _GUID & REFCLSID;
 #define FAILED(hr) (((HRESULT)(hr)) < 0)
 #define S_OK 0L
 #define ERROR_SUCCESS 0L
@@ -117,6 +125,7 @@ const Word fmShareDenyWrite = 0x0020;
 #define KEY_READ 0x20019
 #define KEY_WRITE 0x20006
 #define KEY_WOW64_64KEY 0x0100
+#define KEY_WOW64_32KEY 0x0200
 #ifndef REG_NONE
 #define REG_NONE 0
 #endif

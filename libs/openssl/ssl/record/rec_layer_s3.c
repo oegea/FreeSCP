@@ -1,11 +1,13 @@
 /*
- * Copyright 1995-2025 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 1995-2026 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
  * in the file LICENSE in the source distribution or at
  * https://www.openssl.org/source/license.html
  */
+
+#include "internal/e_os.h"
 
 #include <stdio.h>
 #include <limits.h>
@@ -19,6 +21,8 @@
 #include <openssl/core_names.h>
 #include "record_local.h"
 #include "internal/packet.h"
+#include "internal/comp.h"
+#include "internal/ssl_unwrap.h"
 
 void RECORD_LAYER_init(RECORD_LAYER *rl, SSL_CONNECTION *s)
 {
@@ -146,7 +150,7 @@ static uint32_t ossl_get_max_early_data(SSL_CONNECTION *s)
 static int ossl_early_data_count_ok(SSL_CONNECTION *s, size_t length,
     size_t overhead, int send)
 {
-    uint32_t max_early_data;
+    uint64_t max_early_data;
 
     max_early_data = ossl_get_max_early_data(s);
 
@@ -594,7 +598,7 @@ int ssl_release_record(SSL_CONNECTION *s, TLS_RECORD *rr, size_t length)
  *   -  SSL3_RT_APPLICATION_DATA (when ssl3_read calls us)
  *   -  0 (during a shutdown, no data has to be returned)
  *
- * If we don't have stored data to work from, read a SSL/TLS record first
+ * If we don't have stored data to work from, read an SSL/TLS record first
  * (possibly multiple records if we still don't have anything to return).
  *
  * This function must handle any surprises the peer may have for us, such as
@@ -1294,6 +1298,8 @@ int ssl_set_new_record_layer(SSL_CONNECTION *s, int version,
     } else {
         *opts++ = OSSL_PARAM_construct_size_t(OSSL_LIBSSL_RECORD_LAYER_PARAM_BLOCK_PADDING,
             &s->rlayer.block_padding);
+        *opts++ = OSSL_PARAM_construct_size_t(OSSL_LIBSSL_RECORD_LAYER_PARAM_HS_PADDING,
+            &s->rlayer.hs_padding);
     }
     *opts = OSSL_PARAM_construct_end();
 

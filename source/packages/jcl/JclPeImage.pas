@@ -71,6 +71,7 @@ type
   // Base list
   EJclPeImageError = class(EJclError);
 
+  {$IFNDEF WINSCP}
   TJclPeImage = class;
 
   TJclPeImageClass = class of TJclPeImage;
@@ -152,7 +153,7 @@ type
     FThunkData: Pointer;
     function GetCount: Integer;
     function GetFileName: TFileName;
-    function GetItems(Index: Integer): TJclPeImportFuncItem;
+    function GetItems(Index: TJclListSize): TJclPeImportFuncItem;
     function GetName: string;
     function GetThunkData32: PImageThunkData32;
     function GetThunkData64: PImageThunkData64;
@@ -172,7 +173,7 @@ type
     property ImportDescriptor: Pointer read FImportDescriptor;
     property ImportDirectoryIndex: Integer read FImportDirectoryIndex;
     property ImportKind: TJclPeImportKind read FImportKind;
-    property Items[Index: Integer]: TJclPeImportFuncItem read GetItems; default;
+    property Items[Index: TJclListSize]: TJclPeImportFuncItem read GetItems; default;
     property Name: string read GetName;
     property OriginalName: string read FName;
     // use the following properties
@@ -193,7 +194,7 @@ type
     FUniqueNamesList: TStringList;
     function GetAllItemCount: Integer;
     function GetAllItems(Index: Integer): TJclPeImportFuncItem;
-    function GetItems(Index: Integer): TJclPeImportLibItem;
+    function GetItems(Index: TJclListSize): TJclPeImportLibItem;
     function GetUniqueLibItemCount: Integer;
     function GetUniqueLibItems(Index: Integer): TJclPeImportLibItem;
     function GetUniqueLibNames(Index: Integer): string;
@@ -214,7 +215,7 @@ type
     property AllItems[Index: Integer]: TJclPeImportFuncItem read GetAllItems;
     property AllItemCount: Integer read GetAllItemCount;
     property FilterModuleName: string read FFilterModuleName write SetFilterModuleName;
-    property Items[Index: Integer]: TJclPeImportLibItem read GetItems; default;
+    property Items[Index: TJclListSize]: TJclPeImportLibItem read GetItems; default;
     property LinkerProducer: TJclPeLinkerProducer read FLinkerProducer;
     property UniqueLibItemCount: Integer read GetUniqueLibItemCount;
     property UniqueLibItemFromName[const Name: string]: TJclPeImportLibItem read GetUniqueLibItemFromName;
@@ -279,7 +280,7 @@ type
     FSorted: Boolean;
     FTotalResolveCheck: TJclPeResolveCheck;
     function GetForwardedLibsList: TStrings;
-    function GetItems(Index: Integer): TJclPeExportFuncItem;
+    function GetItems(Index: TJclListSize): TJclPeExportFuncItem;
     function GetItemFromAddress(Address: DWORD): TJclPeExportFuncItem;
     function GetItemFromOrdinal(Ordinal: DWORD): TJclPeExportFuncItem;
     function GetItemFromName(const Name: string): TJclPeExportFuncItem;
@@ -304,13 +305,15 @@ type
     property ExportDir: PImageExportDirectory read FExportDir;
     property ForwardedLibsList: TStrings read GetForwardedLibsList;
     property FunctionCount: DWORD read FFunctionCount;
-    property Items[Index: Integer]: TJclPeExportFuncItem read GetItems; default;
+    property Items[Index: TJclListSize]: TJclPeExportFuncItem read GetItems; default;
     property ItemFromAddress[Address: DWORD]: TJclPeExportFuncItem read GetItemFromAddress;
     property ItemFromName[const Name: string]: TJclPeExportFuncItem read GetItemFromName;
     property ItemFromOrdinal[Ordinal: DWORD]: TJclPeExportFuncItem read GetItemFromOrdinal;
     property Name: string read GetName;
     property TotalResolveCheck: TJclPeResolveCheck read FTotalResolveCheck;
   end;
+
+  {$ENDIF WINSCP}
 
   // Resource section related classes
   TJclPeResourceKind = (
@@ -340,6 +343,8 @@ type
     rtHmtl,
     rtManifest,
     rtUserDefined);
+
+  {$IFNDEF WINSCP}
 
   TJclPeResourceList = class;
   TJclPeResourceItem = class;
@@ -399,7 +404,7 @@ type
   private
     FDirectory: PImageResourceDirectory;
     FParentItem: TJclPeResourceItem;
-    function GetItems(Index: Integer): TJclPeResourceItem;
+    function GetItems(Index: TJclListSize): TJclPeResourceItem;
   protected
     procedure CreateList(AParentItem: TJclPeResourceItem);
   public
@@ -407,7 +412,7 @@ type
       ADirectory: PImageResourceDirectory);
     function FindName(const Name: string): TJclPeResourceItem;
     property Directory: PImageResourceDirectory read FDirectory;
-    property Items[Index: Integer]: TJclPeResourceItem read GetItems; default;
+    property Items[Index: TJclListSize]: TJclPeResourceItem read GetItems; default;
     property ParentItem: TJclPeResourceItem read FParentItem;
   end;
 
@@ -450,7 +455,7 @@ type
   TJclPeRelocList = class(TJclPeImageBaseList)
   private
     FAllItemCount: Integer;
-    function GetItems(Index: Integer): TJclPeRelocEntry;
+    function GetItems(Index: TJclListSize): TJclPeRelocEntry;
     function GetAllItems(Index: Integer): TJclPeRelocation;
   protected
     procedure CreateList;
@@ -458,19 +463,19 @@ type
     constructor Create(AImage: TJclPeImage);
     property AllItems[Index: Integer]: TJclPeRelocation read GetAllItems;
     property AllItemCount: Integer read FAllItemCount;
-    property Items[Index: Integer]: TJclPeRelocEntry read GetItems; default;
+    property Items[Index: TJclListSize]: TJclPeRelocEntry read GetItems; default;
   end;
 
   // Debug section related classes
   TJclPeDebugList = class(TJclPeImageBaseList)
   private
-    function GetItems(Index: Integer): TImageDebugDirectory;
+    function GetItems(Index: TJclListSize): TImageDebugDirectory;
     function IsTD32DebugInfo(DebugDir: PImageDebugDirectory): Boolean;
   protected
     procedure CreateList;
   public
     constructor Create(AImage: TJclPeImage);
-    property Items[Index: Integer]: TImageDebugDirectory read GetItems; default;
+    property Items[Index: TJclListSize]: TImageDebugDirectory read GetItems; default;
   end;
 
   // Certificates section related classes
@@ -486,12 +491,12 @@ type
 
   TJclPeCertificateList = class(TJclPeImageBaseList)
   private
-    function GetItems(Index: Integer): TJclPeCertificate;
+    function GetItems(Index: TJclListSize): TJclPeCertificate;
   protected
     procedure CreateList;
   public
     constructor Create(AImage: TJclPeImage);
-    property Items[Index: Integer]: TJclPeCertificate read GetItems; default;
+    property Items[Index: TJclListSize]: TJclPeCertificate read GetItems; default;
   end;
 
   // Common Language Runtime section related classes
@@ -510,6 +515,8 @@ type
     property VersionString: string read GetVersionString;
     property Image: TJclPeImage read FImage;
   end;
+
+  {$ENDIF WINSCP}
 
   // PE Image
   TJclPeHeader = (
@@ -578,6 +585,8 @@ type
 
   TJclPeImageStatus = (stNotLoaded, stOk, stNotPE, stNotSupported, stNotFound, stError);
   TJclPeTarget = (taUnknown, taWin32, taWin64);
+
+  {$IFNDEF WINSCP}
 
   TJclPeImage = class(TObject)
   private
@@ -853,6 +862,8 @@ type
     property OnProcessFile: TJclPeNameSearchNotifyEvent read FOnProcessFile write FOnProcessFile;
   end;
 
+  {$ENDIF}
+
 // PE Image miscellaneous functions
 type
   TJclRebaseImageInfo32 = record
@@ -882,7 +893,9 @@ function PeGetNtHeaders64(const FileName: TFileName; out NtHeaders: TImageNtHead
 
 { Image modifications }
 
+{$IFNDEF WINSCP}
 function PeCreateNameHintTable(const FileName: TFileName): Boolean;
+{$ENDIF WINSCP}
 
 // use PeRebaseImage32
 //function PeRebaseImage(const ImageName: TFileName; NewBase: DWORD = 0; TimeStamp: DWORD = 0;
@@ -892,20 +905,25 @@ function PeRebaseImage32(const ImageName: TFileName; NewBase: TJclAddr32 = 0; Ti
 function PeRebaseImage64(const ImageName: TFileName; NewBase: TJclAddr64 = 0; TimeStamp: DWORD = 0;
   MaxNewSize: DWORD = 0): TJclRebaseImageInfo64;
 
+{$IFNDEF WINSCP}
 function PeUpdateLinkerTimeStamp(const FileName: TFileName; const Time: TDateTime): Boolean;
 function PeReadLinkerTimeStamp(const FileName: TFileName): TDateTime;
+{$ENDIF WINSCP}
 
 function PeInsertSection(const FileName: TFileName; SectionStream: TStream; SectionName: string): Boolean;
 
 { Image Checksum }
 
+{$IFNDEF WINSCP}
 function PeVerifyCheckSum(const FileName: TFileName): Boolean;
+{$ENDIF WINSCP}
 function PeClearCheckSum(const FileName: TFileName): Boolean;
 function PeUpdateCheckSum(const FileName: TFileName): Boolean;
 
 // Various simple PE Image searching and listing routines
 { Exports searching }
 
+{$IFNDEF WINSCP}
 function PeDoesExportFunction(const FileName: TFileName; const FunctionName: string;
   Options: TJclSmartCompOptions = []): Boolean;
 
@@ -955,6 +973,7 @@ function PeFindMissingImports(const FileName: TFileName; MissingImportsList: TSt
 function PeFindMissingImports(RequiredImportsList, MissingImportsList: TStrings): Boolean; overload;
 
 function PeCreateRequiredImportList(const FileName: TFileName; RequiredImportsList: TStrings): Boolean;
+{$ENDIF WINSCP}
 
 // Mapped or loaded image related routines
 // use PeMapImgNtHeaders32
@@ -1003,12 +1022,16 @@ function PeMapImgFindSection(const ImageSectionHeaders: TImageSectionHeaderArray
 function PeMapImgFindSectionFromModule(const BaseAddress: Pointer;
   const SectionName: string): PImageSectionHeader;
 
+{$IFNDEF WINSCP}
 function PeMapImgExportedVariables(const Module: HMODULE; const VariablesList: TStrings): Boolean;
+{$ENDIF WINSCP}
 
 function PeMapImgResolvePackageThunk(Address: Pointer): Pointer;
 
+{$IFNDEF WINSCP}
 function PeMapFindResource(const Module: HMODULE; const ResourceType: PChar;
   const ResourceName: string): Pointer;
+{$ENDIF WINSCP}
 
 type
   TJclPeSectionStream = class(TCustomMemoryStream)
@@ -1049,7 +1072,7 @@ type
 
   TJclPeMapImgHooks = class(TObjectList)
   private
-    function GetItems(Index: Integer): TJclPeMapImgHookItem;
+    function GetItems(Index: TJclListSize): TJclPeMapImgHookItem;
     function GetItemFromOriginalAddress(OriginalAddress: Pointer): TJclPeMapImgHookItem;
     function GetItemFromNewAddress(NewAddress: Pointer): TJclPeMapImgHookItem;
   public
@@ -1061,7 +1084,7 @@ type
     procedure UnhookAll;
     function UnhookByNewAddress(NewAddress: Pointer): Boolean;
     procedure UnhookByBaseAddress(BaseAddress: Pointer);
-    property Items[Index: Integer]: TJclPeMapImgHookItem read GetItems; default;
+    property Items[Index: TJclListSize]: TJclPeMapImgHookItem read GetItems; default;
     property ItemFromOriginalAddress[OriginalAddress: Pointer]: TJclPeMapImgHookItem read GetItemFromOriginalAddress;
     property ItemFromNewAddress[NewAddress: Pointer]: TJclPeMapImgHookItem read GetItemFromNewAddress;
   end;
@@ -1129,7 +1152,7 @@ uses
   Character,
   {$ENDIF HAS_UNIT_CHARACTER}
   {$ENDIF ~HAS_UNITSCOPE}
-  {$IFNDEF WINSCP}JclLogic,{$ELSE}Math, System.AnsiStrings, {$ENDIF ~WINSCP} JclResources, JclSysUtils, JclAnsiStrings, JclStrings{$IFNDEF WINSCP}, JclStringConversions{$ENDIF ~WINSCP}, JclTD32;
+  {$IFNDEF WINSCP}JclLogic,{$ELSE}Math, System.AnsiStrings, {$ENDIF ~WINSCP} JclResources, JclSysUtils, JclAnsiStrings, JclStrings{$IFNDEF WINSCP}, JclStringConversions, JclTD32{$ENDIF ~WINSCP};
 
 const
   MANIFESTExtension = '.manifest';
@@ -1199,6 +1222,8 @@ begin
     Result := (StrIComp(T1, T2) = 0);
 end;
 
+{$IFNDEF WINSCP}
+
 function CreatePeImage(const FileName: TFileName): TJclPeImage;
 begin
   Result := TJclPeImage.Create(True);
@@ -1254,6 +1279,8 @@ begin
   end;
 end;
 
+{$ENDIF}
+
 // Smart name compare function
 function PeStripFunctionAW(const FunctionName: string): string;
 var
@@ -1292,6 +1319,8 @@ begin
       Result := False;
   end;
 end;
+
+{$IFNDEF WINSCP}
 
 //=== { TJclPeImagesCache } ==================================================
 
@@ -1662,7 +1691,7 @@ begin
   Result := Image.ExpandModuleName(Name);
 end;
 
-function TJclPeImportLibItem.GetItems(Index: Integer): TJclPeImportFuncItem;
+function TJclPeImportLibItem.GetItems(Index: TJclListSize): TJclPeImportFuncItem;
 begin
   Result := TJclPeImportFuncItem(Get(Index));
 end;
@@ -1922,7 +1951,7 @@ begin
   Result := TJclPeImportFuncItem(FAllItemsList[Index]);
 end;
 
-function TJclPeImportList.GetItems(Index: Integer): TJclPeImportLibItem;
+function TJclPeImportList.GetItems(Index: TJclListSize): TJclPeImportLibItem;
 begin
   Result := TJclPeImportLibItem(Get(Index));
 end;
@@ -2535,7 +2564,7 @@ begin
     end;
 end;
 
-function TJclPeExportFuncList.GetItems(Index: Integer): TJclPeExportFuncItem;
+function TJclPeExportFuncList.GetItems(Index: TJclListSize): TJclPeExportFuncItem;
 begin
   Result := TJclPeExportFuncItem(Get(Index));
 end;
@@ -2826,7 +2855,7 @@ begin
     end;
 end;
 
-function TJclPeResourceList.GetItems(Index: Integer): TJclPeResourceItem;
+function TJclPeResourceList.GetItems(Index: TJclListSize): TJclPeResourceItem;
 begin
   Result := TJclPeResourceItem(Get(Index));
 end;
@@ -3027,7 +3056,7 @@ begin
   end;
 end;
 
-function TJclPeRelocList.GetItems(Index: Integer): TJclPeRelocEntry;
+function TJclPeRelocList.GetItems(Index: TJclListSize): TJclPeRelocEntry;
 begin
   Result := TJclPeRelocEntry(Get(Index));
 end;
@@ -3083,7 +3112,7 @@ begin
   end;
 end;
 
-function TJclPeDebugList.GetItems(Index: Integer): TImageDebugDirectory;
+function TJclPeDebugList.GetItems(Index: TJclListSize): TImageDebugDirectory;
 begin
   Result := PImageDebugDirectory(Get(Index))^;
 end;
@@ -3125,7 +3154,7 @@ begin
   end;
 end;
 
-function TJclPeCertificateList.GetItems(Index: Integer): TJclPeCertificate;
+function TJclPeCertificateList.GetItems(Index: TJclListSize): TJclPeCertificate;
 begin
   Result := TJclPeCertificate(Get(Index));
 end;
@@ -5003,6 +5032,8 @@ begin
   {$ENDIF ~RTL210_UP}
 end;
 
+{$ENDIF WINSCP}
+
 //=== PE Image miscellaneous functions =======================================
 
 function IsValidPeFile(const FileName: TFileName): Boolean;
@@ -5082,6 +5113,8 @@ begin
     FileClose(FileHandle);
   end;
 end;
+
+{$IFNDEF WINSCP}
 
 function PeCreateNameHintTable(const FileName: TFileName): Boolean;
 var
@@ -5179,6 +5212,8 @@ begin
   end;
 end;
 
+{$ENDIF WINSCP}
+
 function PeRebaseImage32(const ImageName: TFileName; NewBase: TJclAddr32;
   TimeStamp, MaxNewSize: DWORD): TJclRebaseImageInfo32;
 
@@ -5260,6 +5295,8 @@ begin
   end;
 end;
 
+{$IFNDEF WINSCP}
+
 function PeUpdateLinkerTimeStamp(const FileName: TFileName; const Time: TDateTime): Boolean;
 var
   Mapping: TJclFileMapping;
@@ -5297,6 +5334,8 @@ begin
   end;
 end;
 
+{$ENDIF WINSCP}
+
 { TODO -cHelp : Author: Uwe Schuster(just a generic version of JclDebug.InsertDebugDataIntoExecutableFile) }
 function PeInsertSection(const FileName: TFileName; SectionStream: TStream; SectionName: string): Boolean;
   procedure RoundUpToAlignment(var Value: DWORD; Alignment: DWORD);
@@ -5304,11 +5343,87 @@ function PeInsertSection(const FileName: TFileName; SectionStream: TStream; Sect
     if (Value mod Alignment) <> 0 then
       Value := ((Value div Alignment) + 1) * Alignment;
   end;
+
+  // Insert ACount zero bytes at file offset AOffset in the in-memory image, shifting
+  // everything from AOffset onward forward by ACount. Used to enlarge the header area
+  // so that another section header fits before the first section's raw data.
+  // NOTE: ImageStream.Memory may be reallocated, so callers must re-fetch any pointers
+  // into it afterwards.
+  procedure InsertHeaderSpace(ImageStream: TMemoryStream; AOffset, ACount: DWORD);
+  var
+    OldSize: Int64;
+    CurPos: Int64;
+    ChunkSize: Integer;
+    Buffer: array of Byte;
+  begin
+    OldSize := ImageStream.Size;
+    ImageStream.Size := OldSize + ACount;
+    SetLength(Buffer, 1024 * 1024);
+    CurPos := OldSize;
+    while CurPos > AOffset do
+    begin
+      ChunkSize := Length(Buffer);
+      if CurPos - ChunkSize < AOffset then
+        ChunkSize := Integer(CurPos - AOffset);
+      Dec(CurPos, ChunkSize);
+      ImageStream.Position := CurPos;
+      ImageStream.ReadBuffer(Buffer[0], ChunkSize);
+      ImageStream.Position := CurPos + ACount;
+      ImageStream.WriteBuffer(Buffer[0], ChunkSize);
+    end;
+    // zero the inserted gap (ACount = FileAlignment <= 64K, fits in Buffer)
+    FillChar(Buffer[0], ACount, 0);
+    ImageStream.Position := AOffset;
+    ImageStream.WriteBuffer(Buffer[0], ACount);
+  end;
+
+  // Ensure the section header table has room for one more entry before the first
+  // section's raw data. When it does not, a single FileAlignment block of zero bytes
+  // is inserted into the header area and every populated section's PointerToRawData is
+  // shifted forward to match; the function then returns True so the caller can grow
+  // SizeOfHeaders in step. Without that the section table runs past SizeOfHeaders and,
+  // while Windows still loads the image, strict PE validators such as signtool reject
+  // it with ERROR_BAD_EXE_FORMAT (0x800700C1).
+  // The section table sits at the same file offset for 32- and 64-bit images, so the
+  // 32-bit mapping helpers locate it correctly for both targets; only the per-target
+  // OptionalHeader.SizeOfHeaders (updated by the caller) lives at a different offset.
+  // NOTE: ImageStream.Memory may be reallocated, so the caller must re-fetch any
+  // pointers into it whenever this returns True.
+  function EnsureSectionHeaderSpace(ImageStream: TMemoryStream;
+    NumberOfSections: Integer; FileAlignment: DWORD): Boolean;
+  var
+    Sections, SecPtr: PImageSectionHeader;
+    FirstRawData: DWORD;
+    NewSectionTableEnd: TJclAddr;
+    I: Integer;
+  begin
+    Sections := PeMapImgSections32(PeMapImgNtHeaders32(ImageStream.Memory));
+    FirstRawData := Sections^.PointerToRawData;
+    NewSectionTableEnd := (TJclAddr(Sections) - TJclAddr(ImageStream.Memory)) +
+      TJclAddr(SizeOf(TImageSectionHeader)) * TJclAddr(NumberOfSections + 1);
+    Result := NewSectionTableEnd > FirstRawData;
+    if not Result then
+      Exit;
+
+    InsertHeaderSpace(ImageStream, FirstRawData, FileAlignment);
+
+    // ImageStream.Memory may have been reallocated -> re-fetch before shifting.
+    Sections := PeMapImgSections32(PeMapImgNtHeaders32(ImageStream.Memory));
+    SecPtr := Sections;
+    for I := 0 to NumberOfSections - 1 do
+    begin
+      // Sections with no raw data on disk (e.g. .bss, .tls) keep PointerToRawData = 0.
+      if SecPtr^.PointerToRawData <> 0 then
+        Inc(SecPtr^.PointerToRawData, FileAlignment);
+      Inc(SecPtr);
+    end;
+  end;
+
   function PeInsertSection32(ImageStream: TMemoryStream): Boolean;
   var
     NtHeaders: PImageNtHeaders32;
     Sections, LastSection, NewSection: PImageSectionHeader;
-    VirtualAlignedSize: DWORD;
+    VirtualAlignedSize, FileAlignment: DWORD;
     I, X, NeedFill: Integer;
     SectionDataSize: Integer;
     UTF8Name: TUTF8String;
@@ -5325,6 +5440,19 @@ function PeInsertSection(const FileName: TFileName; SectionStream: TStream; Sect
       begin
         Result := True;
         Exit;
+      end;
+
+      FileAlignment := NtHeaders^.OptionalHeader.FileAlignment;
+
+      // Make room for the new section header when it would not fit before the first
+      // section's raw data, growing SizeOfHeaders in step so the image stays valid for
+      // strict PE validators (e.g. signtool, ERROR_BAD_EXE_FORMAT otherwise).
+      if EnsureSectionHeaderSpace(ImageStream, NtHeaders^.FileHeader.NumberOfSections, FileAlignment) then
+      begin
+        // ImageStream.Memory was reallocated -> re-fetch the typed pointers.
+        NtHeaders := PeMapImgNtHeaders32(ImageStream.Memory);
+        Sections := PeMapImgSections32(NtHeaders);
+        Inc(NtHeaders^.OptionalHeader.SizeOfHeaders, FileAlignment);
       end;
 
       LastSection := Sections;
@@ -5379,7 +5507,7 @@ function PeInsertSection(const FileName: TFileName; SectionStream: TStream; Sect
   var
     NtHeaders: PImageNtHeaders64;
     Sections, LastSection, NewSection: PImageSectionHeader;
-    VirtualAlignedSize: DWORD;
+    VirtualAlignedSize, FileAlignment: DWORD;
     I, X, NeedFill: Integer;
     SectionDataSize: Integer;
     UTF8Name: TUTF8String;
@@ -5396,6 +5524,19 @@ function PeInsertSection(const FileName: TFileName; SectionStream: TStream; Sect
       begin
         Result := True;
         Exit;
+      end;
+
+      FileAlignment := NtHeaders^.OptionalHeader.FileAlignment;
+
+      // Make room for the new section header when it would not fit before the first
+      // section's raw data, growing SizeOfHeaders in step so the image stays valid for
+      // strict PE validators (e.g. signtool, ERROR_BAD_EXE_FORMAT otherwise).
+      if EnsureSectionHeaderSpace(ImageStream, NtHeaders^.FileHeader.NumberOfSections, FileAlignment) then
+      begin
+        // ImageStream.Memory was reallocated -> re-fetch the typed pointers.
+        NtHeaders := PeMapImgNtHeaders64(ImageStream.Memory);
+        Sections := PeMapImgSections64(NtHeaders);
+        Inc(NtHeaders^.OptionalHeader.SizeOfHeaders, FileAlignment);
       end;
 
       LastSection := Sections;
@@ -5467,11 +5608,17 @@ begin
     end;
 
     if Result then
+    begin
       ImageStream.SaveToFile(FileName);
+      // The inserted section invalidated the original PE checksum; recompute it.
+      PeUpdateCheckSum(FileName);
+    end;
   finally
     ImageStream.Free;
   end;
 end;
+
+{$IFNDEF WINSCP}
 
 function PeVerifyCheckSum(const FileName: TFileName): Boolean;
 begin
@@ -5482,6 +5629,8 @@ begin
     Free;
   end;
 end;
+
+{$ENDIF WINSCP}
 
 function PeClearCheckSum(const FileName: TFileName): Boolean;
   function PeClearCheckSum32(ModuleAddress: Pointer): Boolean;
@@ -5535,6 +5684,8 @@ begin
 end;
 
 // Various simple PE Image searching and listing routines
+
+{$IFNDEF WINSCP}
 
 function PeDoesExportFunction(const FileName: TFileName; const FunctionName: string;
   Options: TJclSmartCompOptions): Boolean;
@@ -5893,6 +6044,8 @@ function PeCreateRequiredImportList(const FileName: TFileName; RequiredImportsLi
 begin
   Result := PeImportedFunctions(FileName, RequiredImportsList, '', True);
 end;
+
+{$ENDIF WINSCP}
 
 // Mapped or loaded image related functions
 
@@ -6294,6 +6447,8 @@ begin
   end;
 end;
 
+{$IFNDEF WINSCP}
+
 function PeMapImgExportedVariables(const Module: HMODULE; const VariablesList: TStrings): Boolean;
 var
   I: Integer;
@@ -6319,6 +6474,8 @@ begin
     Free;
   end;
 end;
+
+{$ENDIF WINSCP}
 
 function PeMapImgResolvePackageThunk(Address: Pointer): Pointer;
 {$IFDEF BORLAND}
@@ -6358,6 +6515,8 @@ begin
 end;
 {$ENDIF FPC}
 
+{$IFNDEF WINSCP}
+
 function PeMapFindResource(const Module: HMODULE; const ResourceType: PChar;
   const ResourceName: string): Pointer;
 var
@@ -6377,6 +6536,8 @@ begin
     Free;
   end;
 end;
+
+{$ENDIF WINSCP}
 
 //=== { TJclPeSectionStream } ================================================
 
@@ -6505,7 +6666,7 @@ begin
     end;
 end;
 
-function TJclPeMapImgHooks.GetItems(Index: Integer): TJclPeMapImgHookItem;
+function TJclPeMapImgHooks.GetItems(Index: TJclListSize): TJclPeMapImgHookItem;
 begin
   Result := TJclPeMapImgHookItem(Get(Index));
 end;

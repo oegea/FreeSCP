@@ -46,13 +46,12 @@ static void ssh_verstring_queue_disconnect(BinaryPacketProtocol *bpp,
                                            const char *msg, int category);
 
 static const BinaryPacketProtocolVtable ssh_verstring_vtable = {
-    // WINSCP
-    /*.free =*/ ssh_verstring_free,
-    /*.handle_input =*/ ssh_verstring_handle_input,
-    /*.handle_output =*/ ssh_verstring_handle_output,
-    /*.new_pktout =*/ ssh_verstring_new_pktout,
-    /*.queue_disconnect =*/ ssh_verstring_queue_disconnect,
-    /*.packet_size_limit =*/ 0xFFFFFFFF, /* no special limit for this bpp */
+    .free = ssh_verstring_free,
+    .handle_input = ssh_verstring_handle_input,
+    .handle_output = ssh_verstring_handle_output,
+    .new_pktout = ssh_verstring_new_pktout,
+    .queue_disconnect = ssh_verstring_queue_disconnect,
+    .packet_size_limit = 0xFFFFFFFF, /* no special limit for this bpp */
 };
 
 static void ssh_detect_bugs(struct ssh_verstring_state *s);
@@ -300,6 +299,12 @@ void ssh_verstring_handle_input(BinaryPacketProtocol *bpp)
         }
 
         put_datapl(s->vstring, data);
+        if (s->vstring->len > 1024) {
+            bpp_logevent("Remote version begins: \"%.256s...\"",
+                         s->vstring->s);
+            ssh_sw_abort(s->bpp.ssh, "Remote SSH greeting was overlong");
+            crStopV;
+        }
         bufchain_consume(s->bpp.in_raw, data.len);
         ssh_check_frozen(s->bpp.ssh);
 

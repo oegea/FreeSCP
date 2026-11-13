@@ -63,6 +63,10 @@ public:
   AnsiStringBase & operator+=(const AnsiStringBase & o) { FData += o.FData; return *this; }
   AnsiStringBase & operator+=(const char * s) { if (s) FData += s; return *this; }
   AnsiStringBase operator+(const AnsiStringBase & o) const { AnsiStringBase r(*this); r.FData += o.FData; return r; }
+  AnsiStringBase operator+(char c) const { AnsiStringBase r(*this); r.FData.push_back(c); return r; }
+  // ASCII-only case mapping, as Delphi's AnsiString UpperCase/LowerCase (bytes >= 0x80 untouched)
+  AnsiStringBase UpperCase() const { AnsiStringBase r(*this); for (char & c : r.FData) if (c >= 'a' && c <= 'z') c = static_cast<char>(c - 32); return r; }
+  AnsiStringBase LowerCase() const { AnsiStringBase r(*this); for (char & c : r.FData) if (c >= 'A' && c <= 'Z') c = static_cast<char>(c + 32); return r; }
   bool operator==(const AnsiStringBase & o) const { return FData == o.FData; }
   bool operator!=(const AnsiStringBase & o) const { return FData != o.FData; }
 

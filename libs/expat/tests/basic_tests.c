@@ -19,7 +19,15 @@
    Copyright (c) 2020      Tim Gates <tim.gates@iress.com>
    Copyright (c) 2021      Donghee Na <donghee.na@python.org>
    Copyright (c) 2023-2024 Sony Corporation / Snild Dolkow <snild@sony.com>
-   Copyright (c) 2024-2025 Berkay Eren Ürün <berkay.ueruen@siemens.com>
+   Copyright (c) 2024-2026 Berkay Eren Ürün <berkay.ueruen@siemens.com>
+   Copyright (c) 2026      Francesco Bertolaccini
+   Copyright (c) 2026      Matthew Fernandez <matthew.fernandez@gmail.com>
+   Copyright (c) 2026      Kartik Kenchi <netliomax25@gmail.com>
+   Copyright (c) 2026      Zeyou Liu <zeyouliu@tencent.com>
+   Copyright (c) 2026      Afonso Januário <afonso-januario@hotmail.com>
+   Copyright (c) 2026      Braian Plaku <braianplaku@gmail.com>
+   Copyright (c) 2026      Filippo Tedeschi <filippotedeschi98@gmail.com>
+   Copyright (c) 2026      Alexander Bluhm <alexander.bluhm@gmx.net>
    Licensed under the MIT license:
 
    Permission is  hereby granted,  free of charge,  to any  person obtaining
@@ -40,23 +48,23 @@
    DAMAGES OR  OTHER LIABILITY, WHETHER  IN AN  ACTION OF CONTRACT,  TORT OR
    OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
    USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+   SPDX-License-Identifier: MIT
 */
 
 #if defined(NDEBUG)
 #  undef NDEBUG /* because test suite relies on assert(...) at the moment */
 #endif
 
-#include <assert.h>
+#include "expat_config.h"
 
+#include <assert.h>
+#include <inttypes.h> // PRIu64
+#include <limits.h>   // ULONG_MAX
+#include <stdbool.h>
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
-
-#if ! defined(__cplusplus)
-#  include <stdbool.h>
-#endif
-
-#include "expat_config.h"
 
 #include "expat.h"
 #include "internal.h"
@@ -67,6 +75,22 @@
 #include "handlers.h"
 #include "siphash.h"
 #include "basic_tests.h"
+#include "../lib/xcs.h"
+
+#define EXPAT_TESTS_ASAN 1
+
+#if defined(__has_feature)
+#  if ! __has_feature(address_sanitizer)
+#    undef EXPAT_TESTS_ASAN
+#    define EXPAT_TESTS_ASAN 0
+#  endif
+#endif
+
+#if ULONG_MAX == 18446744073709551615u // 2^64-1
+#  define EXPAT_TESTS_64BIT 1
+#else
+#  define EXPAT_TESTS_64BIT 0
+#endif
 
 static void
 basic_setup(void) {
@@ -185,7 +209,8 @@ START_TEST(test_hash_collision) {
    * tests invoked from qa.sh usually provide a hash collision, but
    * not always.  This is an attempt to provide insurance.
    */
-#define COLLIDING_HASH_SALT (unsigned long)SIP_ULL(0xffffffffU, 0xff99fc90U)
+  const uint8_t entropy[16] = {0,    0,    0,    0,    0,    0,    0,    0,
+                               0x90, 0xfc, 0x99, 0xff, 0xff, 0xff, 0xff, 0xff};
   const char *text
       = "<doc>\n"
         "<a1/><a2/><a3/><a4/><a5/><a6/><a7/><a8/>\n"
@@ -196,13 +221,59 @@ START_TEST(test_hash_collision) {
         "<d8>This triggers the table growth and collides with b2</d8>\n"
         "</doc>\n";
 
-  XML_SetHashSalt(g_parser, COLLIDING_HASH_SALT);
+  XML_SetHashSalt16Bytes(g_parser, entropy);
   if (_XML_Parse_SINGLE_BYTES(g_parser, text, (int)strlen(text), XML_TRUE)
       == XML_STATUS_ERROR)
     xml_failure(g_parser);
 }
 END_TEST
-#undef COLLIDING_HASH_SALT
+
+START_TEST(test_hash_salt_setter) {
+  const uint8_t entropy[16] = {'0', '1', '2', '3', '4', '5', '6', '7',
+                               '8', '9', 'a', 'b', 'c', 'd', 'e', 'f'};
+  XML_Parser parser = XML_ParserCreate(NULL);
+
+  // NULL parser should be rejected
+  assert_true(XML_SetHashSalt16Bytes(NULL, entropy) == XML_FALSE);
+
+  // NULL entropy should be rejected
+  assert_true(XML_SetHashSalt16Bytes(parser, NULL) == XML_FALSE);
+
+  // Setting should be allowed more than once
+  assert_true(XML_SetHashSalt16Bytes(parser, entropy) == XML_TRUE);
+  assert_true(XML_SetHashSalt16Bytes(parser, entropy) == XML_TRUE);
+
+  // But not after parsing has started
+  assert_true(XML_Parse(parser, "", 0, XML_FALSE /* isFinal */)
+              == XML_STATUS_OK);
+  assert_true(XML_SetHashSalt16Bytes(parser, entropy) == XML_FALSE);
+
+  XML_ParserFree(parser);
+}
+END_TEST
+
+START_TEST(test_hash_salt_ulong) {
+  const unsigned long salt = 0x12345678;
+  XML_Parser parser = XML_ParserCreate(NULL);
+
+  // NULL parser should be rejected
+  assert_true(xmlSetHashSalt(NULL, salt) == 0);
+
+  // salt 0 is ignored, but accepted
+  assert_true(xmlSetHashSalt(parser, 0) == 1);
+
+  // Setting should be allowed more than once
+  assert_true(xmlSetHashSalt(parser, salt) == 1);
+  assert_true(xmlSetHashSalt(parser, salt) == 1);
+
+  // But not after parsing has started
+  assert_true(XML_Parse(parser, "", 0, XML_FALSE /* isFinal */)
+              == XML_STATUS_OK);
+  assert_true(xmlSetHashSalt(parser, salt) == 0);
+
+  XML_ParserFree(parser);
+}
+END_TEST
 
 /* Regression test for SF bug #491986. */
 START_TEST(test_danish_latin1) {
@@ -602,16 +673,15 @@ START_TEST(test_line_number_after_parse) {
   const char *text = "<tag>\n"
                      "\n"
                      "\n</tag>";
-  XML_Size lineno;
+  uint64_t lineno;
 
   if (_XML_Parse_SINGLE_BYTES(g_parser, text, (int)strlen(text), XML_TRUE)
       == XML_STATUS_ERROR)
     xml_failure(g_parser);
-  lineno = XML_GetCurrentLineNumber(g_parser);
+  lineno = XML_GetCurrentLineNumber64(g_parser);
   if (lineno != 4) {
     char buffer[100];
-    snprintf(buffer, sizeof(buffer),
-             "expected 4 lines, saw %" XML_FMT_INT_MOD "u", lineno);
+    snprintf(buffer, sizeof(buffer), "expected 4 lines, saw %" PRIu64, lineno);
     fail(buffer);
   }
 }
@@ -620,16 +690,16 @@ END_TEST
 /* Regression test #2 for SF bug #653180. */
 START_TEST(test_column_number_after_parse) {
   const char *text = "<tag></tag>";
-  XML_Size colno;
+  uint64_t colno;
 
   if (_XML_Parse_SINGLE_BYTES(g_parser, text, (int)strlen(text), XML_TRUE)
       == XML_STATUS_ERROR)
     xml_failure(g_parser);
-  colno = XML_GetCurrentColumnNumber(g_parser);
+  colno = XML_GetCurrentColumnNumber64(g_parser);
   if (colno != 11) {
     char buffer[100];
-    snprintf(buffer, sizeof(buffer),
-             "expected 11 columns, saw %" XML_FMT_INT_MOD "u", colno);
+    snprintf(buffer, sizeof(buffer), "expected 11 columns, saw %" PRIu64,
+             colno);
     fail(buffer);
   }
 }
@@ -672,16 +742,15 @@ START_TEST(test_line_number_after_error) {
   const char *text = "<a>\n"
                      "  <b>\n"
                      "  </a>"; /* missing </b> */
-  XML_Size lineno;
+  uint64_t lineno;
   if (_XML_Parse_SINGLE_BYTES(g_parser, text, (int)strlen(text), XML_TRUE)
       != XML_STATUS_ERROR)
     fail("Expected a parse error");
 
-  lineno = XML_GetCurrentLineNumber(g_parser);
+  lineno = XML_GetCurrentLineNumber64(g_parser);
   if (lineno != 3) {
     char buffer[100];
-    snprintf(buffer, sizeof(buffer),
-             "expected 3 lines, saw %" XML_FMT_INT_MOD "u", lineno);
+    snprintf(buffer, sizeof(buffer), "expected 3 lines, saw %" PRIu64, lineno);
     fail(buffer);
   }
 }
@@ -692,16 +761,15 @@ START_TEST(test_column_number_after_error) {
   const char *text = "<a>\n"
                      "  <b>\n"
                      "  </a>"; /* missing </b> */
-  XML_Size colno;
+  uint64_t colno;
   if (_XML_Parse_SINGLE_BYTES(g_parser, text, (int)strlen(text), XML_TRUE)
       != XML_STATUS_ERROR)
     fail("Expected a parse error");
 
-  colno = XML_GetCurrentColumnNumber(g_parser);
+  colno = XML_GetCurrentColumnNumber64(g_parser);
   if (colno != 4) {
     char buffer[100];
-    snprintf(buffer, sizeof(buffer),
-             "expected 4 columns, saw %" XML_FMT_INT_MOD "u", colno);
+    snprintf(buffer, sizeof(buffer), "expected 4 columns, saw %" PRIu64, colno);
     fail(buffer);
   }
 }
@@ -877,9 +945,8 @@ check_attr_contains_normalized_whitespace(void *userData, const XML_Char *name,
   for (i = 0; atts[i] != NULL; i += 2) {
     const XML_Char *attrname = atts[i];
     const XML_Char *value = atts[i + 1];
-    if (xcstrcmp(XCS("attr"), attrname) == 0
-        || xcstrcmp(XCS("ents"), attrname) == 0
-        || xcstrcmp(XCS("refs"), attrname) == 0) {
+    if (xcscmp(XCS("attr"), attrname) == 0 || xcscmp(XCS("ents"), attrname) == 0
+        || xcscmp(XCS("refs"), attrname) == 0) {
       if (! is_whitespace_normalized(value, 0)) {
         char buffer[256];
         snprintf(buffer, sizeof(buffer),
@@ -945,6 +1012,58 @@ START_TEST(test_xmldecl_missing_value) {
                  "<doc/>",
                  XML_ERROR_XML_DECL,
                  "Failed to report missing attribute value");
+}
+END_TEST
+
+START_TEST(test_xmldecl_empty_version) {
+  expect_failure("<?xml version=''?>\n"
+                 "<doc/>",
+                 XML_ERROR_XML_DECL,
+                 "Failed to report empty version in XML declaration");
+}
+END_TEST
+
+/* Regression test for GH #967: Expat only implements XML 1.0 Fourth
+   Edition, so a declared version outside the "1.x" family must be
+   rejected rather than silently accepted. A version matching the Fifth
+   Edition's VersionNum production ("1." followed by one or more digits)
+   is accepted even though Expat itself only implements 1.0 Fourth
+   Edition, per GH #967's review thread: rejecting "1.1" now would just
+   have to be reverted once Expat tracks the Fifth Edition, so it's let
+   through rather than blocked twice. */
+START_TEST(test_xmldecl_wrong_version_number) {
+  const char *const badVersions[] = {"2.3", "0.9", "10", "1.", "1", " 1.0 "};
+
+  for (size_t i = 0; i < sizeof(badVersions) / sizeof(badVersions[0]); i++) {
+    char doc[64];
+    snprintf(doc, sizeof(doc), "<?xml version='%s'?>\n<doc/>", badVersions[i]);
+    set_subtest("version='%s'", badVersions[i]);
+
+    XML_Parser parser = XML_ParserCreate(NULL);
+    assert_true(_XML_Parse_SINGLE_BYTES(parser, doc, (int)strlen(doc), XML_TRUE)
+                == XML_STATUS_ERROR);
+    assert_true(XML_GetErrorCode(parser) == XML_ERROR_XML_DECL);
+    XML_ParserFree(parser);
+  }
+}
+END_TEST
+
+/* GH #967's review pointed out that XML 1.0 Fifth Edition relaxed
+   VersionNum to "1." followed by one or more digits, so versions like
+   "1.1" and "1.123" should parse rather than being rejected. */
+START_TEST(test_xmldecl_accepts_1_x_version) {
+  const char *const goodVersions[] = {"1.1", "1.123"};
+
+  for (size_t i = 0; i < sizeof(goodVersions) / sizeof(goodVersions[0]); i++) {
+    char doc[64];
+    snprintf(doc, sizeof(doc), "<?xml version='%s'?>\n<doc/>", goodVersions[i]);
+    set_subtest("version='%s'", goodVersions[i]);
+
+    XML_Parser parser = XML_ParserCreate(NULL);
+    assert_true(_XML_Parse_SINGLE_BYTES(parser, doc, (int)strlen(doc), XML_TRUE)
+                == XML_STATUS_OK);
+    XML_ParserFree(parser);
+  }
 }
 END_TEST
 
@@ -1796,6 +1915,301 @@ START_TEST(test_utf16_bad_surrogate_pair) {
 }
 END_TEST
 
+// Helper that creates a UTF-16LE copy of UTF-16BE literal input and vice versa
+static char *
+utf16_dup_flipped(const char *text, size_t lenBytes) {
+  assert_true(lenBytes < SIZE_MAX);
+  assert_true(lenBytes % 2 == 0);
+  char *const buffer = malloc(lenBytes + 1);
+  assert_true(buffer != NULL);
+
+  for (size_t i = 0; i < lenBytes; i++) {
+    // This maps 0 -> 1, 1 -> 0, 2 -> 3, 3 -> 2, 4 -> 5, ..
+    size_t j = i + ((i % 2 == 0) ? +1 : -1);
+    assert_true(j < lenBytes);
+    buffer[j] = text[i];
+  }
+
+  buffer[lenBytes] = '\0';
+
+  return buffer;
+}
+
+/* Tests that invalid combinations of surrogates are detected when decoding
+   UTF-16, both little-endian and big-endian.
+   Previously, a high surrogate not followed by a low surrogate slipped
+   through.  Without validation the high would consume the next
+   code unit as a fake low, hiding e.g. a following '<' from the
+   tokenizer. */
+START_TEST(test_utf16_surrogate_pairs) {
+  struct TestCase {
+    const char *idea;
+    const char *content;
+    bool expectedSuccess;
+  };
+
+  struct TestCase testCases[] = {
+      // Group {smallest high - 1}{*}
+      {"{smallest high - 1}{smallest high - 1}",
+       "\0<\0a\0>"
+       "\xD7\xFF"
+       "\xD7\xFF"
+       "\0<\0/\0a\0>",
+       true},
+      {"{smallest high - 1}{smallest high}",
+       "\0<\0a\0>"
+       "\xD7\xFF"
+       "\xD8\x00"
+       "\0<\0/\0a\0>",
+       false},
+      {"{smallest high - 1}{largest high}",
+       "\0<\0a\0>"
+       "\xD7\xFF"
+       "\xDB\xFF"
+       "\0<\0/\0a\0>",
+       false},
+      {"{smallest high - 1}{smallest low}",
+       "\0<\0a\0>"
+       "\xD7\xFF"
+       "\xDC\x00"
+       "\0<\0/\0a\0>",
+       false},
+      {"{smallest high - 1}{largest low}",
+       "\0<\0a\0>"
+       "\xD7\xFF"
+       "\xDF\xFF"
+       "\0<\0/\0a\0>",
+       false},
+      {"{smallest high - 1}{largest low + 1}",
+       "\0<\0a\0>"
+       "\xD7\xFF"
+       "\xE0\x00"
+       "\0<\0/\0a\0>",
+       true},
+      // Group {smallest high}{*}
+      {"{smallest high}{smallest high - 1}",
+       "\0<\0a\0>"
+       "\xD8\x00"
+       "\xD7\xFF"
+       "\0<\0/\0a\0>",
+       false},
+      {"{smallest high}{smallest high}",
+       "\0<\0a\0>"
+       "\xD8\x00"
+       "\xD8\x00"
+       "\0<\0/\0a\0>",
+       false},
+      {"{smallest high}{largest high}",
+       "\0<\0a\0>"
+       "\xD8\x00"
+       "\xDB\xFF"
+       "\0<\0/\0a\0>",
+       false},
+      {"{smallest high}{smallest low}",
+       "\0<\0a\0>"
+       "\xD8\x00"
+       "\xDC\x00"
+       "\0<\0/\0a\0>",
+       true},
+      {"{smallest high}{largest low}",
+       "\0<\0a\0>"
+       "\xD8\x00"
+       "\xDF\xFF"
+       "\0<\0/\0a\0>",
+       true},
+      {"{smallest high}{largest low + 1}",
+       "\0<\0a\0>"
+       "\xD8\x00"
+       "\xE0\x00"
+       "\0<\0/\0a\0>",
+       false},
+      // Group {largest high}{*}
+      {"{largest high}{smallest high - 1}",
+       "\0<\0a\0>"
+       "\xDB\xFF"
+       "\xD7\xFF"
+       "\0<\0/\0a\0>",
+       false},
+      {"{largest high}{smallest high}",
+       "\0<\0a\0>"
+       "\xDB\xFF"
+       "\xD8\x00"
+       "\0<\0/\0a\0>",
+       false},
+      {"{largest high}{largest high}",
+       "\0<\0a\0>"
+       "\xDB\xFF"
+       "\xDB\xFF"
+       "\0<\0/\0a\0>",
+       false},
+      {"{largest high}{smallest low}",
+       "\0<\0a\0>"
+       "\xDB\xFF"
+       "\xDC\x00"
+       "\0<\0/\0a\0>",
+       true},
+      {"{largest high}{largest low}",
+       "\0<\0a\0>"
+       "\xDB\xFF"
+       "\xDF\xFF"
+       "\0<\0/\0a\0>",
+       true},
+      {"{largest high}{largest low + 1}",
+       "\0<\0a\0>"
+       "\xDB\xFF"
+       "\xE0\x00"
+       "\0<\0/\0a\0>",
+       false},
+      // Group {smallest low}{*}
+      {"{smallest low}{smallest high - 1}",
+       "\0<\0a\0>"
+       "\xDC\x00"
+       "\xD7\xFF"
+       "\0<\0/\0a\0>",
+       false},
+      {"{smallest low}{smallest high}",
+       "\0<\0a\0>"
+       "\xDC\x00"
+       "\xD8\x00"
+       "\0<\0/\0a\0>",
+       false},
+      {"{smallest low}{largest high}",
+       "\0<\0a\0>"
+       "\xDC\x00"
+       "\xDB\xFF"
+       "\0<\0/\0a\0>",
+       false},
+      {"{smallest low}{smallest low}",
+       "\0<\0a\0>"
+       "\xDC\x00"
+       "\xDC\x00"
+       "\0<\0/\0a\0>",
+       false},
+      {"{smallest low}{largest low}",
+       "\0<\0a\0>"
+       "\xDC\x00"
+       "\xDF\xFF"
+       "\0<\0/\0a\0>",
+       false},
+      {"{smallest low}{largest low + 1}",
+       "\0<\0a\0>"
+       "\xDC\x00"
+       "\xE0\x00"
+       "\0<\0/\0a\0>",
+       false},
+      // Group {largest low}{*}
+      {"{largest low}{smallest high - 1}",
+       "\0<\0a\0>"
+       "\xDF\xFF"
+       "\xD7\xFF"
+       "\0<\0/\0a\0>",
+       false},
+      {"{largest low}{smallest high}",
+       "\0<\0a\0>"
+       "\xDF\xFF"
+       "\xD8\x00"
+       "\0<\0/\0a\0>",
+       false},
+      {"{largest low}{largest high}",
+       "\0<\0a\0>"
+       "\xDF\xFF"
+       "\xDB\xFF"
+       "\0<\0/\0a\0>",
+       false},
+      {"{largest low}{smallest low}",
+       "\0<\0a\0>"
+       "\xDF\xFF"
+       "\xDC\x00"
+       "\0<\0/\0a\0>",
+       false},
+      {"{largest low}{largest low}",
+       "\0<\0a\0>"
+       "\xDF\xFF"
+       "\xDF\xFF"
+       "\0<\0/\0a\0>",
+       false},
+      {"{largest low}{largest low + 1}",
+       "\0<\0a\0>"
+       "\xDF\xFF"
+       "\xE0\x00"
+       "\0<\0/\0a\0>",
+       false},
+      // Group {largest low + 1}{*}
+      {"{largest low + 1}{smallest high - 1}",
+       "\0<\0a\0>"
+       "\xE0\x00"
+       "\xD7\xFF"
+       "\0<\0/\0a\0>",
+       true},
+      {"{largest low + 1}{smallest high}",
+       "\0<\0a\0>"
+       "\xE0\x00"
+       "\xD8\x00"
+       "\0<\0/\0a\0>",
+       false},
+      {"{largest low + 1}{largest high}",
+       "\0<\0a\0>"
+       "\xE0\x00"
+       "\xDB\xFF"
+       "\0<\0/\0a\0>",
+       false},
+      {"{largest low + 1}{smallest low}",
+       "\0<\0a\0>"
+       "\xE0\x00"
+       "\xDC\x00"
+       "\0<\0/\0a\0>",
+       false},
+      {"{largest low + 1}{largest low}",
+       "\0<\0a\0>"
+       "\xE0\x00"
+       "\xDF\xFF"
+       "\0<\0/\0a\0>",
+       false},
+      {"{largest low + 1}{largest low + 1}",
+       "\0<\0a\0>"
+       "\xE0\x00"
+       "\xE0\x00"
+       "\0<\0/\0a\0>",
+       true},
+  };
+
+  for (size_t i = 0; i < sizeof(testCases) / sizeof(testCases[0]); i++) {
+    set_subtest("%s", testCases[i].idea);
+
+    const int lenBytes = /*<a>*/ 6 + /*first*/ 2 + /*second*/ 2 + /*</a>*/ 8;
+    const bool expectedSuccess = testCases[i].expectedSuccess;
+    const enum XML_Status expectedStatus
+        = (expectedSuccess ? XML_STATUS_OK : XML_STATUS_ERROR);
+
+    const char *const bigEndian = testCases[i].content;
+    char *const littleEndian = utf16_dup_flipped(bigEndian, lenBytes);
+    assert_true(littleEndian != NULL);
+    const char *endianCases[] = {bigEndian, littleEndian};
+
+    for (size_t j = 0; j < sizeof(endianCases) / sizeof(endianCases[0]); j++) {
+      const char *text = endianCases[j];
+
+      assert_true(text[lenBytes] == '\0'); // self-test
+      assert_true((text[0] == '\0')
+                  != (text[lenBytes - 1] == '\0')); // self-test
+
+      XML_Parser parser = XML_ParserCreate(NULL);
+      assert_true(parser != NULL);
+
+      assert_true(_XML_Parse_SINGLE_BYTES(parser, text, lenBytes, XML_TRUE)
+                  == expectedStatus);
+      if (! expectedSuccess) {
+        assert_true(XML_GetErrorCode(parser) == XML_ERROR_INVALID_TOKEN);
+      }
+
+      XML_ParserFree(parser);
+    }
+
+    free(littleEndian);
+  }
+}
+END_TEST
+
 START_TEST(test_bad_cdata) {
   struct CaseData {
     const char *text;
@@ -2207,6 +2621,57 @@ START_TEST(test_default_current) {
 }
 END_TEST
 
+/* Test XML_DefaultCurrent does not dereference NULL when outside an event */
+START_TEST(test_default_current_outside_event) {
+  struct handler_record_list handlerCalls;
+  handlerCalls.count = 0;
+
+  set_subtest("NULL parser");
+  XML_DefaultCurrent(NULL);
+
+  set_subtest("before parse");
+  {
+    XML_Parser parser = XML_ParserCreate(NULL);
+    XML_SetDefaultHandler(parser, record_default_handler);
+    XML_SetUserData(parser, &handlerCalls);
+
+    XML_DefaultCurrent(parser);
+    assert_true(handlerCalls.count == 0);
+
+    XML_ParserFree(parser);
+  }
+
+  set_subtest("after parse");
+  {
+    const char *text = "<r>hello</r>";
+    XML_Parser parser = XML_ParserCreate(NULL);
+    if (XML_Parse(parser, text, (int)strlen(text), XML_TRUE)
+        == XML_STATUS_ERROR)
+      xml_failure(parser);
+
+    XML_SetDefaultHandler(parser, record_default_handler);
+    XML_SetUserData(parser, &handlerCalls);
+
+    XML_DefaultCurrent(parser);
+    assert_true(handlerCalls.count == 0);
+
+    XML_ParserFree(parser);
+  }
+
+  set_subtest("explicit encoding before parse");
+  {
+    XML_Parser parser = XML_ParserCreate(XCS("ISO-8859-1"));
+    XML_SetDefaultHandler(parser, record_default_handler);
+    XML_SetUserData(parser, &handlerCalls);
+
+    XML_DefaultCurrent(parser);
+    assert_true(handlerCalls.count == 0);
+
+    XML_ParserFree(parser);
+  }
+}
+END_TEST
+
 /* Test DTD element parsing code paths */
 START_TEST(test_dtd_elements) {
   const char *text = "<!DOCTYPE doc [\n"
@@ -2236,7 +2701,7 @@ element_decl_check_model(void *userData, const XML_Char *name,
    *     [5] (type 4, quant 3, name "xyz")
    *   [2] (type 4, quant 2, name "zebra")
    */
-  errorFlags |= ((xcstrcmp(name, XCS("junk")) == 0) ? 0 : (1u << 0));
+  errorFlags |= ((xcscmp(name, XCS("junk")) == 0) ? 0 : (1u << 0));
   errorFlags |= ((model != NULL) ? 0 : (1u << 1));
 
   if (model != NULL) {
@@ -2256,26 +2721,25 @@ element_decl_check_model(void *userData, const XML_Char *name,
     errorFlags |= ((model[2].quant == XML_CQUANT_REP) ? 0 : (1u << 13));
     errorFlags |= ((model[2].numchildren == 0) ? 0 : (1u << 14));
     errorFlags |= ((model[2].children == NULL) ? 0 : (1u << 15));
-    errorFlags
-        |= ((xcstrcmp(model[2].name, XCS("zebra")) == 0) ? 0 : (1u << 16));
+    errorFlags |= ((xcscmp(model[2].name, XCS("zebra")) == 0) ? 0 : (1u << 16));
 
     errorFlags |= ((model[3].type == XML_CTYPE_NAME) ? 0 : (1u << 17));
     errorFlags |= ((model[3].quant == XML_CQUANT_NONE) ? 0 : (1u << 18));
     errorFlags |= ((model[3].numchildren == 0) ? 0 : (1u << 19));
     errorFlags |= ((model[3].children == NULL) ? 0 : (1u << 20));
-    errorFlags |= ((xcstrcmp(model[3].name, XCS("bar")) == 0) ? 0 : (1u << 21));
+    errorFlags |= ((xcscmp(model[3].name, XCS("bar")) == 0) ? 0 : (1u << 21));
 
     errorFlags |= ((model[4].type == XML_CTYPE_NAME) ? 0 : (1u << 22));
     errorFlags |= ((model[4].quant == XML_CQUANT_NONE) ? 0 : (1u << 23));
     errorFlags |= ((model[4].numchildren == 0) ? 0 : (1u << 24));
     errorFlags |= ((model[4].children == NULL) ? 0 : (1u << 25));
-    errorFlags |= ((xcstrcmp(model[4].name, XCS("foo")) == 0) ? 0 : (1u << 26));
+    errorFlags |= ((xcscmp(model[4].name, XCS("foo")) == 0) ? 0 : (1u << 26));
 
     errorFlags |= ((model[5].type == XML_CTYPE_NAME) ? 0 : (1u << 27));
     errorFlags |= ((model[5].quant == XML_CQUANT_PLUS) ? 0 : (1u << 28));
     errorFlags |= ((model[5].numchildren == 0) ? 0 : (1u << 29));
     errorFlags |= ((model[5].children == NULL) ? 0 : (1u << 30));
-    errorFlags |= ((xcstrcmp(model[5].name, XCS("xyz")) == 0) ? 0 : (1u << 31));
+    errorFlags |= ((xcscmp(model[5].name, XCS("xyz")) == 0) ? 0 : (1u << 31));
   }
 
   XML_SetUserData(g_parser, (void *)(uintptr_t)errorFlags);
@@ -2303,12 +2767,13 @@ END_TEST
 
 /* Test foreign DTD handling */
 START_TEST(test_set_foreign_dtd) {
+  const uint8_t entropy[16] = {0, 0, 0, 0, 0, 0, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8};
   const char *text1 = "<?xml version='1.0' encoding='us-ascii'?>\n";
   const char *text2 = "<doc>&entity;</doc>";
   ExtTest test_data = {"<!ELEMENT doc (#PCDATA)*>", NULL, NULL};
 
   /* Check hash salt is passed through too */
-  XML_SetHashSalt(g_parser, 0x12345678);
+  XML_SetHashSalt16Bytes(g_parser, entropy);
   XML_SetParamEntityParsing(g_parser, XML_PARAM_ENTITY_PARSING_ALWAYS);
   XML_SetUserData(g_parser, &test_data);
   XML_SetExternalEntityRefHandler(g_parser, external_entity_loader);
@@ -2327,7 +2792,7 @@ START_TEST(test_set_foreign_dtd) {
       != XML_ERROR_CANT_CHANGE_FEATURE_ONCE_PARSING)
     fail("Failed to reject late foreign DTD setting");
   /* Ditto for the hash salt */
-  if (XML_SetHashSalt(g_parser, 0x23456789))
+  if (XML_SetHashSalt16Bytes(g_parser, entropy))
     fail("Failed to reject late hash salt change");
 
   /* Now finish the parse */
@@ -2372,13 +2837,14 @@ END_TEST
 
 /* Test foreign DTD use with a doctype */
 START_TEST(test_foreign_dtd_with_doctype) {
+  const uint8_t entropy[16] = {0, 0, 0, 0, 0, 0, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8};
   const char *text1 = "<?xml version='1.0' encoding='us-ascii'?>\n"
                       "<!DOCTYPE doc [<!ENTITY entity 'hello world'>]>\n";
   const char *text2 = "<doc>&entity;</doc>";
   ExtTest test_data = {"<!ELEMENT doc (#PCDATA)*>", NULL, NULL};
 
   /* Check hash salt is passed through too */
-  XML_SetHashSalt(g_parser, 0x12345678);
+  XML_SetHashSalt16Bytes(g_parser, entropy);
   XML_SetParamEntityParsing(g_parser, XML_PARAM_ENTITY_PARSING_ALWAYS);
   XML_SetUserData(g_parser, &test_data);
   XML_SetExternalEntityRefHandler(g_parser, external_entity_loader);
@@ -2397,7 +2863,7 @@ START_TEST(test_foreign_dtd_with_doctype) {
       != XML_ERROR_CANT_CHANGE_FEATURE_ONCE_PARSING)
     fail("Failed to reject late foreign DTD setting");
   /* Ditto for the hash salt */
-  if (XML_SetHashSalt(g_parser, 0x23456789))
+  if (XML_SetHashSalt16Bytes(g_parser, entropy))
     fail("Failed to reject late hash salt change");
 
   /* Now finish the parse */
@@ -2442,7 +2908,7 @@ START_TEST(test_set_base) {
   old_base = XML_GetBase(g_parser);
   if (XML_SetBase(g_parser, new_base) != XML_STATUS_OK)
     fail("Unable to set base");
-  if (xcstrcmp(XML_GetBase(g_parser), new_base) != 0)
+  if (xcscmp(XML_GetBase(g_parser), new_base) != 0)
     fail("Base setting not correct");
   if (XML_SetBase(g_parser, NULL) != XML_STATUS_OK)
     fail("Unable to NULL base");
@@ -2466,11 +2932,9 @@ START_TEST(test_attributes) {
                          {XCS("id"), XCS("one")},
                          {NULL, NULL}};
   AttrInfo tag_info[] = {{XCS("c"), XCS("3")}, {NULL, NULL}};
-  ElementInfo info[] = {{XCS("doc"), 3, XCS("id"), NULL},
-                        {XCS("tag"), 1, NULL, NULL},
-                        {NULL, 0, NULL, NULL}};
-  info[0].attributes = doc_info;
-  info[1].attributes = tag_info;
+  ElementInfo info[] = {{XCS("doc"), 3, 0, XCS("id"), doc_info},
+                        {XCS("tag"), 1, 0, NULL, tag_info},
+                        {NULL, 0, 0, NULL, NULL}};
 
   XML_Parser parser = XML_ParserCreate(NULL);
   assert_true(parser != NULL);
@@ -2484,6 +2948,352 @@ START_TEST(test_attributes) {
   if (_XML_Parse_SINGLE_BYTES(parser, text, (int)strlen(text), XML_TRUE)
       == XML_STATUS_ERROR)
     xml_failure(parser);
+
+  XML_ParserFree(parser);
+}
+END_TEST
+
+START_TEST(test_duplicate_cdata_attribute) {
+  /*
+  https://www.w3.org/TR/xml/#attdecls
+
+  Test the following statement from the linked specification:
+    When more than one definition is provided for the same attribute of a given
+    element type, the first declaration is binding and later declarations are
+    ignored.
+  */
+
+  const char *text
+      = "<!DOCTYPE doc [\n"
+        "  <!ATTLIST doc attribute CDATA 'expected' attribute CDATA 'ignored'>\n"
+        "]>\n"
+        "<doc/>\n";
+  AttrInfo doc_info[] = {{XCS("attribute"), XCS("expected")}, {NULL, NULL}};
+  ElementInfo info[]
+      = {{XCS("doc"), 0, 1, NULL, doc_info}, {NULL, 0, 0, NULL, NULL}};
+
+  XML_Parser parser = XML_ParserCreate(NULL);
+  assert_true(parser != NULL);
+
+  ParserAndElementInfo parserAndElementInfos = {
+      parser,
+      info,
+  };
+
+  XML_SetStartElementHandler(parser, counting_start_element_handler);
+  XML_SetUserData(parser, &parserAndElementInfos);
+
+  if (_XML_Parse_SINGLE_BYTES(parser, text, (int)strlen(text), XML_TRUE)
+      != XML_STATUS_OK)
+    xml_failure(parser);
+
+  XML_ParserFree(parser);
+}
+END_TEST
+
+START_TEST(test_duplicate_id_attribute_1) {
+  /*
+  https://www.w3.org/TR/xml/#attdecls
+
+  Test the following statement from the linked specification:
+    When more than one definition is provided for the same attribute of a given
+    element type, the first declaration is binding and later declarations are
+    ignored.
+  */
+
+  const char *text
+      = "<!DOCTYPE doc [\n"
+        "  <!ATTLIST doc identifier CDATA 'expected' identifier ID #REQUIRED>\n"
+        "]>\n"
+        "<doc/>\n";
+  AttrInfo doc_info[] = {{XCS("identifier"), XCS("expected")}, {NULL, NULL}};
+  ElementInfo info[]
+      = {{XCS("doc"), 0, 1, NULL, doc_info}, {NULL, 0, 0, NULL, NULL}};
+
+  XML_Parser parser = XML_ParserCreate(NULL);
+  assert_true(parser != NULL);
+
+  ParserAndElementInfo parserAndElementInfos = {
+      parser,
+      info,
+  };
+
+  XML_SetStartElementHandler(parser, counting_start_element_handler);
+  XML_SetUserData(parser, &parserAndElementInfos);
+
+  if (_XML_Parse_SINGLE_BYTES(parser, text, (int)strlen(text), XML_TRUE)
+      != XML_STATUS_OK)
+    xml_failure(parser);
+
+  XML_ParserFree(parser);
+}
+END_TEST
+
+START_TEST(test_duplicate_id_attribute_2) {
+  /*
+  https://www.w3.org/TR/xml/#attdecls
+
+  Test the following statement from the linked specification:
+    When more than one definition is provided for the same attribute of a given
+    element type, the first declaration is binding and later declarations are
+    ignored.
+  */
+
+  const char *text
+      = "<!DOCTYPE doc [\n"
+        "  <!ATTLIST doc identifier ID #REQUIRED identifier CDATA 'unexpected'>\n"
+        "]>\n"
+        "<doc/>\n";
+  AttrInfo doc_info[] = {{NULL, NULL}};
+
+  ElementInfo info[]
+      = {{XCS("doc"), 0, 0, NULL, doc_info}, {NULL, 0, 0, NULL, NULL}};
+
+  XML_Parser parser = XML_ParserCreate(NULL);
+  assert_true(parser != NULL);
+
+  ParserAndElementInfo parserAndElementInfos = {
+      parser,
+      info,
+  };
+
+  XML_SetStartElementHandler(parser, counting_start_element_handler);
+  XML_SetUserData(parser, &parserAndElementInfos);
+
+  if (_XML_Parse_SINGLE_BYTES(parser, text, (int)strlen(text), XML_TRUE)
+      != XML_STATUS_OK)
+    xml_failure(parser);
+
+  XML_ParserFree(parser);
+}
+END_TEST
+
+START_TEST(test_duplicate_cdata_attribute_multiple_attlistdecl) {
+  /*
+  https://www.w3.org/TR/xml/#attdecls
+
+  Test the following statement from the linked specification:
+    When more than one AttlistDecl is provided for a given element type,
+    the contents of all those provided are merged.
+  */
+  const char *text = "<!DOCTYPE doc [\n"
+                     "  <!ATTLIST doc attribute CDATA 'expected'>\n"
+                     "  <!ATTLIST doc attribute CDATA 'ignored'>\n"
+                     "]>\n"
+                     "<doc/>\n";
+  AttrInfo doc_info[] = {{XCS("attribute"), XCS("expected")}, {NULL, NULL}};
+  ElementInfo info[]
+      = {{XCS("doc"), 0, 1, NULL, doc_info}, {NULL, 0, 0, NULL, NULL}};
+
+  XML_Parser parser = XML_ParserCreate(NULL);
+  assert_true(parser != NULL);
+
+  ParserAndElementInfo parserAndElementInfos = {
+      parser,
+      info,
+  };
+
+  XML_SetStartElementHandler(parser, counting_start_element_handler);
+  XML_SetUserData(parser, &parserAndElementInfos);
+
+  if (_XML_Parse_SINGLE_BYTES(parser, text, (int)strlen(text), XML_TRUE)
+      != XML_STATUS_OK)
+    xml_failure(parser);
+
+  XML_ParserFree(parser);
+}
+END_TEST
+
+START_TEST(test_duplicate_cdata_attribute_multiple_attlistdecl_2) {
+  /*
+  https://www.w3.org/TR/xml/#attdecls
+
+  Test the following statement from the linked specification:
+    When more than one AttlistDecl is provided for a given element type,
+    the contents of all those provided are merged.
+  */
+  const char *text = "<!DOCTYPE doc [\n"
+                     "  <!ATTLIST doc attribute CDATA 'expected_doc'>\n"
+                     "  <!ATTLIST tag attribute CDATA 'expected_tag'>\n"
+                     "  <!ATTLIST doc attribute CDATA 'ignored_doc'>\n"
+                     "]>\n"
+                     "<doc><tag></tag></doc>\n";
+  AttrInfo doc_info[] = {{XCS("attribute"), XCS("expected_doc")}, {NULL, NULL}};
+  AttrInfo tag_info[] = {{XCS("attribute"), XCS("expected_tag")}, {NULL, NULL}};
+  ElementInfo info[] = {{XCS("doc"), 0, 1, NULL, doc_info},
+                        {XCS("tag"), 0, 1, NULL, tag_info},
+                        {NULL, 0, 0, NULL, NULL}};
+
+  XML_Parser parser = XML_ParserCreate(NULL);
+  assert_true(parser != NULL);
+
+  ParserAndElementInfo parserAndElementInfos = {
+      parser,
+      info,
+  };
+
+  XML_SetStartElementHandler(parser, counting_start_element_handler);
+  XML_SetUserData(parser, &parserAndElementInfos);
+
+  if (_XML_Parse_SINGLE_BYTES(parser, text, (int)strlen(text), XML_TRUE)
+      != XML_STATUS_OK)
+    xml_failure(parser);
+
+  XML_ParserFree(parser);
+}
+END_TEST
+
+START_TEST(test_duplicate_cdata_attribute_multiple_attlistdecl_3) {
+  /*
+  https://www.w3.org/TR/xml/#attdecls
+
+  Test the following statement from the linked specification:
+    When more than one AttlistDecl is provided for a given element type,
+    the contents of all those provided are merged.
+  */
+  const char *text
+      = "<!DOCTYPE doc [\n"
+        "  <!ATTLIST doc attribute CDATA 'expected_doc'>\n"
+        "  <!ATTLIST tag attribute CDATA 'expected_tag'>\n"
+        "  <!ATTLIST doc second_attribute CDATA 'second_expected_doc' attribute CDATA 'ignored_doc'>\n"
+        "]>\n"
+        "<doc><tag></tag></doc>\n";
+  AttrInfo doc_info[] = {{XCS("attribute"), XCS("expected_doc")},
+                         {XCS("second_attribute"), XCS("second_expected_doc")},
+                         {NULL, NULL}};
+  AttrInfo tag_info[] = {{XCS("attribute"), XCS("expected_tag")}, {NULL, NULL}};
+  ElementInfo info[] = {{XCS("doc"), 0, 2, NULL, doc_info},
+                        {XCS("tag"), 0, 1, NULL, tag_info},
+                        {NULL, 0, 0, NULL, NULL}};
+
+  XML_Parser parser = XML_ParserCreate(NULL);
+  assert_true(parser != NULL);
+
+  ParserAndElementInfo parserAndElementInfos = {
+      parser,
+      info,
+  };
+
+  XML_SetStartElementHandler(parser, counting_start_element_handler);
+  XML_SetUserData(parser, &parserAndElementInfos);
+
+  if (_XML_Parse_SINGLE_BYTES(parser, text, (int)strlen(text), XML_TRUE)
+      != XML_STATUS_OK)
+    xml_failure(parser);
+
+  XML_ParserFree(parser);
+}
+END_TEST
+
+START_TEST(test_duplicate_id_attribute_multiple_attlistdecl) {
+  /*
+  https://www.w3.org/TR/xml/#attdecls
+
+  Test the following statement from the linked specification:
+    When more than one AttlistDecl is provided for a given element type,
+    the contents of all those provided are merged.
+  */
+  const char *text = "<!DOCTYPE doc [\n"
+                     "  <!ATTLIST doc identifier ID #REQUIRED>\n"
+                     "  <!ATTLIST tag identifier CDATA 'identifier_tag'>\n"
+                     "  <!ATTLIST doc identifier CDATA 'ignored'>\n"
+                     "]>\n"
+                     "<doc identifier='doc_identity'><tag></tag></doc>\n";
+  AttrInfo doc_info[]
+      = {{XCS("identifier"), XCS("doc_identity")}, {NULL, NULL}};
+  AttrInfo tag_info[]
+      = {{XCS("identifier"), XCS("identifier_tag")}, {NULL, NULL}};
+  ElementInfo info[] = {{XCS("doc"), 1, 0, XCS("identifier"), doc_info},
+                        {XCS("tag"), 0, 1, NULL, tag_info},
+                        {NULL, 0, 0, NULL, NULL}};
+
+  XML_Parser parser = XML_ParserCreate(NULL);
+  assert_true(parser != NULL);
+
+  ParserAndElementInfo parserAndElementInfos = {
+      parser,
+      info,
+  };
+
+  XML_SetStartElementHandler(parser, counting_start_element_handler);
+  XML_SetUserData(parser, &parserAndElementInfos);
+
+  if (_XML_Parse_SINGLE_BYTES(parser, text, (int)strlen(text), XML_TRUE)
+      != XML_STATUS_OK)
+    xml_failure(parser);
+
+  XML_ParserFree(parser);
+}
+END_TEST
+
+static void XMLCALL
+check_second_attr_normalization(void *userData, const XML_Char *name,
+                                const XML_Char **atts) {
+  int *const seen_second = userData;
+  UNUSED_P(name);
+
+  for (size_t i = 0; atts[i] != NULL; i += 2) {
+    const XML_Char *const key = atts[i];
+    const XML_Char *const value = atts[i + 1];
+    if (xcscmp(key, XCS("second")) != 0)
+      continue;
+    *seen_second = 1;
+    /* Attribute "second" is not of type CDATA, so leading, trailing and
+     * repeated whitespace is to be normalized away. */
+    if (xcscmp(value, XCS("a b")) != 0)
+      fail("Attribute of non-CDATA type was not whitespace-normalized");
+  }
+}
+
+static int XMLCALL
+external_entity_attr_checker(XML_Parser parser, const XML_Char *context,
+                             const XML_Char *base, const XML_Char *systemId,
+                             const XML_Char *publicId) {
+  const char *const text = "<tag second=' a  b '/>";
+  UNUSED_P(base);
+  UNUSED_P(systemId);
+  UNUSED_P(publicId);
+
+  XML_Parser ext_parser = XML_ExternalEntityParserCreate(parser, context, NULL);
+  if (ext_parser == NULL)
+    fail("Could not create external entity parser");
+
+  if (_XML_Parse_SINGLE_BYTES(ext_parser, text, (int)strlen(text), XML_TRUE)
+      != XML_STATUS_OK)
+    xml_failure(ext_parser);
+
+  XML_ParserFree(ext_parser);
+  return XML_STATUS_OK;
+}
+
+START_TEST(test_default_attr_index_after_dtd_copy) {
+  /* Function storeAtts resolves member .attIndex of structure
+   * NAME_AND_DEFAULT_ATTRIBUTE to tell whether an attribute value needs
+   * whitespace normalization, so function dtdCopy needs to carry that index
+   * over to the copy.  Attribute "first" is declared before attribute
+   * "second" so that a mixed-up index resolves to the wrong declaration.
+   */
+  const char *text = "<!DOCTYPE doc [\n"
+                     "  <!ENTITY e SYSTEM 'entity.ent'>\n"
+                     "  <!ELEMENT doc ANY>\n"
+                     "  <!ELEMENT tag EMPTY>\n"
+                     "  <!ATTLIST tag first CDATA #IMPLIED>\n"
+                     "  <!ATTLIST tag second NMTOKENS #IMPLIED>\n"
+                     "]>\n"
+                     "<doc>&e;</doc>\n";
+  int seen_second = 0;
+
+  XML_Parser parser = XML_ParserCreate(NULL);
+  assert_true(parser != NULL);
+  XML_SetUserData(parser, &seen_second);
+  XML_SetExternalEntityRefHandler(parser, external_entity_attr_checker);
+  XML_SetStartElementHandler(parser, check_second_attr_normalization);
+
+  if (_XML_Parse_SINGLE_BYTES(parser, text, (int)strlen(text), XML_TRUE)
+      != XML_STATUS_OK)
+    xml_failure(parser);
+  if (! seen_second)
+    fail("Attribute \"second\" has not been reported");
 
   XML_ParserFree(parser);
 }
@@ -2990,6 +3800,46 @@ START_TEST(test_negative_len_parse_buffer) {
 }
 END_TEST
 
+/* Test XML_ParseBuffer rejects calls where len exceeds available buffer */
+START_TEST(test_parse_buffer_exceeds_buffer) {
+  for (int isFinal = 0; isFinal < 2; isFinal++) {
+    set_subtest("isFinal=%d", isFinal);
+
+    XML_Parser parser = XML_ParserCreate(NULL);
+
+    /* Calling XML_ParseBuffer without any prior XML_GetBuffer call */
+    if (XML_ParseBuffer(parser, 10, isFinal) != XML_STATUS_ERROR)
+      fail("XML_ParseBuffer without XML_GetBuffer was expected to fail.");
+    if (XML_GetErrorCode(parser) != XML_ERROR_NO_BUFFER)
+      fail("Expected XML_ERROR_NO_BUFFER.");
+
+    /* Acquire a small buffer */
+    void *const buffer = XML_GetBuffer(parser, 10);
+    if (buffer == NULL)
+      fail("XML_GetBuffer failed.");
+
+    /* Calling XML_ParseBuffer with len exceeding available buffer capacity */
+    if (XML_ParseBuffer(parser, 10000, isFinal) != XML_STATUS_ERROR)
+      fail("XML_ParseBuffer with len > capacity was expected to fail.");
+    if (XML_GetErrorCode(parser) != XML_ERROR_INVALID_ARGUMENT)
+      fail("Expected XML_ERROR_INVALID_ARGUMENT.");
+
+    /* Valid parse */
+    memcpy(buffer, "<r></r>", 7);
+    if (XML_ParseBuffer(parser, 7, XML_FALSE) != XML_STATUS_OK)
+      xml_failure(parser);
+
+    /* Subsequent XML_ParseBuffer where len exceeds remaining capacity */
+    if (XML_ParseBuffer(parser, 10000, isFinal) != XML_STATUS_ERROR)
+      fail("XML_ParseBuffer on subsequent chunk was expected to fail.");
+    if (XML_GetErrorCode(parser) != XML_ERROR_INVALID_ARGUMENT)
+      fail("Expected XML_ERROR_INVALID_ARGUMENT.");
+
+    XML_ParserFree(parser);
+  }
+}
+END_TEST
+
 /* Test odd corners of the XML_GetBuffer interface */
 static enum XML_Status
 get_feature(enum XML_FeatureEnum feature_id, long *presult) {
@@ -3009,7 +3859,6 @@ get_feature(enum XML_FeatureEnum feature_id, long *presult) {
 /* Test odd corners of the XML_GetBuffer interface */
 START_TEST(test_get_buffer_1) {
   const char *text = get_buffer_test_text;
-  void *buffer;
   long context_bytes;
 
   /* Attempt to allocate a negative length buffer */
@@ -3017,7 +3866,7 @@ START_TEST(test_get_buffer_1) {
     fail("Negative length buffer not failed");
 
   /* Now get a small buffer and extend it past valid length */
-  buffer = XML_GetBuffer(g_parser, 1536);
+  void *const buffer = XML_GetBuffer(g_parser, 1536);
   if (buffer == NULL)
     fail("1.5K buffer failed");
   assert(buffer != NULL);
@@ -3052,10 +3901,9 @@ END_TEST
 /* Test more corners of the XML_GetBuffer interface */
 START_TEST(test_get_buffer_2) {
   const char *text = get_buffer_test_text;
-  void *buffer;
 
   /* Now get a decent buffer */
-  buffer = XML_GetBuffer(g_parser, 1536);
+  void *const buffer = XML_GetBuffer(g_parser, 1536);
   if (buffer == NULL)
     fail("1.5K buffer failed");
   assert(buffer != NULL);
@@ -3122,6 +3970,8 @@ START_TEST(test_buffer_can_grow_to_max) {
     maxbuf = maxbuf / 2;
     fprintf(stderr, "Reducing maxbuf to %d...\n", maxbuf);
   }
+#else
+  UNUSED_P(maxbuf);
 #endif
 
   for (int i = 0; i < num_prefixes; ++i) {
@@ -3137,12 +3987,18 @@ START_TEST(test_buffer_can_grow_to_max) {
     if (s != XML_STATUS_OK)
       xml_failure(parser);
 
+// Avoid running into "AddressSanitizer: out of memory" on 32bit Windows
+#if ! defined(_WIN32) || EXPAT_TESTS_ASAN == 0 || EXPAT_TESTS_64BIT == 1
     // XML_CONTEXT_BYTES of the prefix may remain in the buffer;
     // subtracting the whole prefix is easiest, and close enough.
     assert_true(XML_GetBuffer(parser, maxbuf - prefix_len) != NULL);
     // The limit should be consistent; no prefix should allow us to
     // reach above the max buffer size.
     assert_true(XML_GetBuffer(parser, maxbuf + 1) == NULL);
+#else
+    UNUSED_P(maxbuf);
+#endif
+
     XML_ParserFree(parser);
   }
 }
@@ -3166,16 +4022,16 @@ END_TEST
 START_TEST(test_byte_info_at_end) {
   const char *text = "<doc></doc>";
 
-  if (XML_GetCurrentByteIndex(g_parser) != -1
-      || XML_GetCurrentByteCount(g_parser) != 0)
+  if (XML_GetCurrentByteIndex64(g_parser) != -1
+      || XML_GetCurrentByteCount64(g_parser) != 0)
     fail("Byte index/count incorrect at start of parse");
   if (_XML_Parse_SINGLE_BYTES(g_parser, text, (int)strlen(text), XML_TRUE)
       == XML_STATUS_ERROR)
     xml_failure(g_parser);
   /* At end, the count will be zero and the index the end of string */
-  if (XML_GetCurrentByteCount(g_parser) != 0)
+  if (XML_GetCurrentByteCount64(g_parser) != 0)
     fail("Terminal byte count incorrect");
-  if (XML_GetCurrentByteIndex(g_parser) != (XML_Index)strlen(text))
+  if (XML_GetCurrentByteIndex64(g_parser) != (int64_t)strlen(text))
     fail("Terminal byte index incorrect");
 }
 END_TEST
@@ -3189,9 +4045,9 @@ START_TEST(test_byte_info_at_error) {
   if (_XML_Parse_SINGLE_BYTES(g_parser, text, (int)strlen(text), XML_TRUE)
       == XML_STATUS_OK)
     fail("Syntax error not faulted");
-  if (XML_GetCurrentByteCount(g_parser) != 0)
+  if (XML_GetCurrentByteCount64(g_parser) != 0)
     fail("Error byte count incorrect");
-  if (XML_GetCurrentByteIndex(g_parser) != strlen(PRE_ERROR_STR))
+  if (XML_GetCurrentByteIndex64(g_parser) != strlen(PRE_ERROR_STR))
     fail("Error byte index incorrect");
 }
 END_TEST
@@ -3204,11 +4060,12 @@ END_TEST
 #define END_ELEMENT "</e>"
 START_TEST(test_byte_info_at_cdata) {
   const char *text = START_ELEMENT CDATA_TEXT END_ELEMENT;
-  int offset, size;
+  int64_t offset;
+  uint64_t size;
   ByteTestData data;
 
   /* Check initial context is empty */
-  if (XML_GetInputContext(g_parser, &offset, &size) != NULL)
+  if (XML_GetInputContext64(g_parser, &offset, &size) != NULL)
     fail("Unexpected context at start of parse");
 
   data.start_element_len = (int)strlen(START_ELEMENT);
@@ -3409,9 +4266,8 @@ external_bom_checker(XML_Parser parser, const XML_Char *context,
   if (ext_parser == NULL)
     fail("Could not create external entity parser");
 
-  if (! xcstrcmp(systemId, XCS("004-2.ent"))) {
-    struct bom_testdata *const testdata
-        = (struct bom_testdata *)XML_GetUserData(parser);
+  if (! xcscmp(systemId, XCS("004-2.ent"))) {
+    struct bom_testdata *const testdata = XML_GetUserData(parser);
     const char *const external = testdata->external;
     const int split = testdata->split;
     testdata->nested_callback_happened = XML_TRUE;
@@ -3421,7 +4277,7 @@ external_bom_checker(XML_Parser parser, const XML_Char *context,
       xml_failure(ext_parser);
     }
     text = external + split; // the parse below will continue where we left off.
-  } else if (! xcstrcmp(systemId, XCS("004-1.ent"))) {
+  } else if (! xcscmp(systemId, XCS("004-1.ent"))) {
     text = "<!ELEMENT doc EMPTY>\n"
            "<!ENTITY % e1 SYSTEM '004-2.ent'>\n"
            "<!ENTITY % e2 '%e1;'>\n";
@@ -3572,17 +4428,23 @@ START_TEST(test_attribute_enum_value) {
 }
 END_TEST
 
-/* Slightly bizarrely, the library seems to silently ignore entity
- * definitions for predefined entities, even when they are wrong.  The
- * language of the XML 1.0 spec is somewhat unhelpful as to what ought
- * to happen, so this is currently treated as acceptable.
- */
 START_TEST(test_predefined_entity_redefinition) {
+  // NOTE: This violates XML 1.0 fourth edition section
+  //       "4.6 Predefined Entities" (that demands rejection of bad
+  //       redefinitions) only for backwards-compatibility reasons.
   const char *text = "<!DOCTYPE doc [\n"
-                     "<!ENTITY apos 'foo'>\n"
+                     "  <!ENTITY amp 'bad'>\n"
+                     "  <!ENTITY apos 'bad'>\n"
+                     "  <!ENTITY gt 'bad'>\n"
+                     "  <!ENTITY lt 'bad'>\n"
+                     "  <!ENTITY quot 'bad'>\n"
                      "]>\n"
-                     "<doc>&apos;</doc>";
-  run_character_check(text, XCS("'"));
+                     "<doc>&amp;&apos;&gt;&lt;&quot;</doc>";
+  run_character_check(text, XCS("&"
+                                "'"
+                                ">"
+                                "<"
+                                "\""));
 }
 END_TEST
 
@@ -4088,6 +4950,37 @@ START_TEST(test_skipped_external_entity) {
   if (_XML_Parse_SINGLE_BYTES(g_parser, text, (int)strlen(text), XML_TRUE)
       == XML_STATUS_ERROR)
     xml_failure(g_parser);
+}
+END_TEST
+
+START_TEST(test_scaff_index_shared_across_external_entity_parser) {
+  const char text[]
+      = "<!DOCTYPE doc [\n"
+        "<!ELEMENT a "
+        "((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((b))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))>\n"
+        "<!ENTITY % e SYSTEM 'ext'>\n"
+        "%e;\n"
+        "<!ELEMENT c "
+        "(((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((d)))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))>\n"
+        "]>\n"
+        "<doc/>";
+  ExtOption options[]
+      = {{XCS("ext"),
+          "<!ELEMENT x "
+          "((((((((((((((((((((((((((((((((y))))))))))))))))))))))))))))))))>"},
+         {NULL, NULL}};
+
+  XML_Parser parser = XML_ParserCreate(NULL);
+  XML_SetParamEntityParsing(parser, XML_PARAM_ENTITY_PARSING_ALWAYS);
+  XML_SetUserData(parser, options);
+  XML_SetExternalEntityRefHandler(parser, external_entity_optioner);
+  XML_SetElementDeclHandler(parser, dummy_element_decl_handler);
+
+  if (_XML_Parse_SINGLE_BYTES(parser, text, (int)strlen(text), XML_TRUE)
+      == XML_STATUS_ERROR)
+    xml_failure(parser);
+
+  XML_ParserFree(parser);
 }
 END_TEST
 
@@ -5476,7 +6369,7 @@ START_TEST(test_deep_nested_entity) {
   const size_t N_LINES = 60000;
   const size_t SIZE_PER_LINE = 50;
 
-  char *const text = (char *)malloc((N_LINES + 4) * SIZE_PER_LINE);
+  char *const text = malloc((N_LINES + 4) * SIZE_PER_LINE);
   if (text == NULL) {
     fail("malloc failed");
   }
@@ -5522,7 +6415,7 @@ START_TEST(test_deep_nested_attribute_entity) {
   const size_t N_LINES = 60000;
   const size_t SIZE_PER_LINE = 100;
 
-  char *const text = (char *)malloc((N_LINES + 4) * SIZE_PER_LINE);
+  char *const text = malloc((N_LINES + 4) * SIZE_PER_LINE);
   if (text == NULL) {
     fail("malloc failed");
   }
@@ -5543,8 +6436,8 @@ START_TEST(test_deep_nested_attribute_entity) {
            (long unsigned)(N_LINES - 1));
 
   AttrInfo doc_info[] = {{XCS("name"), XCS("deepText")}, {NULL, NULL}};
-  ElementInfo info[] = {{XCS("foo"), 1, NULL, NULL}, {NULL, 0, NULL, NULL}};
-  info[0].attributes = doc_info;
+  ElementInfo info[]
+      = {{XCS("foo"), 1, 0, NULL, doc_info}, {NULL, 0, 0, NULL, NULL}};
 
   XML_Parser parser = XML_ParserCreate(NULL);
   ParserAndElementInfo parserPlusElemenInfo = {parser, info};
@@ -5565,7 +6458,7 @@ START_TEST(test_deep_nested_entity_delayed_interpretation) {
   const size_t N_LINES = 70000;
   const size_t SIZE_PER_LINE = 100;
 
-  char *const text = (char *)malloc((N_LINES + 4) * SIZE_PER_LINE);
+  char *const text = malloc((N_LINES + 4) * SIZE_PER_LINE);
   if (text == NULL) {
     fail("malloc failed");
   }
@@ -6044,7 +6937,7 @@ START_TEST(test_bypass_heuristic_when_close_to_bufsize) {
   }
 
   const int document_length = 65536;
-  char *const document = (char *)malloc(document_length);
+  char *const document = malloc(document_length);
   assert_true(document != NULL);
 
   const XML_Memory_Handling_Suite memfuncs = {
@@ -6155,7 +7048,7 @@ START_TEST(test_varying_buffer_fills) {
     return; // this test is slow, and doesn't use _XML_Parse_SINGLE_BYTES().
   }
 
-  char *const document = (char *)malloc(document_length);
+  char *const document = malloc(document_length);
   assert_true(document != NULL);
   memset(document, 'x', document_length);
   document[0] = '<';
@@ -6292,6 +7185,8 @@ make_basic_test_case(Suite *s) {
   tcase_add_test(tc_basic, test_bom_utf16_le);
   tcase_add_test(tc_basic, test_nobom_utf16_le);
   tcase_add_test(tc_basic, test_hash_collision);
+  tcase_add_test(tc_basic, test_hash_salt_setter);
+  tcase_add_test(tc_basic, test_hash_salt_ulong);
   tcase_add_test(tc_basic, test_illegal_utf8);
   tcase_add_test(tc_basic, test_utf8_auto_align);
   tcase_add_test(tc_basic, test_utf16);
@@ -6324,6 +7219,9 @@ make_basic_test_case(Suite *s) {
   tcase_add_test(tc_basic, test_xmldecl_invalid);
   tcase_add_test(tc_basic, test_xmldecl_missing_attr);
   tcase_add_test(tc_basic, test_xmldecl_missing_value);
+  tcase_add_test(tc_basic, test_xmldecl_empty_version);
+  tcase_add_test(tc_basic, test_xmldecl_wrong_version_number);
+  tcase_add_test(tc_basic, test_xmldecl_accepts_1_x_version);
   tcase_add_test__if_xml_ge(tc_basic, test_unknown_encoding_internal_entity);
   tcase_add_test(tc_basic, test_unrecognised_encoding_internal_entity);
   tcase_add_test__ifdef_xml_dtd(tc_basic, test_ext_entity_set_encoding);
@@ -6357,12 +7255,14 @@ make_basic_test_case(Suite *s) {
   tcase_add_test(tc_basic, test_long_cdata_utf16);
   tcase_add_test(tc_basic, test_multichar_cdata_utf16);
   tcase_add_test(tc_basic, test_utf16_bad_surrogate_pair);
+  tcase_add_test(tc_basic, test_utf16_surrogate_pairs);
   tcase_add_test(tc_basic, test_bad_cdata);
   tcase_add_test(tc_basic, test_bad_cdata_utf16);
   tcase_add_test(tc_basic, test_stop_parser_between_cdata_calls);
   tcase_add_test(tc_basic, test_suspend_parser_between_cdata_calls);
   tcase_add_test(tc_basic, test_memory_allocation);
   tcase_add_test__if_xml_ge(tc_basic, test_default_current);
+  tcase_add_test(tc_basic, test_default_current_outside_event);
   tcase_add_test(tc_basic, test_dtd_elements);
   tcase_add_test(tc_basic, test_dtd_elements_nesting);
   tcase_add_test__ifdef_xml_dtd(tc_basic, test_set_foreign_dtd);
@@ -6374,6 +7274,16 @@ make_basic_test_case(Suite *s) {
   tcase_add_test__ifdef_xml_dtd(tc_basic, test_empty_foreign_dtd);
   tcase_add_test(tc_basic, test_set_base);
   tcase_add_test(tc_basic, test_attributes);
+  tcase_add_test(tc_basic, test_duplicate_cdata_attribute);
+  tcase_add_test(tc_basic, test_duplicate_id_attribute_1);
+  tcase_add_test(tc_basic, test_duplicate_id_attribute_2);
+  tcase_add_test(tc_basic, test_duplicate_cdata_attribute_multiple_attlistdecl);
+  tcase_add_test(tc_basic,
+                 test_duplicate_cdata_attribute_multiple_attlistdecl_2);
+  tcase_add_test(tc_basic,
+                 test_duplicate_cdata_attribute_multiple_attlistdecl_3);
+  tcase_add_test(tc_basic, test_duplicate_id_attribute_multiple_attlistdecl);
+  tcase_add_test__if_xml_ge(tc_basic, test_default_attr_index_after_dtd_copy);
   tcase_add_test__if_xml_ge(tc_basic, test_reset_in_entity);
   tcase_add_test(tc_basic, test_resume_invalid_parse);
   tcase_add_test(tc_basic, test_resume_resuspended);
@@ -6395,6 +7305,7 @@ make_basic_test_case(Suite *s) {
   tcase_add_test(tc_basic, test_empty_parse);
   tcase_add_test(tc_basic, test_negative_len_parse);
   tcase_add_test(tc_basic, test_negative_len_parse_buffer);
+  tcase_add_test(tc_basic, test_parse_buffer_exceeds_buffer);
   tcase_add_test(tc_basic, test_get_buffer_1);
   tcase_add_test(tc_basic, test_get_buffer_2);
 #if XML_CONTEXT_BYTES > 0
@@ -6448,6 +7359,8 @@ make_basic_test_case(Suite *s) {
   tcase_add_test(tc_basic, test_trailing_cr_in_att_value);
   tcase_add_test(tc_basic, test_standalone_internal_entity);
   tcase_add_test(tc_basic, test_skipped_external_entity);
+  tcase_add_test__ifdef_xml_dtd(
+      tc_basic, test_scaff_index_shared_across_external_entity_parser);
   tcase_add_test(tc_basic, test_skipped_null_loaded_ext_entity);
   tcase_add_test(tc_basic, test_skipped_unloaded_ext_entity);
   tcase_add_test__ifdef_xml_dtd(tc_basic, test_param_entity_with_trailing_cr);

@@ -1,0 +1,4 @@
+#ifndef WINSCP_RTLCOMPAT_WINAPI_WINDOWS_HPP
+#define WINSCP_RTLCOMPAT_WINAPI_WINDOWS_HPP
+#include "Windows.hpp"
+#endif

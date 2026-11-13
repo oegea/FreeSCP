@@ -1,5 +1,5 @@
 /*
- * Copyright 1995-2021 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 1995-2026 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -283,6 +283,7 @@ static int crl_cb(int operation, ASN1_VALUE **pval, const ASN1_ITEM *it,
 static int setup_idp(X509_CRL *crl, ISSUING_DIST_POINT *idp)
 {
     int idp_only = 0;
+    int ret = 0;
 
     /* Set various flags according to IDP */
     crl->idp_flags |= IDP_PRESENT;
@@ -314,7 +315,17 @@ static int setup_idp(X509_CRL *crl, ISSUING_DIST_POINT *idp)
         crl->idp_reasons &= CRLDP_ALL_REASONS;
     }
 
-    return DIST_POINT_set_dpname(idp->distpoint, X509_CRL_get_issuer(crl));
+    ret = DIST_POINT_set_dpname(idp->distpoint, X509_CRL_get_issuer(crl));
+
+    /*
+     * RFC5280 specifies that if onlyContainsUserCerts, onlyContainsCACerts,
+     * indirectCRL, and OnlyContainsAttributeCerts are all FALSE, there must
+     * be either a distributionPoint field or an onlySomeReasons field present.
+     */
+    if (crl->idp_flags == IDP_PRESENT && idp->distpoint == NULL)
+        crl->idp_flags |= IDP_INVALID;
+
+    return ret;
 }
 
 ASN1_SEQUENCE_ref(X509_CRL, crl_cb) = {
@@ -393,6 +404,10 @@ int X509_CRL_get0_by_cert(X509_CRL *crl, X509_REVOKED **ret, X509 *x)
 
 static int def_crl_verify(X509_CRL *crl, EVP_PKEY *r)
 {
+    if (X509_ALGOR_cmp(&crl->sig_alg, &crl->crl.sig_alg) != 0) {
+        ERR_raise(ERR_LIB_X509, X509_R_CRL_SIGNATURE_ALGORITHM_MISMATCH);
+        return 0;
+    }
     return ASN1_item_verify_ex(ASN1_ITEM_rptr(X509_CRL_INFO),
         &crl->sig_alg, &crl->signature, &crl->crl, NULL,
         r, crl->libctx, crl->propq);

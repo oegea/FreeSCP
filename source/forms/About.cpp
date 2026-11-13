@@ -1,29 +1,15 @@
 //---------------------------------------------------------------------
-#include <vcl.h>
+#include <FormsPCH.h>
 #pragma hdrstop
 
-#include <SysUtils.hpp>
-//---------------------------------------------------------------------
-#include <VCLCommon.h>
-#include <Common.h>
-#include <Tools.h>
-#include <GUITools.h>
-#include <CoreMain.h>
 #include <PuttyTools.h>
-#include "WinInterface.h"
 #include "About.h"
-#include "TextsCore.h"
-#include "TextsWin.h"
-#ifndef NO_COMPONENTS
 // must be included before WebBrowserEx.hpp to avoid ambiguity of tagLOGFONTW
 #include <TB2Version.hpp>
 #include <TBX.hpp>
-#endif
 #include <JclBase.hpp>
 #include <JclDebug.hpp>
 #include <WebBrowserEx.hpp>
-#include <StrUtils.hpp>
-#include <Dialogs.hpp>
 #include <FtpFileSystem.h>
 #include <S3FileSystem.h>
 //---------------------------------------------------------------------
@@ -53,7 +39,7 @@ void __fastcall DoAboutDialog(TConfiguration * Configuration,
   {
     DoAboutDialog(Configuration, AllowLicense, Registration, true);
   }
-  catch (EOleException & E)
+  catch (EOleException &)
   {
     // This happens particularly on Wine that does not support some
     // functionality of embedded IE we need.
@@ -146,7 +132,7 @@ __fastcall TAboutDialog::TAboutDialog(TComponent * AOwner,
   }
 
   int IconSize = ScaleByPixelsPerInch(48, this);
-  FIconHandle = (HICON)LoadImage(MainInstance, L"MAINICON", IMAGE_ICON, IconSize, IconSize, 0);
+  FIconHandle = static_cast<HICON>(LoadImage(MainInstance, L"MAINICON", IMAGE_ICON, IconSize, IconSize, 0));
   IconPaintBox->Width = IconSize;
   IconPaintBox->Height = IconSize;
 }
@@ -190,12 +176,13 @@ void __fastcall TAboutDialog::LoadThirdParty()
   DoLoadThirdParty();
 }
 //---------------------------------------------------------------------------
-void __fastcall TAboutDialog::DoLoadThirdParty()
+static UnicodeString ExpatLicenseUrl = L"license:expat";
+static UnicodeString HtmlBr = "<br/>\n";
+UnicodeString TAboutDialog::GenerateThirdParty(bool Html)
 {
-  WaitBrowserToIdle(FThirdPartyWebBrowser);
-
   UnicodeString ThirdParty;
-  UnicodeString Br = "<br/>\n";
+
+  UnicodeString Br = Html ? HtmlBr : L"\n";
 
   if (!GUIConfiguration->UsingInternalTranslation())
   {
@@ -205,27 +192,29 @@ void __fastcall TAboutDialog::DoLoadThirdParty()
     wchar_t LocaleNameStr[255];
     GetLocaleInfo(
       GUIConfiguration->AppliedLocale, LOCALE_SLOCALIZEDLANGUAGENAME,
-      LocaleNameStr, LENOF(LocaleNameStr));
+      LocaleNameStr, std::size(LocaleNameStr));
     UnicodeString LocaleName(LocaleNameStr);
 
     // The {language} should be present only if we are using an untranslated
     // (=english) string
     UnicodeString TranslationHeader = ReplaceStr(LoadStr(ABOUT_TRANSLATIONS_HEADER), L"{language}", LocaleName);
 
-    AddPara(ThirdParty,
+    AddPara(
+      Html, ThirdParty,
       TranslationHeader + Br +
       FMTLOAD(ABOUT_TRANSLATIONS_COPYRIGHT, (GUIConfiguration->AppliedLocaleCopyright())) + Br +
-      (!TranslatorInfo.IsEmpty() ? TranslatorInfo + Br : UnicodeString()) +
-      (!TranslatorUrl.IsEmpty() ? CreateLink(TranslatorUrl) : UnicodeString()));
+      (!TranslatorInfo.IsEmpty() ? TranslatorInfo + Br : EmptyStr) +
+      (!TranslatorUrl.IsEmpty() ? CreateLink(Html, TranslatorUrl) : EmptyStr));
   }
 
-  AddPara(ThirdParty, LoadStr(ABOUT_THIRDPARTY_HEADER));
+  AddPara(Html, ThirdParty, LoadStr(ABOUT_THIRDPARTY_HEADER));
 
-  AddPara(ThirdParty,
+  AddPara(
+    Html, ThirdParty,
     FMTLOAD(PUTTY_BASED_ON, (GetPuTTYVersion())) + Br +
     LoadStr(PUTTY_COPYRIGHT) + Br +
-    CreateLink(LoadStr(PUTTY_LICENSE_URL), LoadStr(ABOUT_THIRDPARTY_LICENSE)) + Br +
-    CreateLink(LoadStr(PUTTY_URL)));
+    CreateLicenseLinkLine(Html, LoadStr(PUTTY_LICENSE_URL)) +
+    CreateLink(Html, LoadStr(PUTTY_URL)));
 
   UnicodeString OpenSSLVersionText = GetOpenSSLVersionText();
   CutToChar(OpenSSLVersionText, L' ', true); // "OpenSSL"
@@ -234,78 +223,112 @@ void __fastcall TAboutDialog::DoLoadThirdParty()
   CutToChar(OpenSSLVersionText, L' ', true); // month
   UnicodeString OpenSSLYear = CutToChar(OpenSSLVersionText, L' ', true);
 
-  AddPara(ThirdParty,
+  AddPara(
+    Html, ThirdParty,
     FMTLOAD(OPENSSL_BASED_ON, (OpenSSLVersion)) + Br +
     FMTLOAD(OPENSSL_COPYRIGHT2, (OpenSSLYear)) + Br +
-    CreateLink(LoadStr(OPENSSL_URL)));
+    CreateLink(Html, LoadStr(OPENSSL_URL)));
 
-  AddPara(ThirdParty,
+  AddPara(
+    Html, ThirdParty,
     LoadStr(FILEZILLA_BASED_ON2) + Br +
     LoadStr(FILEZILLA_COPYRIGHT2) + Br +
-    CreateLink(LoadStr(FILEZILLA_URL)));
+    CreateLink(Html, LoadStr(FILEZILLA_URL)));
 
-  AddPara(ThirdParty,
+  AddPara(
+    Html, ThirdParty,
     FMTLOAD(NEON_BASED_ON2, (NeonVersion())) + Br +
     LoadStr(NEON_COPYRIGHT) + Br +
-    CreateLink(LoadStr(NEON_URL)));
+    CreateLink(Html, LoadStr(NEON_URL)));
 
-  AddPara(ThirdParty,
+  AddPara(
+    Html, ThirdParty,
     FMTLOAD(S3_BASED_ON, (S3LibVersion())) + Br +
     LoadStr(S3_COPYRIGHT) + Br +
-    CreateLink(LoadStr(S3_LICENSE_URL), LoadStr(ABOUT_THIRDPARTY_LICENSE)) + Br +
-    CreateLink(LoadStr(S3_URL)));
+    CreateLicenseLinkLine(Html, LoadStr(S3_LICENSE_URL)) +
+    CreateLink(Html, LoadStr(S3_URL)));
 
-  #define EXPAT_LICENSE_URL L"license:expat"
-
-  AddPara(ThirdParty,
+  AddPara(
+    Html, ThirdParty,
     FMTLOAD(EXPAT_BASED_ON, (ExpatVersion())) + Br +
-    CreateLink(EXPAT_LICENSE_URL, LoadStr(ABOUT_THIRDPARTY_LICENSE)) + Br +
-    CreateLink(LoadStr(EXPAT_URL)));
+    CreateLicenseLinkLine(Html, ExpatLicenseUrl) +
+    CreateLink(Html, LoadStr(EXPAT_URL)));
 
-  AddBrowserLinkHandler(FThirdPartyWebBrowser, EXPAT_LICENSE_URL, ExpatLicenceHandler);
-
-#ifndef NO_COMPONENTS
-
-  AddPara(ThirdParty,
+  AddPara(
+    Html, ThirdParty,
     FMTLOAD(ABOUT_TOOLBAR2000, (Toolbar2000Version)) + Br +
     LoadStr(ABOUT_TOOLBAR2000_COPYRIGHT) + Br +
-    CreateLink(LoadStr(ABOUT_TOOLBAR2000_URL)));
+    CreateLink(Html, LoadStr(ABOUT_TOOLBAR2000_URL)));
 
-  AddPara(ThirdParty,
+  AddPara(
+    Html, ThirdParty,
     FMTLOAD(ABOUT_TBX, (TBXVersionString)) + Br +
     LoadStr(ABOUT_TBX_COPYRIGHT) + Br +
-    CreateLink(LoadStr(ABOUT_TBX_URL)));
+    CreateLink(Html, LoadStr(ABOUT_TBX_URL)));
 
-  AddPara(ThirdParty,
+  AddPara(
+    Html, ThirdParty,
     LoadStr(ABOUT_FILEMANAGER) + Br +
     LoadStr(ABOUT_FILEMANAGER_COPYRIGHT));
 
-#endif
-
   UnicodeString JclVersion =
     FormatVersion(JclVersionMajor, JclVersionMinor, JclVersionRelease) + L" " + JclCommit;
-  AddPara(ThirdParty,
+  AddPara(
+    Html, ThirdParty,
     FMTLOAD(ABOUT_JCL, (JclVersion)) + Br +
-    CreateLink(LoadStr(ABOUT_JCL_URL)));
+    CreateLink(Html, LoadStr(ABOUT_JCL_URL)));
 
-  AddPara(ThirdParty,
+  AddPara(
+    Html, ThirdParty,
     LoadStr(ABOUT_PNG) + Br +
     LoadStr(ABOUT_PNG_COPYRIGHT) + Br +
-    CreateLink(LoadStr(ABOUT_PNG_URL)));
+    CreateLink(Html, LoadStr(ABOUT_PNG_URL)));
 
+  return ThirdParty;
+}
+//---------------------------------------------------------------------------
+void __fastcall TAboutDialog::DoLoadThirdParty()
+{
+  WaitBrowserToIdle(FThirdPartyWebBrowser);
+
+  AddBrowserLinkHandler(FThirdPartyWebBrowser, ExpatLicenseUrl, ExpatLicenceHandler);
+
+  UnicodeString ThirdParty = GenerateThirdParty(true);
   ThirdParty = GenerateAppHtmlPage(Font, ThirdPartyPanel, ThirdParty, false);
 
   LoadBrowserDocument(FThirdPartyWebBrowser, ThirdParty);
 }
 //---------------------------------------------------------------------------
-void __fastcall TAboutDialog::AddPara(UnicodeString & Text, const UnicodeString & S)
+void TAboutDialog::AddPara(bool Html, UnicodeString & Text, const UnicodeString & S)
 {
-  Text += L"<p>" + S + L"</p>\n";
+  UnicodeString Para = S;
+  if (Html)
+  {
+    Para = L"<p>" + Para + L"</p>\n";
+  }
+  else
+  {
+    Para += L"\n\n";
+  }
+  Text += Para;
 }
 //---------------------------------------------------------------------------
-UnicodeString __fastcall TAboutDialog::CreateLink(const UnicodeString & URL, const UnicodeString & Title)
+UnicodeString TAboutDialog::CreateLicenseLinkLine(bool Html, const UnicodeString & URL)
 {
-  return FORMAT(L"<a href=\"%s\">%s</a>", (URL, Title.IsEmpty() ? URL : Title));
+  return Html ? (CreateLink(true, URL, LoadStr(ABOUT_THIRDPARTY_LICENSE)) + HtmlBr) : EmptyStr;
+}
+//---------------------------------------------------------------------------
+UnicodeString TAboutDialog::CreateLink(bool Html, const UnicodeString & URL, const UnicodeString & Title)
+{
+  if (Html)
+  {
+    return FORMAT(L"<a href=\"%s\">%s</a>", (URL, Title.IsEmpty() ? URL : Title));
+  }
+  else
+  {
+    DebugAssert(Title.IsEmpty());
+    return URL;
+  }
 }
 //---------------------------------------------------------------------------
 void __fastcall TAboutDialog::LicenseButtonClick(TObject * /*Sender*/)
@@ -332,9 +355,17 @@ void __fastcall TAboutDialog::OKButtonMouseDown(TObject * /*Sender*/,
 {
   if (Button == mbRight)
   {
-    if (Shift.Contains(ssAlt))
+    if (Shift.Contains(ssAlt) && Shift.Contains(ssShift))
+    {
+      AbnormalTerminationTest();
+    }
+    else if (Shift.Contains(ssAlt))
     {
       AccessViolationTest();
+    }
+    else if (Shift.Contains(ssShift))
+    {
+      InternalExceptionTest();
     }
     else if (Shift.Contains(ssCtrl))
     {
@@ -353,16 +384,82 @@ void __fastcall TAboutDialog::LookupAddress()
   }
 }
 //---------------------------------------------------------------------------
-void __fastcall TAboutDialog::AccessViolationTest()
+#ifdef _WIN64
+static thread_local EXCEPTION_RECORD ExceptionRecord;
+static thread_local bool ExceptionCaptured = false;
+//---------------------------------------------------------------------------
+LONG WINAPI CaptureException(EXCEPTION_POINTERS * ExceptionInfo)
 {
+  if (ExceptionInfo->ExceptionRecord->ExceptionCode == EXCEPTION_ACCESS_VIOLATION)
+  {
+    ExceptionRecord = *(ExceptionInfo->ExceptionRecord);
+    ExceptionCaptured = true;
+  }
+  return EXCEPTION_CONTINUE_SEARCH; // Let the local __except block catch it
+}
+#endif
+//---------------------------------------------------------------------------
+[[noreturn]] static void RaiseInternalError(Exception * E)
+{
+  throw ExtException(E, MainInstructions(L"Internal error test."));
+}
+//---------------------------------------------------------------------------
+#ifdef _WIN64
+[[noreturn]]
+#endif
+void TAboutDialog::AccessViolationTest()
+{
+  #ifdef _WIN64
+  PVOID ExceptionHandler = AddVectoredExceptionHandler(1, CaptureException);
+  ExceptionCaptured = false;
+  __try
+  {
+    ACCESS_VIOLATION_TEST;
+  }
+  #pragma clang diagnostic push
+  #pragma clang diagnostic ignored "-Wunreachable-code"
+  __except (EXCEPTION_EXECUTE_HANDLER)
+  #pragma clang diagnostic pop
+  {
+    RemoveVectoredExceptionHandler(ExceptionHandler);
+    if (ExceptionCaptured)
+    {
+      auto VclExceptionRecord = reinterpret_cast<System::PExceptionRecord>(&ExceptionRecord);
+      Exception * E = static_cast<Exception *>(reinterpret_cast<TExceptObjProc>(ExceptObjProc)(VclExceptionRecord));
+      RaiseInternalError(E);
+    }
+    throw Exception(L"Unknown hardware exception occurred.");
+  }
+  #else
   try
   {
     ACCESS_VIOLATION_TEST;
   }
   catch (Exception & E)
   {
-    throw ExtException(&E, MainInstructions(L"Internal error test."));
+    RaiseInternalError(&E);
   }
+  #endif
+}
+//---------------------------------------------------------------------------
+void TAboutDialog::InternalExceptionTest()
+{
+  try
+  {
+    (new TList())->Error(L"List error", 0);
+  }
+  catch (Exception & E)
+  {
+    RaiseInternalError(&E);
+  }
+}
+//---------------------------------------------------------------------------
+void TAboutDialog::AbnormalTerminationTest()
+{
+  std::unique_ptr<TStringList> Releaser(new TStringList());
+  delete Releaser.get();
+  // for some reason two delete's won't do (that crashes somehow), although reset does delete internally too anyway
+  Releaser.reset(nullptr);
 }
 //---------------------------------------------------------------------------
 void __fastcall TAboutDialog::ExpatLicenceHandler(TObject * /*Sender*/)
@@ -407,16 +504,11 @@ void __fastcall TAboutDialog::FormKeyDown(TObject *, WORD & Key, TShiftState Shi
         ProductSpecificMessageLabel->Caption + sLineBreak +
         ForumUrlLabel->Caption + sLineBreak;
 
-      UnicodeString ThirdPartyText;
-      if ((FThirdPartyWebBrowser != NULL) &&
-          CopyTextFromBrowser(FThirdPartyWebBrowser, ThirdPartyText))
-      {
-        Text +=
-          sLineBreak +
-          GetDividerLine() + sLineBreak +
-          Label3->Caption + sLineBreak +
-          ThirdPartyText + sLineBreak;
-      }
+      Text +=
+        sLineBreak +
+        GetDividerLine() + sLineBreak +
+        Label3->Caption + sLineBreak +
+        TrimRight(GenerateThirdParty(false)) + sLineBreak;
 
       TInstantOperationVisualizer Visualizer;
       CopyToClipboard(Text);

@@ -3,10 +3,13 @@
 #define WebDavFileSystemH
 
 //------------------------------------------------------------------------------
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wold-style-cast"
 #include <ne_uri.h>
 #include <ne_utils.h>
 #include <ne_string.h>
 #include <ne_request.h>
+#pragma clang diagnostic pop
 #include <FileSystems.h>
 //------------------------------------------------------------------------------
 struct TNeonCertificateData;
@@ -133,9 +136,7 @@ protected:
   static int NeonPostSend(ne_request * Req, void * UserData, const ne_status * Status);
   static void NeonPostHeaders(ne_request * Req, void * UserData, const ne_status * Status);
   void ExchangeCapabilities(const char * Path, UnicodeString & CorrectedUrl);
-  static int DoNeonServerSSLCallback(void * UserData, int Failures, const struct ne_ssl_certificate_s * Certificate, bool Aux);
-  static int NeonServerSSLCallbackMain(void * UserData, int Failures, const struct ne_ssl_certificate_s * Certificate);
-  static int NeonServerSSLCallbackAux(void * UserData, int Failures, const struct ne_ssl_certificate_s * Certificate);
+  static int NeonServerSSLCallback(void * UserData, int Failures, const struct ne_ssl_certificate_s * Certificate);
   static void NeonProvideClientCert(void * UserData, ne_session * Sess, const ne_ssl_dname * const * DNames, int DNCount);
   void __fastcall CloseNeonSession();
   bool __fastcall CancelTransfer();
@@ -177,14 +178,12 @@ private:
   UnicodeString FAuthorizationProtocol;
   UnicodeString FLastAuthorizationProtocol;
   bool FAuthenticationRetry;
-  bool FOneDrive;
-  enum { odiUnknown, odiUpperCase, odiLowerCase } FOneDriveInterface;
 
   void __fastcall CustomReadFile(UnicodeString FileName,
     TRemoteFile *& File, TRemoteFile * ALinkedByFile);
   int __fastcall CustomReadFileInternal(const UnicodeString FileName,
     TRemoteFile *& File, TRemoteFile * ALinkedByFile);
-  bool VerifyCertificate(TSessionContext * SessionContext, TNeonCertificateData Data, bool Aux);
+  bool VerifyCertificate(TSessionContext * SessionContext, TNeonCertificateData Data);
   void OpenUrl(const UnicodeString & Url);
   void __fastcall CollectTLSSessionInfo();
   UnicodeString __fastcall GetRedirectUrl();
@@ -199,8 +198,6 @@ private:
   struct ne_lock * __fastcall FindLock(const RawByteString & Path);
   void __fastcall DiscardLock(const RawByteString & Path);
   bool __fastcall IsNtlmAuthentication(TSessionContext * SessionContext);
-  static void NeonAuxRequestInit(ne_session_s * Session, ne_request * Request, void * UserData);
-  void __fastcall SetSessionTls(TSessionContext * SessionContext, ne_session_s * Session, bool Aux);
   void __fastcall InitSession(TSessionContext * SessionContext, ne_session_s * Session);
   bool IsTlsSession(ne_session * Session);
 };

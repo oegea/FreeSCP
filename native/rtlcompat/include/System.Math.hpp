@@ -1,0 +1,4 @@
+#ifndef WINSCP_RTLCOMPAT_SYSTEM_MATH_HPP
+#define WINSCP_RTLCOMPAT_SYSTEM_MATH_HPP
+#include "Math.hpp"
+#endif

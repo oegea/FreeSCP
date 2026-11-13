@@ -1,40 +1,24 @@
 //---------------------------------------------------------------------------
-#include <vcl.h>
+#include <WinPCH.h>
 #pragma hdrstop
 
 #include <shlwapi.h>
+#include <signal.h>
 
-#include <Common.h>
 #include <Queue.h>
-#include <Exceptions.h>
-#include <CoreMain.h>
-#include <TextsCore.h>
-#include <TextsWin.h>
-#include <HelpWin.h>
-#include <HelpCore.h>
-#include <Interface.h>
-#include <VCLCommon.h>
 #include <Glyphs.h>
-#include <PasTools.hpp>
-#include <DateUtils.hpp>
 #include <Custom.h>
-#include <HistoryComboBox.hpp>
+#include <HistoryComboBox.h>
+#include <IEDriveInfo.h>
 
-#include "WinInterface.h"
-#include "GUITools.h"
 #include "JclDebug.hpp"
 #include "JclHookExcept.hpp"
-#include <System.IOUtils.hpp>
-#include <StrUtils.hpp>
 #include <WinApi.h>
-#include "Tools.h"
 #include <Vcl.AppEvnts.hpp>
-//---------------------------------------------------------------------------
-#pragma package(smart_init)
 //---------------------------------------------------------------------------
 #define WM_TRAY_ICON (WM_WINSCP_USER + 5)
 //---------------------------------------------------------------------
-TNotifyEvent GlobalOnMinimize = NULL;
+static TNotifyEvent GlobalOnMinimize = NULL;
 //---------------------------------------------------------------------
 const IID IID_IListView_Win7 = {0xE5B16AF2, 0x3990, 0x4681, {0xA6, 0x09, 0x1F, 0x06, 0x0C, 0xD1, 0x42, 0x69}};
 //---------------------------------------------------------------------
@@ -118,7 +102,7 @@ static void __fastcall NeverAskAgainCheckClick(void * /*Data*/, TObject * Sender
   {
     if (CheckBox->Tag > 0)
     {
-      PositiveAnswer = CheckBox->Tag;
+      PositiveAnswer = static_cast<unsigned int>(CheckBox->Tag);
     }
     else
     {
@@ -218,7 +202,7 @@ TForm * __fastcall CreateMessageDialogEx(const UnicodeString Msg,
   {
     NeverAskAgainCaption =
       !Params->NeverAskAgainTitle.IsEmpty() ?
-        (UnicodeString)Params->NeverAskAgainTitle :
+        Params->NeverAskAgainTitle :
         // qaOK | qaIgnore is used, when custom "non-answer" button is required
         LoadStr(((ActualAnswers == qaOK) || (ActualAnswers == (qaOK | qaIgnore))) ?
           NEVER_SHOW_AGAIN : NEVER_ASK_AGAIN);
@@ -238,9 +222,7 @@ TForm * __fastcall CreateMessageDialogEx(const UnicodeString Msg,
       {
         NeverAskAgainCheck->Tag = Params->NeverAskAgainAnswer;
       }
-      TNotifyEvent OnClick;
-      ((TMethod*)&OnClick)->Code = NeverAskAgainCheckClick;
-      NeverAskAgainCheck->OnClick = OnClick;
+      NeverAskAgainCheck->OnClick = MakeMethod<TNotifyEvent>(NULL, NeverAskAgainCheckClick);
     }
 
     Dialog->HelpKeyword = HelpKeyword;
@@ -325,35 +307,35 @@ void __fastcall TMessageTimer::DoTimer(TObject * /*Sender*/)
 class TMessageTimeout : public TTimer
 {
 public:
-  __fastcall TMessageTimeout(TComponent * AOwner, unsigned int Timeout, TButton * Button, unsigned int Answer);
+  __fastcall TMessageTimeout(TForm * AOwner, int Timeout);
+
+  void Restart(int Timeout);
 
 protected:
-  unsigned int FOrigTimeout;
-  unsigned int FTimeout;
-  TButton * FButton;
-  UnicodeString FOrigCaption;
+  TForm * FOwner;
+  int FOrigTimeout;
+  int FTimeout;
   TPoint FOrigCursorPos;
   std::unique_ptr<TApplicationEvents> FApplicationEvents;
-  unsigned int FAnswer;
 
   void __fastcall DoTimer(TObject * Sender);
-  void __fastcall UpdateButton();
+  virtual void UpdateButton() = 0;
+  virtual void Timeouted() = 0;
   void __fastcall ApplicationMessage(TMsg & Msg, bool & Handled);
   void __fastcall MouseMove();
   void __fastcall Cancel();
+  UnicodeString FormatTimeoutCaption(const UnicodeString & OrigCaption);
 };
 //---------------------------------------------------------------------------
-__fastcall TMessageTimeout::TMessageTimeout(TComponent * AOwner,
-  unsigned int Timeout, TButton * Button, unsigned int Answer) :
-  TTimer(AOwner), FOrigTimeout(Timeout), FTimeout(Timeout), FButton(Button), FAnswer(Answer)
+__fastcall TMessageTimeout::TMessageTimeout(TForm * AOwner, int Timeout) :
+  TTimer(AOwner), FOwner(AOwner), FOrigTimeout(Timeout), FTimeout(Timeout)
 {
+  Enabled = (FTimeout >= 0);
   OnTimer = DoTimer;
   Interval = MSecsPerSec;
-  FOrigCaption = FButton->Caption;
   FOrigCursorPos = Mouse->CursorPos;
   FApplicationEvents.reset(new TApplicationEvents(Application));
   FApplicationEvents->OnMessage = ApplicationMessage;
-  UpdateButton();
 }
 //---------------------------------------------------------------------------
 void __fastcall TMessageTimeout::ApplicationMessage(TMsg & Msg, bool & DebugUsedArg(Handled))
@@ -375,15 +357,15 @@ void __fastcall TMessageTimeout::MouseMove()
   int Delta = std::max(std::abs(FOrigCursorPos.X - CursorPos.X), std::abs(FOrigCursorPos.Y - CursorPos.Y));
 
   int Threshold = 8;
-  if (DebugAlwaysTrue(FButton != NULL))
+  if (DebugAlwaysTrue(FOwner != NULL))
   {
-    Threshold = ScaleByTextHeight(FButton, Threshold);
+    Threshold = ScaleByTextHeight(FOwner, Threshold);
   }
 
   if (Delta > Threshold)
   {
     FOrigCursorPos = CursorPos;
-    const unsigned int SuspendTime = 30 * MSecsPerSec;
+    const int SuspendTime = 30 * MSecsPerSec;
     FTimeout = std::max(FOrigTimeout, SuspendTime);
     UpdateButton();
   }
@@ -395,34 +377,18 @@ void __fastcall TMessageTimeout::Cancel()
   UpdateButton();
 }
 //---------------------------------------------------------------------------
-void __fastcall TMessageTimeout::UpdateButton()
+UnicodeString TMessageTimeout::FormatTimeoutCaption(const UnicodeString & OrigCaption)
 {
-  DebugAssert(FButton != NULL);
-  FButton->Caption =
-    !Enabled ? FOrigCaption : FMTLOAD(TIMEOUT_BUTTON, (FOrigCaption, int(FTimeout / MSecsPerSec)));
+  return FMTLOAD(TIMEOUT_BUTTON, (OrigCaption, int(FTimeout / MSecsPerSec)));
 }
 //---------------------------------------------------------------------------
 void __fastcall TMessageTimeout::DoTimer(TObject * /*Sender*/)
 {
-  if (FTimeout <= Interval)
+  if (FTimeout <= static_cast<int>(Interval))
   {
-    DebugAssert(FButton != NULL);
-
-    // Needed particularly for "keep up to date" dialog, which does not close on the button click
     Enabled = false;
-    TModalResult PrevModalResult = FButton->ModalResult;
-    if (FAnswer != 0)
-    {
-      FButton->ModalResult = FAnswer;
-    }
-    try
-    {
-      FButton->Click();
-    }
-    __finally
-    {
-      FButton->ModalResult = PrevModalResult;
-    }
+    UpdateButton();
+    Timeouted();
   }
   else
   {
@@ -431,11 +397,113 @@ void __fastcall TMessageTimeout::DoTimer(TObject * /*Sender*/)
   }
 }
 //---------------------------------------------------------------------------
-void InitiateDialogTimeout(TForm * Dialog, unsigned int Timeout, TButton * Button, unsigned int Answer)
+void TMessageTimeout::Restart(int Timeout)
 {
-  TMessageTimeout * MessageTimeout = new TMessageTimeout(Application, Timeout, Button, Answer);
-  MessageTimeout->Name = L"MessageTimeout";
-  Dialog->InsertComponent(MessageTimeout);
+  FTimeout = Timeout;
+  Enabled = (FTimeout >= 0);
+  UpdateButton();
+}
+//---------------------------------------------------------------------------
+class TButtonMessageTimeout : public TMessageTimeout
+{
+public:
+  __fastcall TButtonMessageTimeout(TForm * AOwner, int Timeout, TButton * Button, unsigned int Answer);
+
+protected:
+  virtual void UpdateButton();
+  virtual void Timeouted();
+
+private:
+  TButton * FButton;
+  UnicodeString FOrigCaption;
+  unsigned int FAnswer;
+};
+//---------------------------------------------------------------------------
+__fastcall TButtonMessageTimeout::TButtonMessageTimeout(
+    TForm * AOwner, int Timeout, TButton * Button, unsigned int Answer) :
+  TMessageTimeout(AOwner, Timeout),
+  FButton(Button), FAnswer(Answer)
+{
+  FOrigCaption = FButton->Caption;
+  UpdateButton();
+}
+//---------------------------------------------------------------------------
+void TButtonMessageTimeout::UpdateButton()
+{
+  DebugAssert(FButton != NULL);
+  FButton->Caption = !Enabled ? FOrigCaption : FormatTimeoutCaption(FOrigCaption);
+}
+//---------------------------------------------------------------------------
+void TButtonMessageTimeout::Timeouted()
+{
+  DebugAssert(FButton != NULL);
+
+  // Needed particularly for "keep up to date" dialog, which does not close on the button click
+  Enabled = false;
+  TModalResult PrevModalResult = FButton->ModalResult;
+  if (FAnswer != 0)
+  {
+    FButton->ModalResult = FAnswer;
+  }
+  try
+  {
+    FButton->Click();
+  }
+  __finally
+  {
+    FButton->ModalResult = PrevModalResult;
+  }
+}
+//---------------------------------------------------------------------------
+void InitiateDialogTimeout(TForm * Dialog, int Timeout, TButton * Button, unsigned int Answer)
+{
+  InsertComponentInstance(Dialog, new TButtonMessageTimeout(Dialog, Timeout, Button, Answer));
+}
+//---------------------------------------------------------------------------
+class TToolbarMessageTimeout : public TMessageTimeout
+{
+public:
+  __fastcall TToolbarMessageTimeout(TForm * AOwner, int Timeout, TTBCustomItem * Item);
+
+protected:
+  virtual void UpdateButton();
+  virtual void Timeouted();
+
+private:
+  TTBCustomItem * FItem;
+};
+//---------------------------------------------------------------------------
+__fastcall TToolbarMessageTimeout::TToolbarMessageTimeout(TForm * AOwner, int Timeout, TTBCustomItem * Item) :
+  TMessageTimeout(AOwner, Timeout),
+  FItem(Item)
+{
+  DebugAssert(Item->Action != nullptr);
+  UpdateButton();
+}
+//---------------------------------------------------------------------------
+void TToolbarMessageTimeout::UpdateButton()
+{
+  UnicodeString OrigCaption = DebugNotNull(dynamic_cast<TCustomAction *>(FItem->Action))->Caption;
+  FItem->Caption = !Enabled ? OrigCaption : FormatTimeoutCaption(OrigCaption);
+}
+//---------------------------------------------------------------------------
+void TToolbarMessageTimeout::Timeouted()
+{
+  FItem->Click();
+}
+//---------------------------------------------------------------------------
+void RestartToolbarDialogTimeout(TForm * Dialog, int Timeout, TTBCustomItem * Item)
+{
+  auto ToolbarMessageTimeout = FindComponentInstance<TToolbarMessageTimeout>(Dialog);
+  if (ToolbarMessageTimeout == nullptr)
+  {
+    ToolbarMessageTimeout = new TToolbarMessageTimeout(Dialog, Timeout, Item);
+    InsertComponentInstance(Dialog, ToolbarMessageTimeout);
+  }
+  else
+  {
+    ToolbarMessageTimeout->Restart(Timeout);
+  }
 }
 //---------------------------------------------------------------------
 class TPublicControl : public TControl
@@ -528,11 +596,8 @@ unsigned int __fastcall SimpleErrorDialog(const UnicodeString Msg, const Unicode
   return Result;
 }
 //---------------------------------------------------------------------------
-static TStrings * __fastcall StackInfoListToStrings(
-  TJclStackInfoList * StackInfoList)
+static void FormatStackTrace(TStrings * StackTrace)
 {
-  std::unique_ptr<TStrings> StackTrace(new TStringList());
-  StackInfoList->AddToStrings(StackTrace.get(), true, false, true, true);
   for (int Index = 0; Index < StackTrace->Count; Index++)
   {
     UnicodeString Frame = StackTrace->Strings[Index];
@@ -551,58 +616,84 @@ static TStrings * __fastcall StackInfoListToStrings(
     }
     StackTrace->Strings[Index] = Frame;
   }
+}
+//---------------------------------------------------------------------------
+static TStrings * __fastcall StackInfoListToStrings(TJclStackInfoList * StackInfoList)
+{
+  std::unique_ptr<TStrings> StackTrace(new TStringList());
+  // Corresponds to our JclExceptionStacktraceOptions.
+  // Also match GetLocationInfoStr call in GetAbortStackTrace.
+  StackInfoList->AddToStrings(StackTrace.get(), true, false, true, true);
+  FormatStackTrace(StackTrace.get());
   return StackTrace.release();
 }
 //---------------------------------------------------------------------------
-static std::unique_ptr<TCriticalSection> StackTraceCriticalSection(TraceInitPtr(new TCriticalSection()));
-typedef std::map<DWORD, TStrings *> TStackTraceMap;
-static TStackTraceMap StackTraceMap;
+static TStrings * GetExceptionStackTraceStrings(Exception * E)
+{
+  std::unique_ptr<TStrings> StackTrace(TextToStringList(E->StackTrace));
+  FormatStackTrace(StackTrace.get());
+  return StackTrace.release();
+}
 //---------------------------------------------------------------------------
-UnicodeString __fastcall GetExceptionDebugInfo()
+UnicodeString GetFrameSymbol(const UnicodeString & Frame)
 {
   UnicodeString Result;
-  TGuard Guard(StackTraceCriticalSection.get());
-  TStackTraceMap::iterator Iterator = StackTraceMap.find(GetCurrentThreadId());
-  if (Iterator != StackTraceMap.end())
+  // The last line might be empty
+  if (!Frame.IsEmpty())
   {
-    TStrings * StackTrace = Iterator->second;
+    int P = Frame.Pos(L")");
+    if (DebugAlwaysTrue(P > 0))
+    {
+      Result = Frame.SubString(P + 1, Frame.Length() - P).Trim();
+    }
+  }
+  return Result;
+}
+//---------------------------------------------------------------------------
+UnicodeString GetExceptionDebugInfo(Exception * E)
+{
+  UnicodeString Result;
+  if (DebugAlwaysTrue(IsInternalException(E)) && DebugAlwaysTrue(E->StackInfo != NULL))
+  {
+    std::unique_ptr<TStrings> StackTrace(GetExceptionStackTraceStrings(E));
     for (int Index = 0; Index < StackTrace->Count; Index++)
     {
       UnicodeString Frame = StackTrace->Strings[Index];
-      // The last line might be empty
-      if (!Frame.IsEmpty())
+      UnicodeString Symbol = GetFrameSymbol(Frame);
+      if (!Symbol.IsEmpty() &&
+          (Symbol != L"KERNELBASE.dll.RaiseException") &&
+          (Symbol != L"Jclhookexcept::JclAddExceptNotifier") &&
+          (Symbol != L"_ReThrowException") &&
+          (Symbol != L"____ExceptionHandler") &&
+          (Symbol != L"__ExceptionHandler") &&
+          (Symbol != L"___doGlobalUnwind") &&
+          (Symbol != L"_ThrowExceptionLDTC"))
       {
-        int P = Frame.Pos(L")");
-        if (DebugAlwaysTrue(P > 0))
-        {
-          UnicodeString Symbol = Frame.SubString(P + 1, Frame.Length() - P).Trim();
-
-          if ((Symbol != L"KERNELBASE.dll.RaiseException") &&
-              (Symbol != L"Jclhookexcept::JclAddExceptNotifier") &&
-              (Symbol != L"_ReThrowException") &&
-              (Symbol != L"____ExceptionHandler") &&
-              (Symbol != L"__ExceptionHandler") &&
-              (Symbol != L"___doGlobalUnwind") &&
-              (Symbol != L"_ThrowExceptionLDTC"))
-          {
-            AddToList(Result, Symbol, L";");
-          }
-        }
+        AddToList(Result, Symbol, L";");
       }
     }
   }
   return Result;
 }
 //---------------------------------------------------------------------------
-bool __fastcall AppendExceptionStackTraceAndForget(TStrings *& MoreMessages)
+static void AppendStackTrace(TStrings * MoreMessages, TStrings * StackTrace)
+{
+  if (!MoreMessages->Text.IsEmpty())
+  {
+    MoreMessages->Text = MoreMessages->Text + "\n";
+  }
+  MoreMessages->Text = MoreMessages->Text + LoadStr(STACK_TRACE) + "\n";
+  MoreMessages->AddStrings(StackTrace);
+}
+//---------------------------------------------------------------------------
+bool AppendExceptionStackTrace(Exception * E, TStrings *& MoreMessages)
 {
   bool Result = false;
 
-  TGuard Guard(StackTraceCriticalSection.get());
-
-  TStackTraceMap::iterator Iterator = StackTraceMap.find(GetCurrentThreadId());
-  if (Iterator != StackTraceMap.end())
+  if (IsInternalException(E) && DebugAlwaysTrue(E->StackInfo != NULL))
   {
+    std::unique_ptr<TStrings> StackTrace(GetExceptionStackTraceStrings(E));
+
     std::unique_ptr<TStrings> OwnedMoreMessages;
     if (MoreMessages == NULL)
     {
@@ -610,15 +701,7 @@ bool __fastcall AppendExceptionStackTraceAndForget(TStrings *& MoreMessages)
       MoreMessages = OwnedMoreMessages.get();
       Result = true;
     }
-    if (!MoreMessages->Text.IsEmpty())
-    {
-      MoreMessages->Text = MoreMessages->Text + "\n";
-    }
-    MoreMessages->Text = MoreMessages->Text + LoadStr(STACK_TRACE) + "\n";
-    MoreMessages->AddStrings(Iterator->second);
-
-    delete Iterator->second;
-    StackTraceMap.erase(Iterator);
+    AppendStackTrace(MoreMessages, StackTrace.get());
 
     OwnedMoreMessages.release();
   }
@@ -648,7 +731,7 @@ unsigned int __fastcall ExceptionMessageDialog(Exception * E, TQueryType Type,
   HelpKeyword = MergeHelpKeyword(HelpKeyword, GetExceptionHelpKeyword(E));
 
   std::unique_ptr<TStrings> OwnedMoreMessages;
-  if (AppendExceptionStackTraceAndForget(MoreMessages))
+  if (AppendExceptionStackTrace(E, MoreMessages))
   {
     OwnedMoreMessages.reset(MoreMessages);
   }
@@ -675,50 +758,153 @@ unsigned int __fastcall FatalExceptionMessageDialog(
   }
   DebugAssert(AParams.Aliases == NULL);
   AParams.Aliases = Aliases;
-  AParams.AliasesCount = LENOF(Aliases);
+  AParams.AliasesCount = std::size(Aliases);
 
   return ExceptionMessageDialog(E, Type, MessageFormat, Answers, HelpKeyword, &AParams);
 }
 //---------------------------------------------------------------------------
-//---------------------------------------------------------------------------
-static void __fastcall DoExceptNotify(TObject * ExceptObj, void * ExceptAddr,
-  bool OSException, void * BaseOfStack)
+static void FilterStackTrace(TStrings * StackTrace)
 {
-  if (ExceptObj != NULL)
+  for (int Index = 0; Index < StackTrace->Count; Index++)
   {
-    Exception * E = dynamic_cast<Exception *>(ExceptObj);
-    if ((E != NULL) && IsInternalException(E))
+    UnicodeString Frame = StackTrace->Strings[Index];
+    UnicodeString Symbol = GetFrameSymbol(Frame);
+    if ((Symbol == L"GetCurrentStackTrace") ||
+        (Symbol == L"GetAbortStackTrace") ||
+        (Symbol == L"Jcldebug::JclCreateStackList") ||
+        (Symbol == L"AbortSignalHandler") ||
+        (Symbol == L"TerminateHandler") ||
+        (Symbol == L"_raise") ||
+        (Symbol == L"raise") ||
+        (Symbol == L"abort") ||
+        (Symbol == L"std::terminate") ||
+        (Symbol == L"___cpp_terminate"))
     {
-      DoExceptionStackTrace(ExceptObj, ExceptAddr, OSException, BaseOfStack);
-
-      TJclStackInfoList * StackInfoList = JclLastExceptStackList();
-
-      if (DebugAlwaysTrue(StackInfoList != NULL))
-      {
-        std::unique_ptr<TStrings> StackTrace(StackInfoListToStrings(StackInfoList));
-
-        DWORD ThreadID = GetCurrentThreadId();
-
-        TGuard Guard(StackTraceCriticalSection.get());
-
-        TStackTraceMap::iterator Iterator = StackTraceMap.find(ThreadID);
-        if (Iterator != StackTraceMap.end())
-        {
-          Iterator->second->Add(L"");
-          Iterator->second->AddStrings(StackTrace.get());
-        }
-        else
-        {
-          StackTraceMap.insert(std::make_pair(ThreadID, StackTrace.release()));
-        }
-
-        // this chains so that JclLastExceptStackList() returns NULL the next time
-        // for the current thread
-        delete StackInfoList;
-      }
+      StackTrace->Delete(Index);
+      Index--;
     }
   }
 }
+//---------------------------------------------------------------------------
+TStrings * GetCurrentStackTrace()
+{
+  std::unique_ptr<TJclStackInfoList> StackInfoList(JclCreateStackList(false, 0, Caller(0, false)));
+  std::unique_ptr<TStrings> Result(StackInfoListToStrings(StackInfoList.get()));
+  FilterStackTrace(Result.get());
+  return Result.release();
+}
+//---------------------------------------------------------------------------
+#ifdef _WIN64
+// This is what TJclStackInfoList.ValidCallSite should do, had it been implemented for 64-bit. Maybe one day it will.
+bool IsValidCallSite64(ULONG_PTR CodeAddr)
+{
+  if (CodeAddr <= 8) return false;
+
+  uint8_t* P = reinterpret_cast<uint8_t*>(CodeAddr);
+
+  if (IsBadReadPtr(P - 8, 8)) return false;
+
+  // 1. CALL rel32 (E8 xx xx xx xx) -> 5 bytes
+  if (P[-5] == 0xE8) return true;
+
+  // 2. Indirect CALLs (FF /2) with or without REX prefixes (40-4F)
+
+  // CALL reg (FF D0-D7) -> 2 bytes
+  if (P[-2] == 0xFF && (P[-1] >= 0xD0 && P[-1] <= 0xD7)) return true;
+  // CALL reg with REX prefix (e.g. CALL R11) -> 3 bytes
+  if (P[-3] >= 0x40 && P[-3] <= 0x4F && P[-2] == 0xFF && (P[-1] >= 0xD0 && P[-1] <= 0xD7)) return true;
+
+  // CALL [RIP+disp32] (FF 15 xx xx xx xx) -> 6 bytes
+  if (P[-6] == 0xFF && P[-5] == 0x15) return true;
+
+  // CALL [reg+disp8] (FF 50-57) -> 3 bytes
+  if (P[-3] == 0xFF && (P[-2] >= 0x50 && P[-2] <= 0x57)) return true;
+  // CALL [reg+disp8] with REX -> 4 bytes
+  if (P[-4] >= 0x40 && P[-4] <= 0x4F && P[-3] == 0xFF && (P[-2] >= 0x50 && P[-2] <= 0x57)) return true;
+
+  // CALL [reg] (FF 10-17) -> 2 bytes
+  if (P[-2] == 0xFF && (P[-1] >= 0x10 && P[-1] <= 0x17)) return true;
+  // CALL [reg] with REX -> 3 bytes
+  if (P[-3] >= 0x40 && P[-3] <= 0x4F && P[-2] == 0xFF && (P[-1] >= 0x10 && P[-1] <= 0x17)) return true;
+
+  return false;
+}
+#endif
+//---------------------------------------------------------------------------
+static TStrings * GetAbortStackTrace()
+{
+  // In 64-bit when abort handlers is called, the stack is already unwind, so we canot use JclCreateStackList,
+  // instread we walk stale raw stack data.
+  #ifdef _WIN64
+  std::unique_ptr<TStrings> Result(new TStringList());
+  CONTEXT Context;
+  ZeroMemory(&Context, sizeof(Context));
+  Context.ContextFlags = CONTEXT_FULL;
+  RtlCaptureContext(&Context);
+
+  // Define the stack boundaries
+  // RSP is the current pointer; the Thread Environment Block (TEB) holds the absolute base.
+  ULONG_PTR * CurrentStack = reinterpret_cast<ULONG_PTR*>(Context.Rsp);
+  PNT_TIB Tib = reinterpret_cast<PNT_TIB>(NtCurrentTeb());
+  ULONG_PTR * StackBase = reinterpret_cast<ULONG_PTR*>(Tib->StackBase);
+
+  // Scan the raw stack memory upward
+  while (CurrentStack < StackBase)
+  {
+    ULONG_PTR PotentialAddr = *CurrentStack;
+    void * Addr = reinterpret_cast<void*>(PotentialAddr);
+
+    // Use JCL to verify if this pointer belongs to a loaded executable module
+    if (JclValidateModuleAddress(Addr) &&
+        IsValidCallSite64(PotentialAddr))
+    {
+      // If JCL can map this address to a function, log it!
+      TJclLocationInfo Info;
+      if (GetLocationInfo(Addr, Info))
+      {
+        // Parameters match AddToStrings call in StackInfoListToStrings
+        String TraceLine = GetLocationInfoStr(Addr, true, false, true, true);
+        // Deduplicate identical sequential lines
+        if ((Result->Count == 0) || (Result->Strings[Result->Count - 1] != TraceLine))
+        {
+          Result->Add(TraceLine);
+        }
+      }
+    }
+    CurrentStack++;
+  }
+  FormatStackTrace(Result.get());
+  FilterStackTrace(Result.get());
+  return Result.release();
+  #else
+  return GetCurrentStackTrace();
+  #endif
+}
+//---------------------------------------------------------------------------
+NORETURN static void TerminateHandler()
+{
+  AppLog(L"Terminate handler");
+  abort();
+}
+//---------------------------------------------------------------------------
+static void AbortSignalHandler(int Signal)
+{
+  AppLogFmt(L"Abort signal handler [%d]", (Signal));
+  UnicodeString Message = MainInstructions(L"Abnormal program termination");
+  std::unique_ptr<TStrings> MoreMessages(new TStringList());
+  UnicodeString ReportErrorText = Trim(FMTLOAD(REPORT_ERROR, (EmptyStr)));
+  MoreMessages->Add(ReportErrorText);
+  std::unique_ptr<TStrings> StackTrace(GetAbortStackTrace());
+  AppendStackTrace(MoreMessages.get(), StackTrace.get());
+  MoreMessageDialog(Message, MoreMessages.get(), qtError, qaOK | qaReport, EmptyStr);
+}
+//---------------------------------------------------------------------------
+void RegisterTerminateHandlers()
+{
+  std::set_terminate(TerminateHandler);
+  signal(SIGABRT, AbortSignalHandler);
+}
+//---------------------------------------------------------------------------
 //---------------------------------------------------------------------------
 void * __fastcall BusyStart()
 {
@@ -729,7 +915,7 @@ void * __fastcall BusyStart()
 //---------------------------------------------------------------------------
 void __fastcall BusyEnd(void * Token)
 {
-  Screen->Cursor = reinterpret_cast<TCursor>(Token);
+  Screen->Cursor = static_cast<TCursor>(reinterpret_cast<uintptr_t>(Token));
 }
 //---------------------------------------------------------------------------
 //---------------------------------------------------------------------------
@@ -926,7 +1112,7 @@ int __fastcall CopyParamListPopupClick(TObject * Sender,
   else
   {
     Preset = (Item->Tag >= 0) ?
-      GUIConfiguration->CopyParamList->Names[Item->Tag] : UnicodeString();
+      GUIConfiguration->CopyParamList->Names[static_cast<int>(Item->Tag)] : UnicodeString();
     // The cast strips away the "queue" properties of the TGUICopyParamType
     // that are not configurable in presets
     Param = TCopyParamType(GUIConfiguration->CopyParamPreset[Preset]);
@@ -946,8 +1132,6 @@ public:
   bool __fastcall Execute(TUnicodeStringVector & Values);
 
 private:
-  UnicodeString __fastcall HistoryKey(int Index);
-
   std::vector<THistoryComboBox *> FEdits;
   TUnicodeStringVector FPrompts;
   UnicodeString FCustomCommandName;
@@ -972,24 +1156,21 @@ __fastcall TCustomCommandPromptsDialog::TCustomCommandPromptsDialog(
       Prompt = LoadStr(CUSTOM_COMMANDS_PARAM_PROMPT2);
     }
     THistoryComboBox * ComboBox = new THistoryComboBox(this);
-    ComboBox->AutoComplete = false;
     AddComboBox(ComboBox, CreateLabel(Prompt));
-    ComboBox->Items = CustomWinConfiguration->History[HistoryKey(Index)];
+
+    UnicodeString HistoryKey = FPrompts[Index];
+    if (HistoryKey.IsEmpty())
+    {
+      HistoryKey = IntToStr(static_cast<int>(Index));
+    }
+    HistoryKey = FORMAT(L"%s_%s", (FCustomCommandName, HistoryKey));
+    HistoryKey = CustomWinConfiguration->GetValidHistoryKey(HistoryKey);
+    HistoryKey = L"CustomCommandParam_" + HistoryKey;
+    ComboBox->HistoryKey = HistoryKey;
+
     ComboBox->Text = Defaults[Index];
     FEdits.push_back(ComboBox);
   }
-}
-//---------------------------------------------------------------------------
-UnicodeString __fastcall TCustomCommandPromptsDialog::HistoryKey(int Index)
-{
-  UnicodeString Result = FPrompts[Index];
-  if (Result.IsEmpty())
-  {
-    Result = IntToStr(Index);
-  }
-  Result = FORMAT(L"%s_%s", (FCustomCommandName, Result));
-  Result = CustomWinConfiguration->GetValidHistoryKey(Result);
-  return L"CustomCommandParam_" + Result;
 }
 //---------------------------------------------------------------------------
 bool __fastcall TCustomCommandPromptsDialog::Execute(TUnicodeStringVector & Values)
@@ -1003,7 +1184,6 @@ bool __fastcall TCustomCommandPromptsDialog::Execute(TUnicodeStringVector & Valu
     {
       Values.push_back(FEdits[Index]->Text);
       FEdits[Index]->SaveToHistory();
-      CustomWinConfiguration->History[HistoryKey(Index)] = FEdits[Index]->Items;
     }
   }
 
@@ -1120,7 +1300,8 @@ static void __fastcall MenuButtonRescale(TComponent * Sender, TObject * /*Token*
 void __fastcall MenuButton(TButton * Button)
 {
   SetMenuButtonImages(Button);
-  Button->ImageIndex = 0;
+  // buttons are dark only when system theme is dark
+  Button->ImageIndex = UseDarkModeForControl(Button) ? 2 : 0;
   Button->DisabledImageIndex = 1;
   Button->ImageAlignment = iaRight;
   SetRescaleFunction(Button, MenuButtonRescale);
@@ -1261,7 +1442,7 @@ void __fastcall CallGlobalMinimizeHandler(TObject * Sender)
   }
 }
 //---------------------------------------------------------------------------
-bool MinimizedToTray = false;
+static bool MinimizedToTray = false;
 //---------------------------------------------------------------------------
 static void __fastcall DoApplicationMinimizeRestore(bool Minimize)
 {
@@ -1365,14 +1546,20 @@ void __fastcall ApplicationRestore()
   DoApplicationMinimizeRestore(false);
 }
 //---------------------------------------------------------------------------
-bool __fastcall IsApplicationMinimized()
+bool IsMainFormMinimized()
 {
   // VCL help recommends handling Application->OnMinimize/OnRestore
   // for tracking state, but OnRestore is actually not called
-  // (OnMinimize is), when app is minimized from e.g. Progress window
+  // (OnMinimize is), when app is minimized from e.g. Progress window.
+  // Checking Application->Handle might be obsolete.
   bool AppMinimized = IsIconic(Application->Handle);
   bool MainFormMinimized = IsIconic(Application->MainFormHandle);
   return AppMinimized || MainFormMinimized;
+}
+//---------------------------------------------------------------------------
+bool IsApplicationMinimized()
+{
+  return (Screen->ActiveForm != nullptr) && IsIconic(Screen->ActiveForm->Handle);
 }
 //---------------------------------------------------------------------------
 bool __fastcall HandleMinimizeSysCommand(TMessage & Message)
@@ -1465,14 +1652,19 @@ void __fastcall TCallstackThread::ProcessEvent()
   {
     UnicodeString Path = DumpCallstackFileName(GetCurrentProcessId());
     std::unique_ptr<TStrings> StackStrings;
-    HANDLE MainThreadHandle = reinterpret_cast<HANDLE>(MainThreadID);
-    if (SuspendThread(MainThreadHandle) < 0)
+    HANDLE MainThreadHandle = OpenThread(THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_QUERY_INFORMATION, false, MainThreadID);
+    if (MainThreadHandle == NULL)
+    {
+      RaiseLastOSError();
+    }
+    DWORD SuspendError = static_cast<DWORD>(-1);
+    if (SuspendThread(MainThreadHandle) == SuspendError)
     {
       RaiseLastOSError();
     }
     try
     {
-      TJclStackInfoList * StackInfoList = JclCreateThreadStackTraceFromID(true, MainThreadID);
+      TJclStackInfoList * StackInfoList = JclCreateThreadStackTrace(true, reinterpret_cast<NativeUInt>(MainThreadHandle));
       if (StackInfoList == NULL)
       {
         RaiseLastOSError();
@@ -1481,10 +1673,11 @@ void __fastcall TCallstackThread::ProcessEvent()
     }
     __finally
     {
-      if (ResumeThread(MainThreadHandle) < 0)
+      if (ResumeThread(MainThreadHandle) == SuspendError)
       {
         RaiseLastOSError();
       }
+      CloseHandle(MainThreadHandle);
     }
     TFile::WriteAllText(Path, StackStrings->Text);
   }
@@ -1500,7 +1693,7 @@ HANDLE TCallstackThread::DoCreateEvent()
 }
 //---------------------------------------------------------------------------
 //---------------------------------------------------------------------------
-std::unique_ptr<TCallstackThread> CallstackThread;
+static std::unique_ptr<TCallstackThread> CallstackThread;
 //---------------------------------------------------------------------------
 static void __fastcall AppGetMainFormHandle(void * /*Data*/, HWND & Handle)
 {
@@ -1514,26 +1707,39 @@ static void __fastcall AppGetMainFormHandle(void * /*Data*/, HWND & Handle)
   }
 }
 //---------------------------------------------------------------------------
+void __fastcall LoadHistory(void *, THistoryComboBox * Sender)
+{
+  Sender->Items = CustomWinConfiguration->History[Sender->HistoryKey];
+}
+//---------------------------------------------------------------------------
+void __fastcall SaveHistory(void *, THistoryComboBox * Sender)
+{
+  CustomWinConfiguration->History[Sender->HistoryKey] = Sender->Items;
+}
+//---------------------------------------------------------------------------
 void __fastcall WinInitialize()
 {
-  if (JclHookExceptions())
-  {
-    JclStackTrackingOptions << stAllModules;
-    JclAddExceptNotifier(DoExceptNotify, npFirstChain);
-    CallstackThread.reset(new TCallstackThread());
-    CallstackThread->Start();
-  }
+  JclStackTrackingOptions << stAllModules;
+  // Neeeded with Clang
+  JclStackTrackingOptions << stRawMode;
+  // See also StackInfoListToStrings
+  JclExceptionStacktraceOptions >> estoIncludeAdressOffset;
+  CallstackThread.reset(new TCallstackThread());
+  CallstackThread->Start();
 
-  SetErrorMode(SEM_FAILCRITICALERRORS);
+  // SEM_NOOPENFILEERRORBOX should affect OpenFile only, which we probably never use
+  SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOOPENFILEERRORBOX);
   OnApiPath = ApiPath;
   MainThread = GetCurrentThreadId();
-  Application->OnGetMainFormHandle = MakeMethod<TGetHandleEvent>(NULL, AppGetMainFormHandle);
+  Application->OnGetMainFormHandle = MakeMethod<TGetHandleEvent>(nullptr, AppGetMainFormHandle);
+  THistoryComboBox::OnLoadHistory = MakeMethod<THistoryComboHistoryEvent>(nullptr, LoadHistory);
+  THistoryComboBox::OnSaveHistory = MakeMethod<THistoryComboHistoryEvent>(nullptr, SaveHistory);
+  DriveInfoRequire();
 }
 //---------------------------------------------------------------------------
 void __fastcall WinFinalize()
 {
   CallstackThread.reset(NULL);
-  JclRemoveExceptNotifier(DoExceptNotify);
 }
 //---------------------------------------------------------------------------
 __fastcall ::TTrayIcon::TTrayIcon(unsigned int Id)
@@ -1553,7 +1759,7 @@ __fastcall ::TTrayIcon::TTrayIcon(unsigned int Id)
   if (DebugAlwaysTrue(ComCtl32Dll))
   {
     typedef HRESULT WINAPI (* TLoadIconMetric)(HINSTANCE hinst, PCWSTR pszName, int lims, __out HICON *phico);
-    TLoadIconMetric LoadIconMetric = (TLoadIconMetric)GetProcAddress(ComCtl32Dll, "LoadIconMetric");
+    TLoadIconMetric LoadIconMetric = reinterpret_cast<TLoadIconMetric>(GetProcAddress(ComCtl32Dll, "LoadIconMetric"));
     if (LoadIconMetric != NULL)
     {
       // Prefer not to use Application->Icon->Handle as that shows 32x32 scaled down to 16x16 for some reason
@@ -1596,7 +1802,7 @@ void __fastcall ::TTrayIcon::PopupBalloon(UnicodeString Title,
   FTrayIcon->uFlags |= NIF_INFO;
   AppLogFmt("Tray popup balloon: %s - %s", (Title, Str));
   Title = Title + TitleSeparator + AppNameString();
-  StrPLCopy(FTrayIcon->szInfoTitle, Title, LENOF(FTrayIcon->szInfoTitle) - 1);
+  StrPLCopy(FTrayIcon->szInfoTitle, Title, SizeToUIntChecked(std::size(FTrayIcon->szInfoTitle) - 1));
   UnicodeString Info = Str;
   // When szInfo is empty, balloon is not shown
   // (or actually it means the balloon should be deleted, if any)
@@ -1604,7 +1810,7 @@ void __fastcall ::TTrayIcon::PopupBalloon(UnicodeString Title,
   {
     Info = L" ";
   }
-  StrPLCopy(FTrayIcon->szInfo, Info, LENOF(FTrayIcon->szInfo) - 1);
+  StrPLCopy(FTrayIcon->szInfo, Info, SizeToUIntChecked(std::size(FTrayIcon->szInfo) - 1));
   FTrayIcon->uTimeout = Timeout;
   switch (QueryType)
   {
@@ -1669,14 +1875,14 @@ void __fastcall ::TTrayIcon::CancelBalloon()
 //---------------------------------------------------------------------------
 bool __fastcall ::TTrayIcon::Notify(unsigned int Message)
 {
-  bool Result = SUCCEEDED(Shell_NotifyIcon(Message, (NOTIFYICONDATA*)FTrayIcon));
+  bool Result = SUCCEEDED(Shell_NotifyIcon(Message, FTrayIcon));
   if (Result && (Message == NIM_ADD))
   {
     UINT Timeout = FTrayIcon->uTimeout;
     try
     {
       FTrayIcon->uVersion = NOTIFYICON_VERSION;
-      Result = SUCCEEDED(Shell_NotifyIcon(NIM_SETVERSION, (NOTIFYICONDATA*)FTrayIcon));
+      Result = SUCCEEDED(Shell_NotifyIcon(NIM_SETVERSION, FTrayIcon));
     }
     __finally
     {
@@ -1800,7 +2006,7 @@ void __fastcall ::TTrayIcon::SetHint(UnicodeString value)
 {
   if (Hint != value)
   {
-    unsigned int Max = LENOF(FTrayIcon->szTip);
+    unsigned int Max = SizeToUIntChecked(std::size(FTrayIcon->szTip));
     StrPLCopy(FTrayIcon->szTip, value, Max - 1);
     Update();
   }

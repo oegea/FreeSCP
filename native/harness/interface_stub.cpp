@@ -34,8 +34,9 @@ void __fastcall CopyToClipboard(UnicodeString) {}
 bool __fastcall TextFromClipboard(UnicodeString &, bool) { return false; }
 
 //--- Interface.h: diagnostics ---
-bool __fastcall AppendExceptionStackTraceAndForget(TStrings *&) { return false; }
-UnicodeString __fastcall GetExceptionDebugInfo() { return UnicodeString(); }
+// 6.6+ signatures (stack traces are a Windows/JCL debugging aid; nothing to add here)
+bool AppendExceptionStackTrace(Exception *, TStrings *&) { return false; }
+UnicodeString GetExceptionDebugInfo(Exception *) { return UnicodeString(); }
 
 //--- Interface.h: prompt classification (drives Seat answering) ---
 bool __fastcall IsAuthenticationPrompt(TPromptKind Kind)

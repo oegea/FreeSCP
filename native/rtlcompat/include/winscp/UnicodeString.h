@@ -169,4 +169,7 @@ private:
   std::u16string FData;
 };
 
+// Delphi's generic string alias (System::String); the 6.6+ engine uses it in a few signatures.
+typedef UnicodeString String;
+
 #endif

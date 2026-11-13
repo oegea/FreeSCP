@@ -1,12 +1,6 @@
 //---------------------------------------------------------------------------
-#include <vcl.h>
+#include <WinPCH.h>
 #pragma hdrstop
-
-#include <CoreMain.h>
-
-#include <TextsWin.h>
-#include <TextsCore.h>
-#include <HelpWin.h>
 
 #include "CustomScpExplorer.h"
 #include "TerminalManager.h"
@@ -14,41 +8,43 @@
 #include "Glyphs.h"
 #include "ProgParams.h"
 #include "Setup.h"
-#include "WinConfiguration.h"
-#include "GUITools.h"
-#include "Tools.h"
 #include "WinApi.h"
-#include <DateUtils.hpp>
-#include <StrUtils.hpp>
 #include <Xml.Win.msxmldom.hpp>
 //---------------------------------------------------------------------------
-#pragma package(smart_init)
-//---------------------------------------------------------------------------
-UnicodeString GetFolderOrWorkspaceName(const UnicodeString & SessionName)
+UnicodeString GetFolderOrWorkspaceName(const UnicodeString & SessionName, TOptions * Options, bool PreferSite)
 {
   UnicodeString FolderOrWorkspaceName = DecodeUrlChars(SessionName);
   UnicodeString Result;
-  if (StoredSessions->IsFolderOrWorkspace(FolderOrWorkspaceName))
+  if ((Options == nullptr) || !Options->FindSwitch(WORKSPACE_SWITCH))
+  {
+    PreferSite = true;
+  }
+  if ((!PreferSite || (StoredSessions->FindByName(FolderOrWorkspaceName) == nullptr)) &&
+      StoredSessions->IsFolderOrWorkspace(FolderOrWorkspaceName))
   {
     Result = FolderOrWorkspaceName;
   }
   return Result;
 }
 //---------------------------------------------------------------------------
-void __fastcall GetLoginData(UnicodeString SessionName, TOptions * Options,
-  TObjectList * DataList, UnicodeString & DownloadFile, bool NeedSession, TForm * LinkedForm, int Flags)
+void GetLoginData(
+  const UnicodeString & SessionName, TOptions * Options,
+  TObjectList * DataList, UnicodeString & DownloadFile, TLoginNeed LoginNeed, TForm * LinkedForm, int Flags)
 {
   bool DefaultsOnly = false;
 
-  UnicodeString FolderOrWorkspaceName = GetFolderOrWorkspaceName(SessionName);
+  bool PreferSession = (LoginNeed == lnTerminal);
+  UnicodeString FolderOrWorkspaceName = GetFolderOrWorkspaceName(SessionName, Options, PreferSession);
   if (!FolderOrWorkspaceName.IsEmpty())
   {
     StoredSessions->GetFolderOrWorkspace(FolderOrWorkspaceName, DataList);
   }
   else
   {
+    int ParsedInfo;
     TSessionData * SessionData =
-      StoredSessions->ParseUrl(SessionName, Options, DefaultsOnly, &DownloadFile, NULL, NULL, Flags);
+      StoredSessions->ParseUrl(SessionName, Options, ParsedInfo, &DownloadFile, NULL, Flags);
+    DefaultsOnly = FLAGSET(ParsedInfo, piDefaultsOnly);
     DataList->Add(SessionData);
 
     if (DataList->Count == 1)
@@ -74,7 +70,7 @@ void __fastcall GetLoginData(UnicodeString SessionName, TOptions * Options,
     }
   }
 
-  if (DefaultsOnly && !NeedSession)
+  if (DefaultsOnly && (LoginNeed == lnNone))
   {
     // No URL specified on command-line and no explicit command-line parameter
     // that requires session was specified => noop
@@ -94,7 +90,7 @@ void __fastcall GetLoginData(UnicodeString SessionName, TOptions * Options,
     // - the specified session does not contain enough information to open [= not even hostname nor local browser]
 
     DebugAssert(DataList->Count <= 1);
-    if (!DoLoginDialog(DataList, LinkedForm))
+    if (!DoLoginDialog(DataList, LinkedForm, (LoginNeed == lnTerminal)))
     {
       Abort();
     }
@@ -132,7 +128,7 @@ void __fastcall Upload(TTerminal * Terminal, TStrings * FileList, int UseDefault
   }
 }
 //---------------------------------------------------------------------------
-void __fastcall Download(TTerminal * Terminal, const UnicodeString FileName, int UseDefaults, bool & Browse, UnicodeString & BrowseFile)
+void __fastcall Download(TTerminal * Terminal, const UnicodeString FileName, int UseDefaults, bool & Explore, UnicodeString & ExploreFile)
 {
   TRemoteFile * File = NULL;
 
@@ -170,14 +166,14 @@ void __fastcall Download(TTerminal * Terminal, const UnicodeString FileName, int
     std::unique_ptr<TStrings> FileListFriendly(new TStringList());
     FileListFriendly->AddObject(FriendyFileName, File);
 
-    int Options = coDisableQueue | coBrowse;
+    int Options = coDisableQueue | coExplore;
     int CopyParamAttrs = Terminal->UsableCopyParamAttrs(0).Download;
     int OutputOptions = 0;
     if ((UseDefaults == 0) ||
         DoCopyDialog(false, false, FileListFriendly.get(), TargetDirectory, &CopyParam,
           Options, CopyParamAttrs, NULL, &OutputOptions, UseDefaults))
     {
-      if (FLAGCLEAR(OutputOptions, cooBrowse))
+      if (FLAGCLEAR(OutputOptions, cooExplore))
       {
         // Setting parameter overrides only now, otherwise the dialog would present the parametes as non-default
 
@@ -199,8 +195,8 @@ void __fastcall Download(TTerminal * Terminal, const UnicodeString FileName, int
       else
       {
         UnicodeString Directory = UnixExtractFilePath(FileName);
-        BrowseFile = UnixExtractFileName(FileName);
-        Browse = true;
+        ExploreFile = UnixExtractFileName(FileName);
+        Explore = true;
         Terminal->AutoReadDirectory = true;
         Terminal->ChangeDirectory(Directory);
       }
@@ -259,13 +255,13 @@ void __fastcall FullSynchronize(
 
   bool SaveMode = true;
   // bit ugly
-  TSynchronizeMode Mode = (TSynchronizeMode)GUIConfiguration->SynchronizeMode;
+  TSynchronizeMode Mode = static_cast<TSynchronizeMode>(GUIConfiguration->SynchronizeMode);
   int Params = GUIConfiguration->SynchronizeParams;
 
   // Undocumented syntax for "Start in New Window"
   if (CommandParams->Count >= 4)
   {
-    Mode = (TSynchronizeMode)StrToIntDef(CommandParams->Strings[2], Mode);
+    Mode = static_cast<TSynchronizeMode>(StrToIntDef(CommandParams->Strings[2], Mode));
     Params = StrToIntDef(CommandParams->Strings[3], Params);
   }
 
@@ -485,11 +481,9 @@ void __fastcall TStartupThread::Execute()
   }
 }
 //---------------------------------------------------------------------------
-TStartupThread * StartupThread(new TStartupThread());
-TDateTime Started(Now());
-TDateTime LastStartupStartupSequence(Now());
-UnicodeString StartupSequence;
-int LifetimeRuns = -1;
+static TStartupThread * StartupThread(new TStartupThread());
+static TDateTime Started(Now());
+static int LifetimeRuns = -1;
 //---------------------------------------------------------------------------
 void InterfaceStartDontMeasure()
 {
@@ -497,32 +491,30 @@ void InterfaceStartDontMeasure()
   StartupThread->Terminate();
 }
 //---------------------------------------------------------------------------
-void AddStartupSequence(const UnicodeString & Tag)
-{
-  int SequenceTensOfSecond = static_cast<int>(MilliSecondsBetween(Now(), LastStartupStartupSequence) / 100);
-  LastStartupStartupSequence = Now();
-  AddToList(StartupSequence, FORMAT(L"%s:%d", (Tag, SequenceTensOfSecond)), L",");
-}
-//---------------------------------------------------------------------------
 void InterfaceStarted()
 {
-  if ((Started != TDateTime()) && (LifetimeRuns > 0))
+  if (Started != TDateTime())
   {
     // deliberate downcast
-    int StartupSeconds = static_cast<int>(SecondsBetween(Now(), Started));
+    int StartupTensOfSecond = TensOfSecondBetween(Now(), Started);
+    int StartupSeconds = StartupTensOfSecond / 10;
     int StartupSecondsReal = DebugNotNull(StartupThread)->GetStartupSeconds();
-    if (LifetimeRuns == 1)
+    AppLogFmt(L"Startup time: %d.%d s (real: %d s)", (StartupTensOfSecond / 10, StartupTensOfSecond % 10, StartupSecondsReal));
+    if (LifetimeRuns > 0)
     {
-      Configuration->Usage->Set(L"StartupSeconds1", StartupSeconds);
+      if (LifetimeRuns == 1)
+      {
+        Configuration->Usage->Set(L"StartupSeconds1", StartupSeconds);
+      }
+      else if (LifetimeRuns == 2)
+      {
+        Configuration->Usage->Set(L"StartupSeconds2", StartupSeconds);
+      }
+      Configuration->Usage->Set(L"StartupSecondsLast", StartupSeconds);
+      Configuration->Usage->Set(L"StartupSecondsLastReal", StartupSecondsReal);
+      AddStartupSequence(L"I");
+      Configuration->Usage->Set(L"StartupSequenceLast", StartupSequence);
     }
-    else if (LifetimeRuns == 2)
-    {
-      Configuration->Usage->Set(L"StartupSeconds2", StartupSeconds);
-    }
-    Configuration->Usage->Set(L"StartupSecondsLast", StartupSeconds);
-    Configuration->Usage->Set(L"StartupSecondsLastReal", StartupSecondsReal);
-    AddStartupSequence(L"I");
-    Configuration->Usage->Set(L"StartupSequenceLast", StartupSequence);
   }
   StartupThread->Terminate();
 }
@@ -537,6 +529,12 @@ void __fastcall UpdateStaticUsage()
   Configuration->Usage->Set(L"WindowsProductName", (WindowsProductName()));
   Configuration->Usage->Set(L"WindowsProductType", (static_cast<int>(GetWindowsProductType())));
   Configuration->Usage->Set(L"Windows64", IsWin64());
+  #ifdef _WIN64
+  int Platform = 64;
+  #else
+  int Platform = 32;
+  #endif
+  Configuration->Usage->Set(L"Platform", Platform);
   Configuration->Usage->Set(L"UWP", IsUWP());
   Configuration->Usage->Set(L"PackageName", GetPackageName());
   Configuration->Usage->Set(L"DefaultLocale",
@@ -578,7 +576,7 @@ void __fastcall UpdateStaticUsage()
   Configuration->Usage->Set(L"SysColorWindowText", ColorToRGBStr(clWindowText));
 
   UnicodeString ProgramsFolder;
-  ::SpecialFolderLocation(CSIDL_PROGRAM_FILES, ProgramsFolder);
+  KnownFolderPath(FOLDERID_ProgramFiles, ProgramsFolder);
   ProgramsFolder = IncludeTrailingBackslash(ExpandFileName(ProgramsFolder));
   UnicodeString ExeName = ExpandFileName(Application->ExeName);
   bool InProgramFiles = AnsiSameText(ExeName.SubString(1, ProgramsFolder.Length()), ProgramsFolder);
@@ -681,7 +679,7 @@ static void __fastcall FindOtherInstances(THandles & OtherInstances)
       while ((HiddenWindow == NULL) && (WindowI != ProcessI->second.end()))
       {
         wchar_t ClassName[1024];
-        if (GetClassName(*WindowI, ClassName, LENOF(ClassName)) != 0)
+        if (GetClassName(*WindowI, ClassName, std::size(ClassName)) != 0)
         {
           NULL_TERMINATE(ClassName);
 
@@ -738,8 +736,8 @@ bool __fastcall SendToAnotherInstance()
       SetForegroundWindow(Handle);
 
       Message.Command = TCopyDataMessage::CommandCommandLine;
-      wcsncpy(Message.CommandLine, CmdLine, LENOF(Message.CommandLine));
-      NULL_TERMINATE(Message.CommandLine);
+      wcsncpy(Message.Data.CommandLine, CmdLine, std::size(Message.Data.CommandLine));
+      NULL_TERMINATE(Message.Data.CommandLine);
 
       Result = SendCopyDataMessage(Handle, Message);
     }
@@ -762,10 +760,10 @@ void __fastcall Refresh(const UnicodeString & Session, const UnicodeString & Pat
 
     TCopyDataMessage Message;
     Message.Command = TCopyDataMessage::RefreshPanel;
-    wcsncpy(Message.Refresh.Session, Session.c_str(), LENOF(Message.Refresh.Session));
-    NULL_TERMINATE(Message.Refresh.Session);
-    wcsncpy(Message.Refresh.Path, Path.c_str(), LENOF(Message.Refresh.Path));
-    NULL_TERMINATE(Message.Refresh.Path);
+    wcsncpy(Message.Data.Refresh.Session, Session.c_str(), std::size(Message.Data.Refresh.Session));
+    NULL_TERMINATE(Message.Data.Refresh.Session);
+    wcsncpy(Message.Data.Refresh.Path, Path.c_str(), std::size(Message.Data.Refresh.Path));
+    NULL_TERMINATE(Message.Data.Refresh.Path);
 
     SendCopyDataMessage(Handle, Message);
 
@@ -877,7 +875,7 @@ int __fastcall Execute()
 
       Configuration->TemporaryLogSensitive(LogSensitive);
     }
-    int LogProtocol;
+    int LogProtocol = 0; // shut up
     if (!SwitchValue.IsEmpty() && TryStrToInt(SwitchValue, LogProtocol) && (LogProtocol >= -1))
     {
       Configuration->TemporaryLogProtocol(LogProtocol);
@@ -898,7 +896,7 @@ int __fastcall Execute()
       SwitchValue = SwitchValue.Trim();
     }
 
-    __int64 LogMaxSize;
+    __int64 LogMaxSize = 0; // shut up
     if ((LogMaxCount >= 0) &&
         !SwitchValue.IsEmpty() &&
         TryStrToSize(SwitchValue, LogMaxSize))
@@ -971,7 +969,7 @@ int __fastcall Execute()
   try
   {
     TerminalManager = TTerminalManager::Instance();
-    HANDLE ResourceModule = GUIConfiguration->ChangeToDefaultResourceModule();
+    HMODULE ResourceModule = GUIConfiguration->ChangeToDefaultResourceModule();
     try
     {
       GlyphsModule = new TGlyphsModule(Application);
@@ -1099,7 +1097,6 @@ int __fastcall Execute()
       enum { pcNone, pcUpload, pcFullSynchronize, pcSynchronize, pcEdit, pcRefresh } ParamCommand;
       ParamCommand = pcNone;
       UnicodeString AutoStartSession;
-      UnicodeString DownloadFile;
       int UseDefaults = -1;
 
       // do not check for temp dirs for service tasks (like RegisterAsUrlHandler)
@@ -1114,6 +1111,7 @@ int __fastcall Execute()
       // reduces risk of an occasional crash.
       // It seems that the point is to load the lists before any call to SHGetFileInfoWithTimeout.
       InitFileControls();
+      SetupInitialize();
 
       if (!Params->Empty)
       {
@@ -1158,12 +1156,31 @@ int __fastcall Execute()
       }
 
       bool NewInstance = Params->FindSwitch(NEWINSTANCE_SWICH);
+      bool IsDownloadFile = false;
       if (Params->ParamCount > 0)
       {
         AutoStartSession = Params->ConsumeParam();
 
+        if (!AutoStartSession.IsEmpty() &&
+            (AutoStartSession.Pos(L"/") > 0) && // optimization
+            GetFolderOrWorkspaceName(AutoStartSession, Params, true).IsEmpty())
+        {
+          int DummyParsedInfo;
+          UnicodeString DownloadFile2;
+          int Flags = GetCommandLineParseUrlFlags(Params) | pufParseOnly;
+          // Make copy, as ParseUrl consumes /rawsettings
+          TOptions Options(*Params);
+          std::unique_ptr<TSessionData> SessionData(
+            StoredSessions->ParseUrl(AutoStartSession, &Options, DummyParsedInfo, &DownloadFile2, NULL, Flags));
+          if (!DownloadFile2.IsEmpty())
+          {
+            IsDownloadFile = true;
+          }
+        }
+
         bool TrySendToAnotherInstance =
           (ParamCommand == pcNone) &&
+          !IsDownloadFile &&
           (WinConfiguration->ExternalSessionInExistingInstance != OpenInNewWindow()) &&
           !NewInstance &&
           // With /rawconfig before session url, parsing commandline does not work correctly,
@@ -1171,24 +1188,6 @@ int __fastcall Execute()
           // And as it is not clear what it should do anyway, let's ban it and
           // never send to the existing instance, whenever /rawconfig is used.
           !Params->FindSwitch(RAW_CONFIG_SWITCH);
-
-        if (TrySendToAnotherInstance &&
-            !AutoStartSession.IsEmpty() &&
-            (AutoStartSession.Pos(L"/") > 0) && // optimization
-            GetFolderOrWorkspaceName(AutoStartSession).IsEmpty())
-        {
-          bool DummyDefaultsOnly = false;
-          UnicodeString DownloadFile2;
-          int Flags = GetCommandLineParseUrlFlags(Params) | pufParseOnly;
-          // Make copy, as ParseUrl consumes /rawsettings
-          TOptions Options(*Params);
-          std::unique_ptr<TSessionData> SessionData(
-            StoredSessions->ParseUrl(AutoStartSession, &Options, DummyDefaultsOnly, &DownloadFile2, NULL, NULL, Flags));
-          if (!DownloadFile2.IsEmpty())
-          {
-            TrySendToAnotherInstance = false;
-          }
-        }
 
         if (TrySendToAnotherInstance &&
             SendToAnotherInstance())
@@ -1237,7 +1236,20 @@ int __fastcall Execute()
       // from now flash message boxes in background
       SetOnForeground(false);
 
-      bool NeedSession = NewInstance || (ParamCommand != pcNone);
+      TLoginNeed LoginNeed;
+      bool CommandLineOperation = (ParamCommand != pcNone) || IsDownloadFile;
+      if (CommandLineOperation)
+      {
+        LoginNeed = lnTerminal;
+      }
+      else if (NewInstance)
+      {
+        LoginNeed = lnSession;
+      }
+      else
+      {
+        LoginNeed = lnNone;
+      }
 
       bool Retry;
       do
@@ -1248,10 +1260,12 @@ int __fastcall Execute()
         {
           int Flags = GetCommandLineParseUrlFlags(Params);
           AddStartupSequence(L"B");
-          GetLoginData(AutoStartSession, Params, DataList.get(), DownloadFile, NeedSession, NULL, Flags);
+          UnicodeString DownloadFile;
+          GetLoginData(AutoStartSession, Params, DataList.get(), DownloadFile, LoginNeed, NULL, Flags);
           // GetLoginData now Aborts when session is needed and none is selected
-          if (DebugAlwaysTrue(!NeedSession || (DataList->Count > 0)))
+          if (DebugAlwaysTrue((LoginNeed == lnNone) || (DataList->Count > 0)))
           {
+            DebugAssert(IsDownloadFile == !DownloadFile.IsEmpty());
             if (CheckSafe(Params))
             {
               UnicodeString LogFile;
@@ -1270,20 +1284,20 @@ int __fastcall Execute()
               DebugAssert(TerminalManager->ActiveSession == NULL);
 
               bool CanStart;
-              bool Browse = false;
-              UnicodeString BrowseFile;
+              bool Explore = false;
+              UnicodeString ExploreFile;
               if (DataList->Count > 0)
               {
                 TManagedTerminal * Session = TerminalManager->NewSessions(DataList.get());
-                if (Params->FindSwitch(BROWSE_SWITCH, BrowseFile) &&
-                    (!BrowseFile.IsEmpty() || !DownloadFile.IsEmpty()))
+                if ((Params->FindSwitch(EXPLORE_SWITCH, ExploreFile) || Params->FindSwitch(EXPLORE_OLD_SWITCH, ExploreFile)) &&
+                    (!ExploreFile.IsEmpty() || !DownloadFile.IsEmpty()))
                 {
-                  if (BrowseFile.IsEmpty())
+                  if (ExploreFile.IsEmpty())
                   {
-                    BrowseFile = DownloadFile;
+                    ExploreFile = DownloadFile;
                   }
                   DownloadFile = UnicodeString();
-                  Browse = true;
+                  Explore = true;
                 }
                 if (!DownloadFile.IsEmpty())
                 {
@@ -1297,7 +1311,7 @@ int __fastcall Execute()
               }
               else
               {
-                DebugAssert(!NeedSession);
+                DebugAssert(LoginNeed == lnNone);
                 CanStart = true;
               }
 
@@ -1315,15 +1329,18 @@ int __fastcall Execute()
                 // from now on, we do not support runtime interface change
                 CustomWinConfiguration->CanApplyInterfaceImmediately = false;
                 AddStartupSequence(L"A");
-                TCustomScpExplorerForm * ScpExplorer = CreateScpExplorer();
+                // Start loading drives on the background asap,
+                // to prevent unnecessary refreshes after the explorer opens
+                DriveInfo->NeedData();
+                std::unique_ptr<TCustomScpExplorerForm> ScpExplorer(CreateScpExplorer());
                 AddStartupSequence(L"E");
                 CustomWinConfiguration->AppliedInterface = CustomWinConfiguration->Interface;
                 try
                 {
                   // moved inside try .. __finally, because it can fail as well
-                  TerminalManager->ScpExplorer = ScpExplorer;
+                  TerminalManager->ScpExplorer = ScpExplorer.get();
 
-                  if ((ParamCommand != pcNone) || !DownloadFile.IsEmpty())
+                  if (CommandLineOperation)
                   {
                     Configuration->Usage->Inc(L"CommandLineOperation");
                     ScpExplorer->StandaloneOperation = true;
@@ -1336,22 +1353,22 @@ int __fastcall Execute()
                   }
                   else if (ParamCommand == pcFullSynchronize)
                   {
-                    FullSynchronize(TerminalManager->ActiveSession, ScpExplorer,
-                      CommandParams, UseDefaults);
+                    FullSynchronize(
+                      TerminalManager->ActiveSession, ScpExplorer.get(), CommandParams, UseDefaults);
                   }
                   else if (ParamCommand == pcSynchronize)
                   {
-                    Synchronize(TerminalManager->ActiveSession, ScpExplorer,
-                      CommandParams, UseDefaults);
+                    Synchronize(
+                      TerminalManager->ActiveSession, ScpExplorer.get(), CommandParams, UseDefaults);
                   }
                   else if (ParamCommand == pcEdit)
                   {
-                    Edit(ScpExplorer, CommandParams);
+                    Edit(ScpExplorer.get(), CommandParams);
                   }
                   else if (!DownloadFile.IsEmpty())
                   {
                     Download(
-                      TerminalManager->ActiveSession, DownloadFile, UseDefaults, Browse, BrowseFile);
+                      TerminalManager->ActiveSession, DownloadFile, UseDefaults, Explore, ExploreFile);
                   }
                   else
                   {
@@ -1363,20 +1380,21 @@ int __fastcall Execute()
 
                   ScpExplorer->StandaloneOperation = false;
 
-                  if (Browse)
+                  if (Explore)
                   {
-                    ScpExplorer->BrowseFile(BrowseFile);
+                    ScpExplorer->ExploreFile(ExploreFile);
                   }
 
                   AddStartupSequence(L"R");
+                  AppLog(L"Running...");
                   Application->Run();
+                  AppLog(L"Terminated.");
                   // to allow dialog boxes show later (like from CheckConfigurationForceSave)
                   SetAppTerminated(False);
                 }
                 __finally
                 {
                   TerminalManager->ScpExplorer = NULL;
-                  SAFE_DESTROY(ScpExplorer);
                 }
               }
             }
@@ -1387,7 +1405,7 @@ int __fastcall Execute()
           }
         }
         // Catch EAbort from Synchronize() and similar functions, so that CheckConfigurationForceSave is processed
-        catch (EAbort & E)
+        catch (EAbort &)
         {
           Retry = false; // unlikely to be true, but just in case
         }

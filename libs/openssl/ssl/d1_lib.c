@@ -1,5 +1,5 @@
 /*
- * Copyright 2005-2025 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 2005-2026 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -8,11 +8,13 @@
  */
 
 #include "internal/e_os.h"
+#include "internal/e_winsock.h" /* struct timeval for DTLS_CTRL_GET_TIMEOUT */
 #include <stdio.h>
 #include <openssl/objects.h>
 #include <openssl/rand.h>
 #include "ssl_local.h"
 #include "internal/time.h"
+#include "internal/ssl_unwrap.h"
 
 static int dtls1_handshake_write(SSL_CONNECTION *s);
 static size_t dtls1_link_min_mtu(void);
@@ -29,7 +31,7 @@ const SSL3_ENC_METHOD DTLSv1_enc_data = {
     TLS_MD_SERVER_FINISH_CONST, TLS_MD_SERVER_FINISH_CONST_SIZE,
     tls1_alert_code,
     tls1_export_keying_material,
-    SSL_ENC_FLAG_DTLS | SSL_ENC_FLAG_EXPLICIT_IV,
+    SSL_ENC_FLAG_DTLS,
     dtls1_set_handshake_header,
     dtls1_close_construct_packet,
     dtls1_handshake_write
@@ -44,7 +46,7 @@ const SSL3_ENC_METHOD DTLSv1_2_enc_data = {
     TLS_MD_SERVER_FINISH_CONST, TLS_MD_SERVER_FINISH_CONST_SIZE,
     tls1_alert_code,
     tls1_export_keying_material,
-    SSL_ENC_FLAG_DTLS | SSL_ENC_FLAG_EXPLICIT_IV | SSL_ENC_FLAG_SIGALGS
+    SSL_ENC_FLAG_DTLS | SSL_ENC_FLAG_SIGALGS
         | SSL_ENC_FLAG_SHA256_PRF | SSL_ENC_FLAG_TLS1_2_CIPHERS,
     dtls1_set_handshake_header,
     dtls1_close_construct_packet,
@@ -404,6 +406,23 @@ int dtls1_handle_timeout(SSL_CONNECTION *s)
     }
 
     dtls1_start_timer(s);
+
+    /*
+     * If write_state is anything other than WRITE_STATE_TRANSITION, a write
+     * is still parked mid-flight (WANT_WRITE) from a previous call into the
+     * state machine - the current flight hasn't actually finished going out
+     * yet, so there's nothing valid to retransmit. Retransmitting anyway
+     * would reconstruct an already-sent message from the retransmit queue
+     * into s->init_buf/s->init_off/s->init_num/s->d1->w_msg - the same
+     * fields the parked write is still using - corrupting that write's
+     * state out from under it. Leave it alone and let the next
+     * SSL_read()/SSL_write()/SSL_accept()/SSL_connect() call resume the
+     * parked write normally instead.
+     */
+    if (s->statem.state == MSG_FLOW_WRITING
+        && s->statem.write_state != WRITE_STATE_TRANSITION)
+        return 0;
+
     /* Calls SSLfatal() if required */
     return dtls1_retransmit_buffered_messages(s);
 }

@@ -37,21 +37,21 @@ private:
   TMemoryStream * FMemory;
   int FSize;
 
-  char * __fastcall GetData() const { return (char *)FMemory->Memory; }
+  char * __fastcall GetData() const { return static_cast<char *>(FMemory->Memory); }
   char * __fastcall GetPointer() const { return GetData() + GetPosition(); }
   void NeedSpace(DWORD Size);
   void __fastcall SetSize(int value);
-  int __fastcall GetPosition() const { return (int)FMemory->Position; }
+  int __fastcall GetPosition() const { return static_cast<int>(FMemory->Position); }
   void __fastcall ProcessRead(DWORD Len, DWORD Result);
 };
 //---------------------------------------------------------------------------
 class TSafeHandleStream : public THandleStream
 {
 public:
-  __fastcall TSafeHandleStream(int AHandle);
+  __fastcall TSafeHandleStream(NativeUInt AHandle);
 #ifndef _WIN32
   // WINSCP-NATIVE-PORT: callers cast OS file handles to THandle (void* here); accept that form
-  // and unpack the fd. On Windows THandle is integer-convertible so the int ctor already serves.
+  // and unpack the fd. On Windows THandle is integer-convertible so the NativeUInt ctor already serves.
   __fastcall TSafeHandleStream(void * AHandle);
 #endif
   __fastcall TSafeHandleStream(THandleStream * Source, bool Own);

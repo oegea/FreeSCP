@@ -55,6 +55,7 @@
 
 #ifdef WINSCP
 #define SIGNATURE_DEBUG
+#include <memory>
 #endif
 
 static char userAgentG[USER_AGENT_SIZE];
@@ -415,7 +416,7 @@ static S3Status compose_amz_headers(const RequestParams *params,
         }
         // If byteCount != 0 then we're just copying a range, add header
         if (params->byteCount > 0) {
-            char byteRange[S3_MAX_METADATA_SIZE];
+            char byteRange[64];
             snprintf(byteRange, sizeof(byteRange), "bytes=%zd-%zd",
                      params->startByte, params->startByte + params->byteCount);
             append_amz_header(values, 0, "x-amz-copy-source-range", byteRange);
@@ -665,9 +666,7 @@ static int headerle(const char *s1, const char *s2, char delim)
         }
         s1++, s2++;
     }
-#ifndef WINSCP
     return 0;
-#endif
 }
 
 
@@ -831,7 +830,7 @@ static void sort_query_string(const char *queryString, char *result,
         tmp++;
     }
 
-    const char** params = new const char*[numParams]; // WINSCP (heap allocation)
+    const char* params[numParams];
 
     // Where did strdup go?!??
     int queryStringLen = strlen(queryString);
@@ -869,7 +868,6 @@ static void sort_query_string(const char *queryString, char *result,
     }
 #undef append
 
-    delete[] params; // WINSCP (heap allocation)
     free(buf);
 }
 
@@ -886,12 +884,10 @@ static void canonicalize_query_string(const char *queryParams,
 #define append(str) len += snprintf(&(buffer[len]), buffer_size - len, "%s", str)
 
     if (queryParams && queryParams[0]) {
-        int sortedLen = strlen(queryParams) * 2;
-        char * sorted = new char[sortedLen]; // WINSCP (heap allocation)
+        char sorted[strlen(queryParams) * 2];
         sorted[0] = '\0';
-        sort_query_string(queryParams, sorted, sortedLen);
+        sort_query_string(queryParams, sorted, sizeof(sorted));
         append(sorted);
-        delete[] sorted; // WINSCP (heap allocation)
     }
 
     if (subResource && subResource[0]) {
@@ -968,15 +964,13 @@ static S3Status compose_auth_header(const RequestParams *params,
 
     int len = 0;
 
-    char * canonicalRequest = new char[canonicalRequestLen]; // WINSCP (heap allocation)
+    char canonicalRequest[canonicalRequestLen];
 
-// WINSCP (heap allocation)
 #define buf_append(buf, format, ...)                    \
-    len += snprintf(&(buf[len]), size - len,     \
+    len += snprintf(&(buf[len]), sizeof(buf) - len,     \
                     format, __VA_ARGS__)
 
     canonicalRequest[0] = '\0';
-    int size = canonicalRequestLen; // WINSCP
     buf_append(canonicalRequest, "%s\n", httpMethod);
     buf_append(canonicalRequest, "%s\n", values->canonicalURI);
     buf_append(canonicalRequest, "%s\n", values->canonicalQueryString);
@@ -997,9 +991,7 @@ static S3Status compose_auth_header(const RequestParams *params,
     const unsigned char *rqstData = (const unsigned char*) canonicalRequest;
     SHA256(rqstData, strlen(canonicalRequest), canonicalRequestHash);
 #endif
-    delete[] canonicalRequest; // WINSCP
     char canonicalRequestHashHex[2 * S3_SHA256_DIGEST_LENGTH + 1];
-    size = sizeof(canonicalRequestHashHex); // WINSCP
     canonicalRequestHashHex[0] = '\0';
     int i = 0;
     for (; i < S3_SHA256_DIGEST_LENGTH; i++) {
@@ -1011,15 +1003,14 @@ static S3Status compose_auth_header(const RequestParams *params,
         awsRegion = params->bucketContext.authRegion;
     }
     const char * service = (params->bucketContext.service != NULL) ? params->bucketContext.service : S3_SERVICE; // WINSCP
-    int scopeSize = 8 + strlen(awsRegion) + strlen(service) + sizeof("///aws4_request"); // WINSCP
-    char * scope = new char[scopeSize]; // WINSCP
-    snprintf(scope, scopeSize, "%.8s/%s/%s/aws4_request",
+    int scopeSize = 8 + strlen(awsRegion) + strlen(service) + sizeof("///aws4_request") + 1; // WINSCP
+    char scope[scopeSize]; // WINSCP
+    snprintf(scope, sizeof(scope), "%.8s/%s/%s/aws4_request",
              values->requestDateISO8601, awsRegion, service); // WINSCP
 
-    const int stringToSignLen = 17 + 17 + sizeof(values->requestDateISO8601) +
-        scopeSize - 1 + sizeof(canonicalRequestHashHex) + 1; // WINSCP (heap allocation)
-    char * stringToSign = new char[stringToSignLen];
-    snprintf(stringToSign, stringToSignLen, "AWS4-HMAC-SHA256\n%s\n%s\n%s",
+    char stringToSign[17 + 17 + sizeof(values->requestDateISO8601) +
+                      sizeof(scope) + sizeof(canonicalRequestHashHex) + 1];
+    snprintf(stringToSign, sizeof(stringToSign), "AWS4-HMAC-SHA256\n%s\n%s\n%s",
              values->requestDateISO8601, scope, canonicalRequestHashHex);
 
 #ifdef SIGNATURE_DEBUG
@@ -1027,9 +1018,8 @@ static S3Status compose_auth_header(const RequestParams *params,
 #endif
 
     const char *secretAccessKey = params->bucketContext.secretAccessKey;
-    const int accessKeyLen = strlen(secretAccessKey) + 5; // WINSCP (heap allocation)
-    char * accessKey = new char[accessKeyLen];
-    snprintf(accessKey, accessKeyLen, "AWS4%s", secretAccessKey);
+    char accessKey[strlen(secretAccessKey) + 5];
+    snprintf(accessKey, sizeof(accessKey), "AWS4%s", secretAccessKey);
 
 #ifdef __APPLE__
     unsigned char dateKey[S3_SHA256_DIGEST_LENGTH];
@@ -1072,11 +1062,8 @@ static S3Status compose_auth_header(const RequestParams *params,
          (const unsigned char*) stringToSign, strlen(stringToSign),
          finalSignature, NULL);
 #endif
-    delete[] accessKey; // WINSCP
-    delete[] stringToSign; // WINSCP
 
     len = 0;
-    size = sizeof(values->requestSignatureHex); // WINSCP
     values->requestSignatureHex[0] = '\0';
     for (i = 0; i < S3_SHA256_DIGEST_LENGTH; i++) {
         buf_append(values->requestSignatureHex, "%02x", finalSignature[i]);
@@ -1085,7 +1072,6 @@ static S3Status compose_auth_header(const RequestParams *params,
     snprintf(values->authCredential, sizeof(values->authCredential),
              "%s/%.8s/%s/%s/aws4_request", params->bucketContext.accessKeyId,
              values->requestDateISO8601, awsRegion, service); // WINSCP
-    delete[] scope; // WINSCP
 
     snprintf(values->authorizationHeader,
              sizeof(values->authorizationHeader),
@@ -1329,7 +1315,6 @@ static S3Status setup_neon(Request *request,
         free(hostName);
     }
 
-    // WINSCP (hostHeader is added implicitly by neon based on uri)
     append_standard_header(cacheControlHeader);
     append_standard_header(contentTypeHeader);
     append_standard_header(md5Header);
@@ -1641,14 +1626,15 @@ void request_perform(const RequestParams *params, S3RequestContext *context)
     return
 
     // These will hold the computed values
-    RequestComputedValues computed;
+    // WINSCP: too big for stack
+    std::unique_ptr<RequestComputedValues> computed(new RequestComputedValues());
 
-    if ((status = setup_request(params, &computed, 0, context->requesterPays)) != S3StatusOK) { // WINSCP
+    if ((status = setup_request(params, computed.get(), 0, context->requesterPays)) != S3StatusOK) { // WINSCP
         return_status(status);
     }
 
     // Get an initialized Request structure now
-    if ((status = request_get(params, &computed, context, &request)) != S3StatusOK) {
+    if ((status = request_get(params, computed.get(), context, &request)) != S3StatusOK) {
         return_status(status);
     }
     // WINSCP (we should always verify the peer)
@@ -1830,11 +1816,8 @@ S3Status S3_generate_authenticated_query_string
         expires = MAX_EXPIRES;
     }
 
-    // WinSCP
     RequestParams params =
-    { http_request_method_to_type(httpMethod),
-        { bucketContext->hostName, bucketContext->bucketName, bucketContext->protocol, bucketContext->uriStyle, bucketContext->accessKeyId, bucketContext->secretAccessKey, bucketContext->securityToken, bucketContext->authRegion },
-        key, NULL,
+    { http_request_method_to_type(httpMethod), *bucketContext, key, NULL,
         resource,
         NULL, NULL, NULL, 0, 0, NULL, NULL, NULL, 0, NULL, NULL, NULL, 0};
 

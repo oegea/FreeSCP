@@ -6,10 +6,11 @@
 #                      \___/_/\_\ .__/ \__,_|\__|
 #                               |_| XML parser
 #
-# Copyright (c) 2017-2024 Sebastian Pipping <sebastian@pipping.org>
+# Copyright (c) 2017-2026 Sebastian Pipping <sebastian@pipping.org>
 # Copyright (c) 2017-2022 Rhodri James <rhodri@wildebeest.org.uk>
 # Copyright (c) 2020      Jeffrey Walton <noloader@gmail.com>
 # Copyright (c) 2024      Dag-Erling Smørgrav <des@des.dev>
+# Copyright (c) 2026      Funda Wang <fundawang@yeah.net>
 # Licensed under the MIT license:
 #
 # Permission is  hereby granted,  free of charge,  to any  person obtaining
@@ -35,8 +36,8 @@ SUBDIRS = . benchmark
 
 AM_CPPFLAGS = @AM_CPPFLAGS@ -I$(srcdir)/../lib -DXML_TESTING
 
-check_PROGRAMS = runtests runtests_cxx
-TESTS = runtests runtests_cxx
+check_PROGRAMS = runtests
+TESTS = runtests
 
 # To support MinGW and Non-MinGW at the same time:
 LOG_DRIVER = $(srcdir)/../test-driver-wrapper.sh
@@ -49,35 +50,21 @@ runtests_SOURCES = \
     common.c \
     dummy.c \
     handlers.c \
+    hash_tests.c \
+    entities_tests.c \
     memcheck.c \
     minicheck.c \
     misc_tests.c \
     ns_tests.c \
     nsalloc_tests.c \
+    props_tests.c \
     runtests.c \
-    structdata.c
+    structdata.c \
+    xcs_tests.c
 
-runtests_cxx_SOURCES = \
-    acc_tests_cxx.cpp \
-    alloc_tests_cxx.cpp \
-    basic_tests_cxx.cpp \
-    chardata_cxx.cpp \
-    common_cxx.cpp \
-    dummy_cxx.cpp \
-    handlers_cxx.cpp \
-    memcheck_cxx.cpp \
-    minicheck_cxx.cpp \
-    misc_tests_cxx.cpp \
-    nsalloc_tests_cxx.cpp \
-    ns_tests_cxx.cpp \
-    runtests_cxx.cpp \
-    structdata_cxx.cpp
+runtests_LDADD = ../lib/libtestpat.la @LIBM@
 
-runtests_LDADD = ../lib/libtestpat.la
-runtests_cxx_LDADD = ../lib/libtestpat.la
-
-runtests_LDFLAGS = @AM_LDFLAGS@ @LIBM@
-runtests_cxx_LDFLAGS = @AM_LDFLAGS@ @LIBM@
+runtests_LDFLAGS = @AM_LDFLAGS@
 
 EXTRA_DIST = \
     acc_tests.h \
@@ -87,13 +74,17 @@ EXTRA_DIST = \
     common.h \
     dummy.h \
     handlers.h \
+    hash_tests.h \
+    entities_tests.h \
+    memcheck.h \
+    minicheck.h \
     misc_tests.h \
     ns_tests.h \
     nsalloc_tests.h \
-    structdata.h \
-    minicheck.h \
-    memcheck.h \
+    props_tests.h \
     README.md \
+    structdata.h \
     udiffer.py \
+    xcs_tests.h \
     xmltest.log.expected \
     xmltest.sh

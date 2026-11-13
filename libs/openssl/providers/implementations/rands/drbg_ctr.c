@@ -1,5 +1,5 @@
 /*
- * Copyright 2011-2025 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 2011-2026 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -20,6 +20,9 @@
 #include "prov/providercommon.h"
 #include "prov/provider_ctx.h"
 #include "drbg_local.h"
+#include "crypto/evp.h"
+#include "crypto/evp/evp_local.h"
+#include "internal/provider.h"
 #include "internal/common.h"
 
 static OSSL_FUNC_rand_newctx_fn drbg_ctr_new_wrapper;
@@ -585,6 +588,18 @@ static int drbg_ctr_init(PROV_DRBG *drbg)
     drbg->strength = keylen * 8;
     drbg->seedlen = keylen + 16;
 
+#ifdef FIPS_MODULE
+    /*
+     * FIPS requires that we use a derivation function since our
+     * entropy source is outside the fips boundary
+     */
+    if (ctr->use_df == 0) {
+        ERR_raise_data(ERR_LIB_PROV, PROV_R_DERIVATION_FUNCTION_INIT_FAILED,
+            "FIPS requires the use of a derivation function");
+        goto err;
+    }
+#endif
+
     if (ctr->use_df) {
         /* df initialisation */
         static const unsigned char df_key[32] = {
@@ -626,6 +641,7 @@ static int drbg_ctr_new(PROV_DRBG *drbg)
 
     ctr->use_df = 1;
     drbg->data = ctr;
+    OSSL_FIPS_IND_INIT(drbg)
     return drbg_ctr_init_lengths(drbg);
 }
 
@@ -698,7 +714,8 @@ static const OSSL_PARAM *drbg_ctr_gettable_ctx_params(ossl_unused void *vctx,
         OSSL_PARAM_utf8_string(OSSL_DRBG_PARAM_CIPHER, NULL, 0),
         OSSL_PARAM_int(OSSL_DRBG_PARAM_USE_DF, NULL),
         OSSL_PARAM_DRBG_GETTABLE_CTX_COMMON,
-        OSSL_PARAM_END
+        OSSL_FIPS_IND_GETTABLE_CTX_PARAM()
+            OSSL_PARAM_END
     };
     return known_gettable_ctx_params;
 }
@@ -725,8 +742,14 @@ static int drbg_ctr_set_ctx_params_locked(void *vctx, const OSSL_PARAM params[])
         != NULL) {
         if (p->data_type != OSSL_PARAM_UTF8_STRING)
             return 0;
-        propquery = (const char *)p->data;
     }
+
+#ifndef FIPS_MODULE
+    propquery = "provider=default";
+    if (p != NULL
+        && p->data_type == OSSL_PARAM_UTF8_STRING)
+        propquery = (const char *)p->data;
+#endif
 
     if ((p = OSSL_PARAM_locate_const(params, OSSL_DRBG_PARAM_CIPHER)) != NULL) {
         const char *base = (const char *)p->data;
@@ -734,17 +757,25 @@ static int drbg_ctr_set_ctx_params_locked(void *vctx, const OSSL_PARAM params[])
         size_t ecb_str_len = sizeof("ECB") - 1;
 
         if (p->data_type != OSSL_PARAM_UTF8_STRING
-            || p->data_size < ctr_str_len)
+            || p->data_size < ctr_str_len) {
             return 0;
+        }
         if (OPENSSL_strcasecmp("CTR", base + p->data_size - ctr_str_len) != 0) {
             ERR_raise(ERR_LIB_PROV, PROV_R_REQUIRE_CTR_MODE_CIPHER);
             return 0;
         }
-        if ((ecb = OPENSSL_strndup(base, p->data_size)) == NULL)
+        if ((ecb = OPENSSL_strndup(base, p->data_size)) == NULL) {
             return 0;
+        }
         strcpy(ecb + p->data_size - ecb_str_len, "ECB");
         EVP_CIPHER_free(ctr->cipher_ecb);
         EVP_CIPHER_free(ctr->cipher_ctr);
+        ctr->cipher_ctr = NULL;
+        ctr->cipher_ecb = NULL;
+        /*
+         * Try to fetch algorithms from our own provider code, fallback
+         * to generic fetch only if that fails
+         */
         ctr->cipher_ctr = EVP_CIPHER_fetch(libctx, base, propquery);
         ctr->cipher_ecb = EVP_CIPHER_fetch(libctx, ecb, propquery);
         OPENSSL_free(ecb);

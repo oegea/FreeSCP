@@ -1,5 +1,5 @@
 /*
- * Copyright 2022-2024 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 2022-2026 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -292,6 +292,9 @@ struct ossl_record_layer_st {
     /* cryptographic state */
     EVP_CIPHER_CTX *enc_ctx;
 
+    /* TLSv1.3 MAC ctx, only used with integrity-only cipher */
+    EVP_MAC_CTX *mac_ctx;
+
     /* Explicit IV length */
     size_t eivlen;
 
@@ -318,6 +321,7 @@ struct ossl_record_layer_st {
 
     /* TLSv1.3 record padding */
     size_t block_padding;
+    size_t hs_padding;
 
     /* Only used by SSLv3 */
     unsigned char mac_secret[EVP_MAX_MD_SIZE];
@@ -330,8 +334,8 @@ struct ossl_record_layer_st {
     int tlstree;
 
     /* TLSv1.3 fields */
-    /* static IV */
-    unsigned char iv[EVP_MAX_IV_LENGTH];
+    unsigned char *iv; /* static IV */
+    unsigned char *nonce; /* part of static IV followed by sequence number */
     int allow_plain_alerts;
 
     /* TLS "any" fields */
@@ -340,9 +344,8 @@ struct ossl_record_layer_st {
 
     size_t taglen;
 
-    /* DTLS received handshake records (processed and unprocessed) */
+    /* DTLS received handshake records awaiting the next epoch */
     struct pqueue_st *unprocessed_rcds;
-    struct pqueue_st *processed_rcds;
 
     /* records being received in the current epoch */
     DTLS_BITMAP bitmap;
@@ -370,7 +373,6 @@ struct ossl_record_layer_st {
 typedef struct dtls_rlayer_record_data_st {
     unsigned char *packet;
     size_t packet_length;
-    TLS_BUFFER rbuf;
     TLS_RL_RECORD rrec;
 } DTLS_RLAYER_RECORD_DATA;
 

@@ -91,5 +91,5 @@ void read_random_seed(noise_consumer_t consumer)
 /* ---- local proxy / subprocess: not supported on the native port (yet) ---- */
 char *platform_setup_local_proxy(Socket *socket, const char *cmd)
 { (void)socket; (void)cmd; return dupstr("local proxy not supported"); }
-Socket *platform_start_subprocess(const char *cmd, Plug *plug, const char *prefix)
-{ (void)cmd; (void)plug; (void)prefix; return NULL; }
+Socket *platform_start_subprocess(const char *cmd, Plug *plug, const char *prefix, SubprocessWaiter **waiter)
+{ (void)cmd; (void)plug; (void)prefix; if (waiter) *waiter = NULL; return NULL; }

@@ -146,6 +146,10 @@ inline int strnicmp(const char * a, const char * b, size_t n) { return strncasec
 #define _tcsstr   wcsstr
 #define _tcsdup   wcsdup
 #define _snprintf snprintf
+#define snwprintf  fz_sntprintf
+#define _wtoi      _ttoi
+#define _wtoi64    _ttoi64
+#define swprintf   fz_stprintf   /* only the MS 2-argument-format form is used (AsyncSslSocketLayer) */
 #define _tcsicmp(a, b)  fz_tcsicmp(a, b)
 inline int fz_tcsicmp(const wchar_t * a, const wchar_t * b)
 { for (; *a && *b; ++a, ++b) { wchar_t ca = (*a >= L'A' && *a <= L'Z') ? *a + 32 : *a, cb = (*b >= L'A' && *b <= L'Z') ? *b + 32 : *b; if (ca != cb) return ca - cb; } return *a - *b; }
@@ -250,6 +254,8 @@ inline int WideCharToMultiByte(UINT, DWORD, const wchar_t * src, int srcLen, cha
 }
 
 //=== CObject ===============================================================
+class UnicodeString;   // rtlcompat (engine string); complete in every FileZilla TU via FileZillaPCH.h
+
 class CObject
 {
 public:
@@ -271,6 +277,8 @@ public:
   CString(const wchar_t * p, int n) { if (p && n > 0) s_.assign(reinterpret_cast<const char16_t *>(p), (size_t)n); }
   CString(wchar_t c, int n = 1) { if (n > 0) s_.assign((size_t)n, (char16_t)c); }
   CString(const std::u16string & w) : s_(w) {}
+  explicit CString(const UnicodeString & str);   // impl in afx_format.cpp (needs the complete type)
+  CString(const unsigned char * p) { if (p) while (*p) s_.push_back((char16_t)*p++); }
   // narrow -> wide (Latin-1/ASCII); FileZilla passes char* literals in a few spots
   CString(const char * p) { if (p) while (*p) s_.push_back((char16_t)(unsigned char)*p++); }
   CString(const char * p, int n) { if (p && n > 0) for (int i = 0; i < n; ++i) s_.push_back((char16_t)(unsigned char)p[i]); }
@@ -278,9 +286,12 @@ public:
   CString & operator=(const CString & o) { s_ = o.s_; return *this; }
   CString & operator=(const wchar_t * p) { s_ = fromW(p); return *this; }
   CString & operator=(wchar_t c) { s_.assign(1, (char16_t)c); return *this; }
+  CString & operator=(char c) { s_.assign(1, (char16_t)(unsigned char)c); return *this; }
+  CString & operator=(const char * p) { *this = CString(p); return *this; }
 
   operator LPCTSTR() const { return reinterpret_cast<const wchar_t *>(s_.c_str()); }
   const wchar_t * GetString() const { return reinterpret_cast<const wchar_t *>(s_.c_str()); }
+  const wchar_t * c_str() const { return reinterpret_cast<const wchar_t *>(s_.c_str()); }
 
   int GetLength() const { return (int)s_.size(); }
   bool IsEmpty() const { return s_.empty(); }
@@ -292,11 +303,15 @@ public:
   CString & operator+=(const CString & o) { s_ += o.s_; return *this; }
   CString & operator+=(const wchar_t * p) { s_ += fromW(p); return *this; }
   CString & operator+=(wchar_t c) { s_ += (char16_t)c; return *this; }
+  CString & operator+=(char c) { s_ += (char16_t)(unsigned char)c; return *this; }
 
   friend CString operator+(const CString & a, const CString & b) { CString r(a); r.s_ += b.s_; return r; }
   friend CString operator+(const CString & a, const wchar_t * b) { CString r(a); r.s_ += fromW(b); return r; }
   friend CString operator+(const wchar_t * a, const CString & b) { CString r(a); r.s_ += b.s_; return r; }
   friend CString operator+(const CString & a, wchar_t b) { CString r(a); r.s_ += (char16_t)b; return r; }
+  friend CString operator+(wchar_t a, const CString & b) { CString r(a); r.s_ += b.s_; return r; }
+  friend CString operator+(const CString & a, char b) { CString r(a); r.s_ += (char16_t)(unsigned char)b; return r; }
+  friend CString operator+(char a, const CString & b) { CString r((wchar_t)(unsigned char)a); r.s_ += b.s_; return r; }
 
   bool operator==(const CString & o) const { return s_ == o.s_; }
   bool operator!=(const CString & o) const { return s_ != o.s_; }
@@ -349,8 +364,7 @@ public:
   void ReleaseBuffer(int newLen = -1) { if (newLen < 0) { newLen = 0; while (newLen < (int)s_.size() && s_[newLen]) ++newLen; } s_.resize((size_t)newLen); }
 
   void Format(const wchar_t * fmt, ...) { va_list ap; va_start(ap, fmt); FormatV(fmt, ap); va_end(ap); }
-  // MFC Format(UINT nFormatID, ...) loads the resource then formats; resources absent -> empty fmt.
-  void Format(unsigned id, ...) { (void)id; s_.clear(); }
+  void Format(unsigned id, ...);   // loads the resource string, then formats (afx_format.cpp)
   void FormatV(const wchar_t * fmt, va_list ap);
   BOOL LoadString(UINT) { s_.clear(); return FALSE; }   // resource strings not present in the port
 
@@ -370,13 +384,13 @@ inline bool operator==(const CString & s1, const char * s2) { return s1 == CStri
 
 typedef CString CStringW;
 
-//=== Win32 file shims used by CFile / CFileFix =============================
+//=== Win32 file shims used by CFile =========================================
 #include <ctime>
+#include <fcntl.h>
+#include <cerrno>
 inline DWORD GetLastError() { return 0; }
-inline BOOL  ReadFile(HANDLE h, void * buf, DWORD n, DWORD * read, void *)
-{ size_t r = h ? fread(buf, 1, n, (FILE *)h) : 0; if (read) *read = (DWORD)r; return TRUE; }
-inline BOOL  WriteFile(HANDLE h, const void * buf, DWORD n, DWORD * wrote, void *)
-{ size_t w = h ? fwrite(buf, 1, n, (FILE *)h) : 0; if (wrote) *wrote = (DWORD)w; return TRUE; }
+void fz_raise_os_error(int err);                       // throws EOSError (afx_format.cpp)
+std::string fz_path_utf8(const wchar_t * name);        // UTF-16 path -> UTF-8 (afx_format.cpp)
 
 //=== CException / CFileException ============================================
 class CException : public CObject
@@ -398,69 +412,66 @@ public:
 };
 typedef CException * LPCEXCEPTION;
 
-//=== CFileStatus ===========================================================
-struct CFileStatus
-{
-  __int64 m_size = 0;
-  std::time_t m_mtime = 0;
-  CString m_szFullName;
-};
-
-//=== CFile (POSIX FILE*-backed) ============================================
-class CFile : public CObject
+//=== CFile (POSIX fd) =======================================================
+// m_hFile packs the file descriptor in a HANDLE exactly as rtlcompat's CreateFile does, because
+// upstream code hands it to Win32-style calls (MFC64bitFix.cpp: GetFileSize(file.m_hFile, ...)).
+// CFileStatus is declared by source/filezilla/MFC64bitFix.h since 6.6.
+class CFile
 {
 public:
   enum OpenFlags {
-    modeRead = 0x0000, modeWrite = 0x0001, modeReadWrite = 0x0002, modeCreate = 0x1000,
-    modeNoTruncate = 0x2000, shareDenyNone = 0x0040, shareDenyWrite = 0x0020, shareDenyRead = 0x0030,
-    typeBinary = 0x8000, typeText = 0x4000,
+    modeRead = 0x0000, modeWrite = 0x0001, modeReadWrite = 0x0002,
+    shareCompat = 0x0000, shareExclusive = 0x0010, shareDenyWrite = 0x0020, shareDenyRead = 0x0030,
+    shareDenyNone = 0x0040, modeNoInherit = 0x0080, modeCreate = 0x1000, modeNoTruncate = 0x2000,
   };
-  enum SeekPosition { begin = 0, current = 1, end = 2 };
-  static const HANDLE hFileNull;
+  enum { hFileNull = -1 };
 
-  HANDLE  m_hFile = nullptr;
-  CString m_strFileName;
+  HANDLE m_hFile;
 
-  CFile() {}
-  virtual ~CFile() { Close(); }
+  CFile() : m_hFile((HANDLE)(intptr_t)hFileNull) {}
+  ~CFile() { if (fd() >= 0) ::close(fd()); }
 
-  BOOL Open(LPCTSTR name, UINT flags, CFileException * ex = nullptr)
+  BOOL Open(const wchar_t * name, UINT flags)
   {
-    m_strFileName = name;
-    const char * mode;
-    if (flags & modeCreate) mode = (flags & modeNoTruncate) ? "rb+" : "wb";
-    else if (flags & (modeWrite | modeReadWrite)) mode = "rb+";
-    else mode = "rb";
-    // narrow the (wide) path
-    std::string p; for (const wchar_t * w = name; w && *w; ++w) p.push_back((char)*w);
-    FILE * f = fopen(p.c_str(), mode);
-    if (!f && (flags & modeCreate)) f = fopen(p.c_str(), "wb+");
-    if (!f) { if (ex) { ex->m_lOsError = errno; ex->m_strFileName = name; } return FALSE; }
-    m_hFile = f;
+    m_hFile = (HANDLE)(intptr_t)hFileNull;
+    int oflags;
+    switch (flags & 3) { case modeWrite: oflags = O_WRONLY; break; case modeReadWrite: oflags = O_RDWR; break; default: oflags = O_RDONLY; break; }
+    if (flags & modeCreate) oflags |= (flags & modeNoTruncate) ? O_CREAT : (O_CREAT | O_TRUNC);
+    int f = ::open(fz_path_utf8(name).c_str(), oflags | O_CLOEXEC, 0644);
+    if (f < 0) return FALSE;
+    m_hFile = (HANDLE)(intptr_t)f;
     return TRUE;
   }
-  UINT Read(void * buf, UINT n) { DWORD r = 0; ReadFile(m_hFile, buf, n, &r, nullptr); return r; }
-  void Write(const void * buf, UINT n) { DWORD w = 0; WriteFile(m_hFile, buf, n, &w, nullptr); }
-  void Close() { if (m_hFile) { fclose((FILE *)m_hFile); m_hFile = nullptr; } }
-  __int64 Seek(__int64 off, UINT from) { if (m_hFile) fseeko((FILE *)m_hFile, (off_t)off, (int)from); return GetPosition(); }
-  void SeekToBegin() { Seek(0, begin); }
-  __int64 SeekToEnd() { return Seek(0, end); }
-  __int64 GetPosition() const { return m_hFile ? (long long)ftello((FILE *)m_hFile) : 0; }
-  __int64 GetLength() const {
-    if (!m_hFile) return 0; off_t cur = ftello((FILE *)m_hFile);
-    fseeko((FILE *)m_hFile, 0, SEEK_END); off_t len = ftello((FILE *)m_hFile);
-    fseeko((FILE *)m_hFile, cur, SEEK_SET); return (long long)len;
+  UINT Read(void * buf, UINT n)
+  {
+    if (n == 0) return 0;
+    ssize_t r;
+    do { r = ::read(fd(), buf, n); } while (r < 0 && errno == EINTR);
+    if (r < 0) fz_raise_os_error(errno);
+    return (UINT)r;
   }
-  void Flush() { if (m_hFile) fflush((FILE *)m_hFile); }
-  static BOOL PASCAL Rename(LPCTSTR from, LPCTSTR to) {
-    std::string a, b; for (const wchar_t * w = from; w && *w; ++w) a.push_back((char)*w);
-    for (const wchar_t * w = to; w && *w; ++w) b.push_back((char)*w);
-    return ::rename(a.c_str(), b.c_str()) == 0;
+  void Write(const void * buf, UINT n)
+  {
+    const char * p = static_cast<const char *>(buf);
+    while (n > 0)
+    {
+      ssize_t w = ::write(fd(), p, n);
+      if (w < 0) { if (errno == EINTR) continue; fz_raise_os_error(errno); }
+      if (w == 0) fz_raise_os_error(ENOSPC);
+      p += w; n -= (UINT)w;
+    }
   }
-  static void PASCAL Remove(LPCTSTR name) {
-    std::string a; for (const wchar_t * w = name; w && *w; ++w) a.push_back((char)*w); ::remove(a.c_str());
+  void Close()
+  {
+    int f = fd();
+    m_hFile = (HANDLE)(intptr_t)hFileNull;
+    if (f >= 0 && ::close(f) != 0) fz_raise_os_error(errno);
   }
-  static BOOL PASCAL GetStatus(LPCTSTR, CFileStatus &) { return FALSE; }
+
+private:
+  int fd() const { return (int)(intptr_t)m_hFile; }
+  CFile(const CFile &);
+  CFile & operator=(const CFile &);
 };
 
 //=== CTimeSpan / CTime =====================================================
@@ -488,6 +499,7 @@ public:
     m_time = ::mktime(&tmv);
   }
   static CTime GetCurrentTime() { return CTime(::time(nullptr)); }
+  static CTime CreateForCurrentTime() { return CTime(::time(nullptr)); }
   std::time_t GetTime() const { return m_time; }
   int GetYear() const  { std::tm t; localtime_r(&m_time, &t); return t.tm_year + 1900; }
   int GetMonth() const { std::tm t; localtime_r(&m_time, &t); return t.tm_mon + 1; }

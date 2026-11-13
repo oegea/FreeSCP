@@ -10,7 +10,7 @@ can connect through SOCKS4/5 and HTTP 1.1 proxies. This class works
 as semi-transparent layer between CAsyncSocketEx and the actual socket.
 This class is used in FileZilla, a powerful open-source FTP client.
 It can be found under https://sourceforge.net/projects/filezilla/
-For more information about HTTP 1.1 goto https://datatracker.ietf.org/doc/html/rfc2616
+For more information about HTTP 1.1 goto https://www.rfc-editor.org/info/rfc2616/
 
 How to use?
 -----------
@@ -95,7 +95,7 @@ public:
 
 public:
   virtual void Close();
-  virtual BOOL Connect(LPCTSTR lpHostAddress, UINT nHostPort);
+  virtual BOOL Connect(const wchar_t * lpHostAddress, UINT nHostPort);
   virtual BOOL Connect(const SOCKADDR * lpSockAddr, int nSockAddrLen);
   virtual BOOL Listen(int nConnectionBacklog);
 
@@ -129,7 +129,7 @@ private:
   char *m_pStrBuffer;    // Recvbuffer needed by HTTP1.1 proxy
   int m_nProxyOpState;  // State of an operation
   int m_nProxyOpID;    // Currently active operation (0 if none)
-  int m_nProxyPeerPort;  // Port of the server you are connected to, retrieve via GetPeerName
+  unsigned short m_nProxyPeerPort;  // Port of the server you are connected to, retrieve via GetPeerName
   ULONG m_nProxyPeerIp;  // IP of the server you are connected to, retrieve via GetPeerName
   typedef struct
   {
@@ -155,18 +155,6 @@ private:
 #define PROXYERROR_AUTHNOLOGON 6
 #define PROXYERROR_CANTRESOLVEHOST 7
 //---------------------------------------------------------------------------
-// Status messages
-// Called when a listen socket was created successfully. Unlike the normal listen function,
-// a socksified socket has to connect to the proxy to negotiate the details with the server
-// on which the listen socket will be created
-// The two parameters will contain the ip and port of the listen socket on the server.
-#define PROXYSTATUS_LISTENSOCKETCREATED 8
-struct t_ListenSocketCreatedStruct
-{
-  unsigned long ip;
-  UINT nPort;
-};
-//---------------------------------------------------------------------------
 // Proxytypes
 #define PROXYTYPE_NOPROXY 0
 #define PROXYTYPE_SOCKS4 1
@@ -175,6 +163,5 @@ struct t_ListenSocketCreatedStruct
 #define PROXYTYPE_HTTP11 4
 //---------------------------------------------------------------------------
 #define PROXYOP_CONNECT 1
-#define PROXYOP_LISTEN 2
 //---------------------------------------------------------------------------
 #endif // AsyncProxySocketLayerH

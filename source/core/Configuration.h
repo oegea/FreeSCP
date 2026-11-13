@@ -204,6 +204,8 @@ private:
   void SetSshHostCAList(const TSshHostCAList * value);
   const TSshHostCAList * GetPuttySshHostCAList();
   const TSshHostCAList * GetActiveSshHostCAList();
+  int GetAuthAgent();
+  void SetAuthAgent(int value);
 
 protected:
   TStorage FStorage;
@@ -253,12 +255,12 @@ protected:
 
   virtual UnicodeString __fastcall ModuleFileName();
 
-  UnicodeString __fastcall GetFileFileInfoString(const UnicodeString Key,
-    const UnicodeString FileName, bool AllowEmpty = false);
-  void * __fastcall GetFileApplicationInfo(const UnicodeString FileName);
-  UnicodeString __fastcall GetFileProductVersion(const UnicodeString FileName);
-  UnicodeString __fastcall GetFileProductName(const UnicodeString FileName);
-  UnicodeString __fastcall GetFileCompanyName(const UnicodeString FileName);
+  UnicodeString GetFileFileInfoString(
+    const UnicodeString & Key, const UnicodeString & FileName, bool AllowEmpty = false);
+  void * GetFileApplicationInfo(const UnicodeString & FileName);
+  UnicodeString GetFileProductVersion(const UnicodeString & FileName, bool AllowEmpty = false);
+  UnicodeString GetFileProductName(const UnicodeString & FileName, bool AllowEmpty = false);
+  UnicodeString GetFileCompanyName(const UnicodeString & FileName);
 
   __property bool PermanentLogging  = { read=GetLogging, write=SetLogging };
   __property UnicodeString PermanentLogFileName  = { read=GetLogFileName, write=SetLogFileName };
@@ -390,7 +392,7 @@ public:
   __property UnicodeString CertificateStorage = { read = FCertificateStorage, write = SetCertificateStorage };
   __property UnicodeString CertificateStorageExpanded = { read = GetCertificateStorageExpanded };
   __property UnicodeString AWSAPI = { read = FAWSAPI, write = SetAWSAPI };
-  __property UnicodeString ChecksumCommands = { read = FChecksumCommands };
+  __property UnicodeString ChecksumCommands = { read = FChecksumCommands, write = FChecksumCommands };
   __property int LocalPortNumberMin = { read = FLocalPortNumberMin, write = SetLocalPortNumberMin };
   __property int LocalPortNumberMax = { read = FLocalPortNumberMax, write = SetLocalPortNumberMax };
   __property bool TryFtpWhenSshFails = { read = FTryFtpWhenSshFails, write = SetTryFtpWhenSshFails };
@@ -407,6 +409,7 @@ public:
   __property bool SshHostCAsFromPuTTY = { read = FSshHostCAsFromPuTTY, write = FSshHostCAsFromPuTTY };
   __property int HttpsCertificateValidation = { read = FHttpsCertificateValidation, write = FHttpsCertificateValidation };
   __property UnicodeString SynchronizationChecksumAlgs = { read = FSynchronizationChecksumAlgs, write = FSynchronizationChecksumAlgs };
+  __property int AuthAgent = { read = GetAuthAgent, write = SetAuthAgent };
 
   __property UnicodeString TimeFormat = { read = GetTimeFormat };
   __property TStorage Storage  = { read=GetStorage };

@@ -10,7 +10,7 @@
    Copyright (c) 2003      Greg Stein <gstein@users.sourceforge.net>
    Copyright (c) 2005-2007 Steven Solie <steven@solie.ca>
    Copyright (c) 2005-2012 Karl Waclawek <karl@waclawek.net>
-   Copyright (c) 2016-2024 Sebastian Pipping <sebastian@pipping.org>
+   Copyright (c) 2016-2026 Sebastian Pipping <sebastian@pipping.org>
    Copyright (c) 2017-2022 Rhodri James <rhodri@wildebeest.org.uk>
    Copyright (c) 2017      Joe Orton <jorton@redhat.com>
    Copyright (c) 2017      José Gutiérrez de la Concha <jose@zeroc.com>
@@ -39,13 +39,15 @@
    DAMAGES OR  OTHER LIABILITY, WHETHER  IN AN  ACTION OF CONTRACT,  TORT OR
    OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
    USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+   SPDX-License-Identifier: MIT
 */
+
+#include "expat_config.h"
 
 #include <math.h> /* NAN, INFINITY */
 #include <stdio.h>
 #include <string.h>
-
-#include "expat_config.h"
 
 #include "expat.h"
 #include "internal.h"
@@ -357,6 +359,41 @@ START_TEST(test_billion_laughs_attack_protection_api) {
 }
 END_TEST
 
+START_TEST(test_billions_laughs_attack_protection_api_float_round_trip) {
+  const float values[] = {1.0f, 1.1f, INFINITY};
+
+  for (size_t i = 0; i < sizeof(values) / sizeof(values[0]); i++) {
+    set_subtest("float %f", (double)i);
+    const float wanted = values[i];
+
+    XML_Parser parser = XML_ParserCreate(NULL);
+    assert_true(parser != NULL);
+
+    // Self-Test: Original value not already at target value
+    double actual = 123.456;
+    assert_true((float)actual != wanted);
+#  if XML_GE == 1
+    assert_true(
+        XML_GetPropertyDouble(
+            parser, XML_PROP_BILLION_LAUGHS_MAXIMUM_AMPLIFICATION, &actual)
+        == XML_PROP_ERROR_NONE);
+    assert_true((float)actual != wanted); // Self-Test
+
+    // Test: Target value applied successfully
+    assert_true(
+        XML_SetBillionLaughsAttackProtectionMaximumAmplification(parser, wanted)
+        == XML_TRUE);
+    assert_true(
+        XML_GetPropertyDouble(
+            parser, XML_PROP_BILLION_LAUGHS_MAXIMUM_AMPLIFICATION, &actual)
+        == XML_PROP_ERROR_NONE);
+    assert_true((float)actual == wanted);
+#  endif // XML_GE == 1
+    XML_ParserFree(parser);
+  }
+}
+END_TEST
+
 START_TEST(test_helper_unsigned_char_to_printable) {
   // Smoke test
   unsigned char uc = 0;
@@ -438,6 +475,37 @@ START_TEST(test_amplification_isolated_external_parser) {
 }
 END_TEST
 
+START_TEST(test_amplification_reset_neutrality) {
+  // Speed up the test, chunk size expected to not matter in this test
+  if (g_chunkSize != 0)
+    return;
+
+  const char *const doc
+      = "<!DOCTYPE r [<!ENTITY e 'general entity'>]><r>&e;</r>";
+  XML_Parser parser = XML_ParserCreate(NULL);
+  assert_true(XML_SetPropertyDouble(
+                  parser, XML_PROP_BILLION_LAUGHS_MAXIMUM_AMPLIFICATION, 1.0)
+              == XML_PROP_ERROR_NONE);
+  assert_true(XML_SetPropertyUInt64(
+                  parser, XML_PROP_BILLION_LAUGHS_ACTIVATION_THRESHOLD, 0)
+              == XML_PROP_ERROR_NONE);
+
+  assert_true(_XML_Parse_SINGLE_BYTES(parser, doc, (int)strlen(doc),
+                                      /*isFinal=*/XML_TRUE)
+              == XML_STATUS_ERROR);
+  assert_true(XML_GetErrorCode(parser) == XML_ERROR_AMPLIFICATION_LIMIT_BREACH);
+
+  assert_true(XML_ParserReset(parser, NULL) == XML_STATUS_OK);
+
+  assert_true(_XML_Parse_SINGLE_BYTES(parser, doc, (int)strlen(doc),
+                                      /*isFinal=*/XML_TRUE)
+              == XML_STATUS_ERROR);
+  assert_true(XML_GetErrorCode(parser) == XML_ERROR_AMPLIFICATION_LIMIT_BREACH);
+
+  XML_ParserFree(parser);
+}
+END_TEST
+
 #endif // XML_GE == 1
 
 void
@@ -449,9 +517,12 @@ make_accounting_test_case(Suite *s) {
 
   tcase_add_test(tc_accounting, test_accounting_precision);
   tcase_add_test(tc_accounting, test_billion_laughs_attack_protection_api);
+  tcase_add_test(tc_accounting,
+                 test_billions_laughs_attack_protection_api_float_round_trip);
   tcase_add_test(tc_accounting, test_helper_unsigned_char_to_printable);
   tcase_add_test__ifdef_xml_dtd(tc_accounting,
                                 test_amplification_isolated_external_parser);
+  tcase_add_test(tc_accounting, test_amplification_reset_neutrality);
 #else
   UNUSED_P(s);
 #endif /* XML_GE == 1 */
