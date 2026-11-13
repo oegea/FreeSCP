@@ -118,6 +118,18 @@ void EnsureEngineInited()
   if (g_engineInited) return;
   ApplicationLog = new TApplicationLog();          // AppLog macro derefs this unguarded
   Configuration = new BridgeConfiguration();
+  // Keep the engine's INI (cached host keys, ...) in the per-user config directory. Left to itself
+  // the engine prefers "<executable>.ini" whenever the program directory is writable - i.e. inside
+  // the .app bundle (breaking its code-signature seal) or next to the AppImage.
+  {
+    UnicodeString IniName = L"winscp-qt.ini";
+    UnicodeString IniPath = IncludeTrailingBackslash(GetShellFolderPath(CSIDL_APPDATA)) + IniName;
+    UnicodeString LegacyPath = ChangeFileExt(ParamStr(0), L".ini");   // where earlier builds may have put it
+    std::error_code ec;
+    if (!FileExists(IniPath) && FileExists(LegacyPath))
+      std::filesystem::copy_file(ToU8(LegacyPath), ToU8(IniPath), ec);
+    Configuration->SetExplicitIniFileStorageName(IniPath);
+  }
   Configuration->Default();
   PuttyInitialize();
   NeonInitialize();    // ne_sock_init; needed for WebDAV (no-op cost otherwise)

@@ -4,6 +4,7 @@
 #include "winscp/UnicodeString.h"
 #include "winscp/AnsiStrings.h"
 #include "Classes.hpp"
+#include "winscp/SysExtra.h"   // UTF8ToString
 #include <typeinfo>
 #include <cstdarg>
 #include <cstdio>
@@ -99,6 +100,9 @@ static std::string ToUtf8(const UnicodeString & s)
 AnsiString::AnsiString(const UnicodeString & s) : AnsiStringBase(ToLatin1(s)) {}
 RawByteString::RawByteString(const UnicodeString & s) : AnsiStringBase(ToLatin1(s)) {}
 UTF8String::UTF8String(const UnicodeString & s) : AnsiStringBase(ToUtf8(s)) {}
+UTF8String::UTF8String(const wchar_t * s) : AnsiStringBase(ToUtf8(UnicodeString(s))) {}
+UTF8String::UTF8String(const wchar_t * s, int len) : AnsiStringBase(ToUtf8(UnicodeString(s, len))) {}
+UnicodeString::UnicodeString(const UTF8String & s) : FData(UTF8ToString(RawByteString(s.c_str(), s.Length())).raw()) {}
 
 UnicodeString __fastcall TObject::ClassName() const
 {

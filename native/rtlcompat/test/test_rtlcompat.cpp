@@ -87,6 +87,24 @@ int main()
     assert(w.compare(L"hello worle") < 0);
   }
 
+  // --- UTF8String <-> UnicodeString really transcodes (was byte-widening: "ñ" became "Ã±") ---
+  {
+    UTF8String u8("ma\xC3\xB1" "ana \xE6\xB5\x8B\xE8\xAF\x95 \xF0\x9F\x94\x92");   // "mañana 测试 🔒"
+    UnicodeString w(u8);
+    assert(w.Length() == 12);                       // 6 + space + 2 CJK + space + surrogate pair
+    assert(w[3] == L'\x00F1' && w[8] == L'\x6D4B');
+    assert(w[11] == L'\xD83D' && w[12] == L'\xDD12');
+    assert(std::string(UTF8String(w).c_str()) == std::string(u8.c_str()));   // lossless round trip
+    // not UTF-8 (latin1 "ñ" = F1 followed by ASCII): bytes survive instead of eating what follows
+    UnicodeString legacy(UTF8String("a\xF1" "bc"));
+    assert(legacy.Length() == 4 && legacy[2] == L'\x00F1' && legacy[3] == L'b');
+    // from a wide literal: encoded, not narrowed (FTP sends UTF8String(cmd.c_str()))
+    assert(std::string(UTF8String(L"\x00F1\x6D4B").c_str()) == "\xC3\xB1\xE6\xB5\x8B");
+    assert(UTF8String(L"a\x00F1z", 2).Length() == 3);
+    // AnsiString/RawByteString keep widening byte-for-byte
+    assert(UnicodeString(RawByteString("\xC3\xB1")).Length() == 2);
+  }
+
   std::printf("rtlcompat: all assertions passed\n");
   return 0;
 }

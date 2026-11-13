@@ -45,6 +45,12 @@ int main(int argc, char ** argv)
     // normally creates it). Provide one (Logging defaults off).
     ApplicationLog = new TApplicationLog();
     Configuration = new THarnessConfiguration();
+    // Explicit INI path: keeps test runs from dropping winscp-harness.ini into the build tree.
+    // WINSCP_INI overrides it (e.g. an unwritable path, to test save-failure handling).
+    {
+      const char * ini = ::getenv("WINSCP_INI");
+      Configuration->SetExplicitIniFileStorageName(UnicodeString(UTF8String(ini ? ini : "/tmp/winscp-harness.ini")));
+    }
     Configuration->Default();
     PuttyInitialize();   // sk_init + appname; the engine's CoreInitialize would normally do this    // logging disabled for now
     NeonInitialize();    // ne_sock_init (WebDAV/HTTP); no-op cost for SFTP/SCP runs
@@ -83,6 +89,9 @@ int main(int argc, char ** argv)
       Data->FSProtocol = (::getenv("WINSCP_SCP") != nullptr) ? fsSCPonly : fsSFTPonly;
     }
     Data->FingerprintScan = false;   // ensure normal connect (not fingerprint-scan mode)
+    // WINSCP_UTF8=1 forces UTF-8 file names (session "UTF-8 encoding for filenames: On") instead of
+    // auto-detection - for servers that neither advertise FEAT UTF8 (FTP) nor run a UTF-8 locale (SCP).
+    if (::getenv("WINSCP_UTF8") != nullptr) Data->NotUtf = asOff;
     out(FORMAT(L"[harness] Session: %s@%s:%d (SFTP)", (User, Host, Port)));
 
     std::unique_ptr<TTerminal> Terminal(new TTerminal(Data.get(), Configuration));
@@ -105,7 +114,13 @@ int main(int argc, char ** argv)
         if (More != nullptr) for (int i = 0; i < More->Count; i++) out(UnicodeString(L"   | ") + More->Strings[i]);
         Answer = (Answers & qaYes) ? qaYes : ((Answers & qaOK) ? qaOK : Answers); };
     Terminal->OnShowExtendedException =
-      [](TTerminal *, Exception * E, void *) { out(UnicodeString(L"[exception] ") + (E ? UnicodeString(E->Message) : UnicodeString())); };
+      [](TTerminal *, Exception * E, void *)
+      {
+        out(UnicodeString(L"[exception] ") + (E ? UnicodeString(E->Message) : UnicodeString()));
+        ExtException * Ext = dynamic_cast<ExtException *>(E);
+        if ((Ext != nullptr) && (Ext->MoreMessages != nullptr))
+          for (int i = 0; i < Ext->MoreMessages->Count; i++) out(UnicodeString(L"   | ") + Ext->MoreMessages->Strings[i]);
+      };
 
     out(L"[harness] Opening session...");
     Terminal->Open();
@@ -118,12 +133,38 @@ int main(int argc, char ** argv)
       for (int i = 0; i < Files->Count; i++)
       { TRemoteFile * F = Files->Files[i]; out(FORMAT(L"  %s\t%s", (F->FileName, UnicodeString((__int64)F->Size)))); }
 
+    // Optional: WINSCP_PAUSE=<seconds> idles after connecting, then re-reads the directory. Kill or
+    // restart the server meanwhile to check that a dropped connection ends in a reported error
+    // (not a SIGPIPE death or a hang).
+    if (const char * pause = ::getenv("WINSCP_PAUSE"))
+    {
+      out(L"[harness] pausing...");
+      Sleep(1000 * atoi(pause));
+      out(L"[harness] re-reading directory after pause");
+      Terminal->ReadDirectory(true);
+      out(FORMAT(L"[harness] re-read ok: %d entries", (Terminal->Files->Count)));
+    }
+
+    // Optional: change to a remote directory first (WINSCP_CD=/path). S3 needs it: the root only
+    // lists buckets, so the transfer/ops self-tests must run inside one (WINSCP_CD=/testbucket).
+    if (const char * cd = ::getenv("WINSCP_CD"))
+    {
+      Terminal->ChangeDirectory(UnicodeString(UTF8String(cd)));
+      Terminal->ReadCurrentDirectory(); Terminal->ReadDirectory(false);
+      out(FORMAT(L"[harness] cd %s : %d entries", (Terminal->CurrentDirectory, Terminal->Files->Count)));
+    }
+
     // Optional transfer self-test (set WINSCP_XFER=1) — exercises CopyToRemote/CopyToLocal on
     // the current protocol (SFTP, or SCP via WINSCP_SCP). Round-trips /tmp/xfer-up.txt.
     if (::getenv("WINSCP_XFER") != nullptr)
     {
-      FILE * f = fopen("/tmp/xfer-up.txt", "w"); fputs("scp xfer test\n", f); fclose(f);
-      std::unique_ptr<TStrings> up(new TStringList()); up->Add(L"/tmp/xfer-up.txt");
+      // WINSCP_XFER_FILE=<local path> round-trips that file instead (e.g. a large random file whose
+      // checksum the caller compares with the copy downloaded to /tmp/dl/).
+      const char * xferFile = ::getenv("WINSCP_XFER_FILE");
+      UnicodeString LocalFile = UnicodeString(UTF8String(xferFile ? xferFile : "/tmp/xfer-up.txt"));
+      UnicodeString LocalName = ExtractFileName(LocalFile);
+      if (xferFile == nullptr) { FILE * f = fopen("/tmp/xfer-up.txt", "w"); fputs("scp xfer test\n", f); fclose(f); }
+      std::unique_ptr<TStrings> up(new TStringList()); up->Add(LocalFile);
       TCopyParamType cp; cp.Default();
       UnicodeString remoteDir = UnixIncludeTrailingBackslash(Terminal->CurrentDirectory);  // protocol-agnostic
       bool uok = Terminal->CopyToRemote(up.get(), remoteDir, &cp, cpNoConfirmation, NULL);
@@ -132,7 +173,7 @@ int main(int argc, char ** argv)
       Terminal->ReadCurrentDirectory(); Terminal->ReadDirectory(false);
       TRemoteFile * rf = NULL;
       for (int i = 0; i < Terminal->Files->Count; i++)
-        if (Terminal->Files->Files[i]->FileName == UnicodeString(L"xfer-up.txt")) { rf = Terminal->Files->Files[i]; break; }
+        if (Terminal->Files->Files[i]->FileName == LocalName) { rf = Terminal->Files->Files[i]; break; }
       std::unique_ptr<TStrings> dn(new TStringList());
       if (rf) dn->AddObject(rf->FullFileName, rf);
       bool dok = rf && Terminal->CopyToLocal(dn.get(), L"/tmp/dl/", &cp, cpNoConfirmation, NULL);

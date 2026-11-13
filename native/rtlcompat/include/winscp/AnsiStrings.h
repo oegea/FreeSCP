@@ -110,6 +110,11 @@ class UTF8String : public AnsiStringBase
   UTF8String() = default;
   UTF8String(const AnsiStringBase & o) : AnsiStringBase(o.raw()) {}
   UTF8String(const UnicodeString & s);                             // UTF-16 -> UTF-8
+  // A wide literal/buffer is ENCODED as UTF-8 (the inherited AnsiStringBase ctor narrows each
+  // wchar to one byte, which is only right for the ANSI types). FileZilla builds every FTP command
+  // as UTF8String(str.c_str()): narrowing sent "ñ" as the single byte F1, an invalid UTF-8 name.
+  UTF8String(const wchar_t * s);
+  UTF8String(const wchar_t * s, int len);
 };
 
 // Left-hand C-literal concatenation (e.g. WebDAV's `L"?" + Query` where Query is a UTF8String);

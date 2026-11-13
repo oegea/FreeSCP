@@ -324,7 +324,13 @@ UnicodeString __fastcall UTF8ToString(const RawByteString & S)
     else if ((c >> 4) == 0xE) { cp = c & 0x0F; n = 3; }
     else if ((c >> 3) == 0x1E) { cp = c & 0x07; n = 4; }
     else { cp = c; n = 1; }
-    for (int k = 1; k < n && i + k < b.size(); ++k) cp = (cp << 6) | (b[i+k] & 0x3F);
+    // A multi-byte lead must be followed by n-1 continuation bytes (10xxxxxx). If not, this is not
+    // UTF-8 (truncated, or a legacy 8-bit encoding): keep the byte as-is (Latin-1) and resync on the
+    // next one, rather than swallowing the bytes that follow.
+    bool valid = (i + n <= b.size());
+    for (int k = 1; valid && k < n; ++k) valid = ((static_cast<unsigned char>(b[i+k]) & 0xC0) == 0x80);
+    if (!valid) { cp = c; n = 1; }
+    for (int k = 1; k < n; ++k) cp = (cp << 6) | (b[i+k] & 0x3F);
     i += n;
     if (cp < 0x10000) w.push_back(static_cast<char16_t>(cp));
     else { cp -= 0x10000; w.push_back(static_cast<char16_t>(0xD800 + (cp >> 10))); w.push_back(static_cast<char16_t>(0xDC00 + (cp & 0x3FF))); }
@@ -539,7 +545,7 @@ const wchar_t * __fastcall PathSkipRoot(const wchar_t * Path) { return Path; }
 bool __fastcall FileGetSymLinkTarget(const UnicodeString & FileName, UnicodeString & Target)
 { std::error_code ec; auto t = fs::read_symlink(ToU8(FileName), ec); if (ec) return false; Target = FromU8(t.string()); return true; }
 HANDLE __fastcall CreateFile(const wchar_t * FileName, DWORD Access, DWORD /*Share*/, void * /*Sec*/,
-                             DWORD Disposition, DWORD /*Flags*/, HANDLE /*Template*/)
+                             DWORD Disposition, DWORD Flags, HANDLE /*Template*/)
 {
   int flags = 0;
   bool rd = (Access & GENERIC_READ) != 0, wr = (Access & GENERIC_WRITE) != 0;
@@ -553,6 +559,9 @@ HANDLE __fastcall CreateFile(const wchar_t * FileName, DWORD Access, DWORD /*Sha
   }
   int fd = ::open(ToU8(UnicodeString(FileName)).c_str(), flags, 0644);
   if (fd < 0) { SetLastError((DWORD)errno); return INVALID_HANDLE_VALUE; }
+  // FILE_FLAG_DELETE_ON_CLOSE: POSIX equivalent is unlinking the open file right away (the engine's
+  // IsDirectoryWriteable probe relies on it; without this every probe left a wscp_*.tmp behind).
+  if ((Flags & FILE_FLAG_DELETE_ON_CLOSE) != 0) ::unlink(ToU8(UnicodeString(FileName)).c_str());
   return reinterpret_cast<HANDLE>((intptr_t)fd);   // fd packed in a HANDLE (see FileSeek/TSafeHandleStream)
 }
 // Our HANDLE already IS the fd (packed via intptr_t), so _open_osfhandle just unpacks it.

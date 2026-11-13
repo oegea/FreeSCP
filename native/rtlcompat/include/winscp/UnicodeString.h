@@ -19,6 +19,8 @@
 #include <cstdlib>
 #include "winscp/AnsiStrings.h"
 
+class UTF8String;
+
 class UnicodeString
 {
 public:
@@ -52,9 +54,13 @@ public:
       if (c <= 0xFFFF) FData.push_back(static_cast<char16_t>(c));
       else { c -= 0x10000; FData.push_back(static_cast<char16_t>(0xD800 + (c >> 10)));
              FData.push_back(static_cast<char16_t>(0xDC00 + (c & 0x3FF))); } } }
-  // From the byte-string family (latin1 widening; UTF-8 decode for UTF8String is a TODO).
+  // From the byte-string family. AnsiString/RawByteString widen byte-for-byte (latin1), which keeps
+  // Raw -> Unicode -> Raw round trips lossless. A UTF8String is DECODED, as in C++Builder (its code
+  // page is 65001): the engine writes UnicodeString(UTF8String(bytes)) for S3/WebDAV names, TLS
+  // certificate fields, etc. (Defined in StringConv.cpp.)
   UnicodeString(const AnsiStringBase & s)
   { for (char c : s.raw()) FData.push_back(static_cast<char16_t>(static_cast<unsigned char>(c))); }
+  UnicodeString(const UTF8String & s);
   UnicodeString(const wchar_t * s, int len)
   { for (int i = 0; i < len; ++i) FData.push_back(static_cast<char16_t>(s[i])); }
   // narrow (ANSI/ASCII) buffer + length — e.g. from a putty strbuf of escaped key chars.

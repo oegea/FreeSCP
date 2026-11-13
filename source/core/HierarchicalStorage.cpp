@@ -1836,7 +1836,23 @@ void __fastcall TIniFileStorage::Flush()
 //---------------------------------------------------------------------------
 __fastcall TIniFileStorage::~TIniFileStorage()
 {
+#ifndef _WIN32
+  // WINSCP-NATIVE-PORT: a standard C++ destructor is noexcept, so the exception Flush() raises
+  // when the INI file cannot be written (read-only/missing directory, full disk) would call
+  // std::terminate() and kill the application - e.g. while remembering a host key fingerprint in
+  // the middle of connecting. C++Builder lets it propagate; here an implicit save failure is
+  // logged and dropped instead. Explicit saves call Flush() directly and still report errors.
+  try
+  {
+    Flush();
+  }
+  catch (Exception & E)
+  {
+    AppLogFmt(L"Error saving configuration to %s: %s", (Storage, E.Message));
+  }
+#else
   Flush();
+#endif
 }
 //---------------------------------------------------------------------------
 void __fastcall TIniFileStorage::ApplyOverrides()
