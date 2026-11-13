@@ -60,6 +60,7 @@ int winscp_swscanf(const wchar_t * s, const wchar_t * fmt, ...);
 #define wcsrchr winscp_wcsrchr
 #define wcspbrk winscp_wcspbrk
 #define wcsstr  winscp_wcsstr
+#undef  wcslen   /* ShortWchar.h may have defined a function-like one (libstdc++) */
 #define wcslen  winscp_wcslen
 #define wcscmp  winscp_wcscmp
 #define wcsncmp winscp_wcsncmp

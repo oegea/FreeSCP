@@ -85,6 +85,17 @@ int main()
     assert(w.find(L"world") == 6);
     assert(w == std::wstring(L"hello world"));
     assert(w.compare(L"hello worle") < 0);
+    {
+      // copy / assign / fill stay within the string's own 2-byte storage (libstdc++ used the 4-byte
+      // wmemcpy/wmemset: twice the bytes moved)
+      std::wstring longer(L"a string long enough to live on the heap, not in the small buffer");
+      std::wstring copy(longer);
+      assert(copy == longer && copy.size() == longer.size());
+      std::wstring filled(40, L'x');
+      assert(filled.size() == 40 && filled[39] == L'x' && filled.find(L'y') == std::wstring::npos);
+      copy = filled;
+      assert(copy == filled);
+    }
   }
 
   // --- UTF8String <-> UnicodeString really transcodes (was byte-widening: "ñ" became "Ã±") ---
