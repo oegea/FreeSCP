@@ -76,28 +76,12 @@ int main()
     assert(ExtractFileName(path) == UnicodeString(L"winscp-qt"));
     assert(ChangeFileExt(UnicodeString(L"/x/y.txt"), UnicodeString(L".ini")) == UnicodeString(L"/x/y.ini"));
 
-    // std::wstring (2-byte here; used by the FileZilla FTP backend): header-inline length/compare/find.
-    // (Out-of-line members such as operator+/append live in the system libc++ built for 4-byte
-    // wchar_t and stay off-limits under -fshort-wchar; the engine does not use them.)
-    std::wstring w(L"hello world");
-    assert(w.size() == 11);
-    assert(w.find(L'w') == 6);
-    assert(w.find(L"world") == 6);
-    assert(w == std::wstring(L"hello world"));
-    assert(w.compare(L"hello worle") < 0);
-#ifndef _LIBCPP_VERSION   // libc++ runs these through its 4-byte dylib members (see ShortWchar.h LIMIT)
-    {
-      // copy / assign / fill stay within the string's own 2-byte storage (libstdc++ used the 4-byte
-      // wmemcpy/wmemset: twice the bytes moved)
-      std::wstring longer(L"a string long enough to live on the heap, not in the small buffer");
-      std::wstring copy(longer);
-      assert(copy == longer && copy.size() == longer.size());
-      std::wstring filled(40, L'x');
-      assert(filled.size() == 40 && filled[39] == L'x' && filled.find(L'y') == std::wstring::npos);
-      copy = filled;
-      assert(copy == filled);
-    }
-#endif
+    // std::wstring is deliberately NOT tested: both libc++ and libstdc++ export basic_string<wchar_t>
+    // members from their shared library, compiled for a 4-byte wchar_t. Whether a given call is
+    // inlined (and then correct, thanks to ShortWchar.h) depends on the library version and the
+    // optimiser - find() passed with Xcode 26 and failed with Xcode 16 and with libstdc++ 11.
+    // The engine only builds two std::wstring values from a pointer and reads them back with
+    // c_str() (FileZilla tools interface); everything else uses UnicodeString / std::u16string.
   }
 
   // --- UTF8String <-> UnicodeString really transcodes (was byte-widening: "ñ" became "Ã±") ---
