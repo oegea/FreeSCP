@@ -181,3 +181,12 @@ section. The two new `source/` touches (plus the defs.h `_WIN32` tightening abov
 - **source/core/Common.h** — our `inline IsWideChar` fix is gone: upstream turned it into a macro.
 - **source/filezilla/AsyncProxySocketLayer.cpp** — `sin_addr.S_un.S_addr` → `sin_addr.s_addr` (two
   remaining places; the others vanished with upstream's removal of proxy listen support).
+- **source/core/NeonIntf.cpp** — `SetNeonTlsInit` / `ne_init_ssl_session` / `DestroyNeonSession`:
+  upstream (6.7) stores the TLS-init `__closure` as its two `TMethod` words and rebuilds it with
+  `MakeMethod`. A ported closure is a `std::function` and cannot be split that way (every HTTPS
+  WebDAV / S3 connection trapped). Under `#ifndef _WIN32` the session keeps a heap copy of the
+  callback instead.
+- **source/core/HierarchicalStorage.cpp** — `EscapedBom` was a global initialised from `Bom`, a
+  global of Common.cpp: link-order dependent, and with GNU ld it ran first and crashed at program
+  start on Linux. Under `#ifndef _WIN32` it is a function-local static built from the literal.
+

@@ -67,7 +67,7 @@ jobs:
         if: failure()
         run: |
           sudo apt-get install -y --no-install-recommends gdb >/dev/null
-          gdb -batch -ex run -ex bt -ex 'info registers pc' --args native/build-linux/harness/winscp-harness no-such-host.invalid 22 a b 2>&1 | tail -40
+          gdb -batch -ex run -ex bt -ex 'info registers pc' --args native/build-linux/harness/winscp-harness 127.0.0.1 2222 winscp winscp123 2>&1 | tail -40
 
       - name: Package AppImage
         run: |

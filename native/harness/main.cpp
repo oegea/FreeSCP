@@ -82,7 +82,7 @@ int main(int argc, char ** argv)
     else if (::getenv("WINSCP_S3") != nullptr)
     {
       Data->FSProtocol = fsS3;       // S3 (MinIO test server)
-      Data->Ftps = ftpsNone;         // plain HTTP
+      Data->Ftps = (::getenv("WINSCP_TLS") != nullptr) ? ftpsImplicit : ftpsNone;   // WINSCP_TLS=1: HTTPS
       Data->S3UrlStyle = s3usPath;   // MinIO needs path-style addressing
       Data->S3DefaultRegion = L"us-east-1";
     }

@@ -107,7 +107,20 @@ UnicodeString __fastcall MungeIniName(const UnicodeString & Str, bool ForceAnsi)
   return Result;
 }
 //---------------------------------------------------------------------------
+#ifndef _WIN32
+// WINSCP-NATIVE-PORT: `Bom` is a global of another translation unit (Common.cpp); initialising a
+// global here from it depends on the link order. With GNU ld (Linux) this ran first, `Bom` was
+// still an all-zero std::string and escape_registry_key() dereferenced its NULL data pointer:
+// every program start crashed. Built on first use instead, from the literal.
+static const UnicodeString & GetEscapedBom()
+{
+  static const UnicodeString Value(PuttyEscape(RawByteString("\xEF\xBB\xBF"), false));
+  return Value;
+}
+#define EscapedBom GetEscapedBom()
+#else
 static UnicodeString EscapedBom(TraceInitStr(PuttyEscape(Bom, false)));
+#endif
 //---------------------------------------------------------------------------
 UnicodeString __fastcall UnMungeIniName(const UnicodeString & Str)
 {

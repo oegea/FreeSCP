@@ -141,6 +141,9 @@ void DestroyNeonSession(ne_session * Session)
   {
     delete ProxyAuthData;
   }
+#ifndef _WIN32
+  delete static_cast<TNeonTlsInit *>(ne_get_session_private(Session, SESSION_TLS_INIT_KEY));   // WINSCP-NATIVE-PORT (SetNeonTlsInit)
+#endif
   ne_session_destroy(Session);
 }
 //---------------------------------------------------------------------------
@@ -255,6 +258,15 @@ extern "C"
 void ne_init_ssl_session(SSL * Ssl, void * UserData)
 {
   ne_session * Session = static_cast<ne_session *>(UserData);
+#ifndef _WIN32
+  // WINSCP-NATIVE-PORT: see SetNeonTlsInit - the session holds a heap copy of the callback.
+  TNeonTlsInit * Stored = static_cast<TNeonTlsInit *>(ne_get_session_private(Session, SESSION_TLS_INIT_KEY));
+  if ((Stored != NULL) && (*Stored != NULL))
+  {
+    (*Stored)(Ssl, Session);
+  }
+  return;
+#endif
   void * Code = ne_get_session_private(Session, SESSION_TLS_INIT_KEY);
   void * Data = ne_get_session_private(Session, SESSION_TLS_INIT_DATA_KEY);
   TNeonTlsInit OnNeonTlsInit = MakeMethod<TNeonTlsInit>(Data, Code);
@@ -278,10 +290,20 @@ void SetNeonTlsInit(ne_session * Session, TNeonTlsInit OnNeonTlsInit, TTerminal 
     }
   }
 
+#ifndef _WIN32
+  // WINSCP-NATIVE-PORT: upstream splits the __closure into its {Code, Data} words (TMethod) and
+  // rebuilds it in ne_init_ssl_session. A ported closure is a std::function, which cannot be taken
+  // apart like that (the rebuilt object was garbage: every TLS connection - HTTPS WebDAV, S3 -
+  // trapped). Keep a heap copy in the session instead. Freed in DestroyNeonSession; sessions that
+  // libs3 destroys itself leak this one small object.
+  delete static_cast<TNeonTlsInit *>(ne_get_session_private(Session, SESSION_TLS_INIT_KEY));
+  ne_set_session_private(Session, SESSION_TLS_INIT_KEY, new TNeonTlsInit(OnNeonTlsInit));
+#else
   // As the OnNeonTlsInit always only calls SetupSsl, we can simplify this with one shared implementation
   TMethod & Method = *reinterpret_cast<TMethod*>(&OnNeonTlsInit);
   ne_set_session_private(Session, SESSION_TLS_INIT_KEY, Method.Code);
   ne_set_session_private(Session, SESSION_TLS_INIT_DATA_KEY, Method.Data);
+#endif
 }
 //---------------------------------------------------------------------------
 void InitNeonTls(
