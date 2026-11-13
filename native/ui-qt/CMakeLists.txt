@@ -30,7 +30,7 @@ find_package(OpenSSL REQUIRED)
 set(WINSCP_ICNS ${CMAKE_CURRENT_SOURCE_DIR}/winscp.icns)
 set(CMAKE_AUTORCC ON)
 # Single source of truth for the app version (shown in About + baked into the bundle).
-set(FREESCP_VERSION "0.1.1")
+set(FREESCP_VERSION "0.2.0")
 add_executable(winscp-qt MACOSX_BUNDLE main.cpp resources.qrc ${WINSCP_ICNS})
 target_compile_definitions(winscp-qt PRIVATE FREESCP_VERSION="${FREESCP_VERSION}")
 if(APPLE)

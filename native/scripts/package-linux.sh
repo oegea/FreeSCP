@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Package the Linux x86-64 build into a self-contained FreeSCP-Linux-x86_64.AppImage.
+# Package the Linux build into a self-contained FreeSCP-Linux-<arch>.AppImage (x86_64 or aarch64,
+# whatever this machine is).
 #
 # Bundles the Qt6 runtime + the xcb platform plugin (and their shared-lib closure) so the
 # AppImage runs on a stock desktop without qt6-base installed. Core glibc and GPU/driver libs
@@ -13,10 +14,11 @@ ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 NATIVE="$ROOT/native"
 BUILD="$NATIVE/build-linux"
 BIN="$BUILD/ui-qt/winscp-qt"
-QTLIB="/usr/lib/x86_64-linux-gnu"
+ARCH="$(uname -m)"                      # x86_64 | aarch64 (also the AppImage architecture name)
+QTLIB="/usr/lib/${ARCH}-linux-gnu"
 QTPLUGINS="$QTLIB/qt6/plugins"
 APPDIR="$BUILD/FreeSCP.AppDir"
-OUT="$ROOT/FreeSCP-Linux-x86_64.AppImage"
+OUT="$ROOT/FreeSCP-Linux-${ARCH}.AppImage"
 
 [ -x "$BIN" ] || { echo "build first: native/scripts/build-linux.sh"; exit 1; }
 command -v appimagetool >/dev/null || { echo "appimagetool not on PATH"; exit 1; }
@@ -91,7 +93,7 @@ EOF
 chmod +x "$APPDIR/AppRun"
 
 echo "Building AppImage ..."
-ARCH=x86_64 appimagetool "$APPDIR" "$OUT"
+ARCH="$ARCH" appimagetool "$APPDIR" "$OUT"
 echo
 echo "Built: $OUT"
 ls -la "$OUT"

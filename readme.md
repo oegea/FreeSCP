@@ -7,9 +7,32 @@
 <p align="center"><b>A native macOS &amp; Linux port of WinSCP.</b></p>
 
 <p align="center">
-  🌐 <a href="https://oegea.github.io/FreeSCP/">Website</a> ·
-  ⬇️ <a href="https://github.com/oegea/FreeSCP/releases/latest">Download (macOS, signed &amp; notarized)</a>
+  🌐 <a href="https://freescp.com/">Website</a> ·
+  ⬇️ <a href="https://github.com/oegea/FreeSCP/releases/latest">Download</a> ·
+  ☕ <a href="https://ko-fi.com/oriolegea">Support on Ko-fi</a>
 </p>
+
+<p align="center"><b>100% free · open source (GPLv3) · no telemetry</b></p>
+
+## Download
+
+| Platform | File | Notes |
+|---|---|---|
+| **macOS** — Apple Silicon &amp; Intel | [`FreeSCP-macOS-universal.zip`](https://github.com/oegea/FreeSCP/releases/latest/download/FreeSCP-macOS-universal.zip) | Universal app, macOS 12+, signed &amp; notarized. Unzip and drag to Applications. |
+| **Linux** — x86-64 (Intel/AMD) | [`FreeSCP-Linux-x86_64.AppImage`](https://github.com/oegea/FreeSCP/releases/latest/download/FreeSCP-Linux-x86_64.AppImage) | `chmod +x` and run. glibc 2.35+ (Ubuntu 22.04, Debian 12, Fedora 36…). |
+| **Linux** — ARM64 (aarch64) | [`FreeSCP-Linux-aarch64.AppImage`](https://github.com/oegea/FreeSCP/releases/latest/download/FreeSCP-Linux-aarch64.AppImage) | Same, for ARM boards and ARM laptops/servers. |
+
+On Windows, use the original [WinSCP](https://winscp.net/).
+
+## Free, open, private — and how to support it
+
+FreeSCP is **free for everyone, with every feature**: no paid tier, no ads, no account. It is **open
+source** under the GPLv3, and it has **no telemetry** — it makes no network connection of its own
+(no tracking, no usage data, no update pings); it only talks to the servers you connect to.
+
+It is built in spare time. If it is useful to you and you want to help its development, you can
+[**buy me a coffee on Ko-fi**](https://ko-fi.com/oriolegea) ☕ — entirely optional. And please consider
+[supporting WinSCP](https://winscp.net/eng/donate.php) too: FreeSCP runs its engine.
 
 ---
 

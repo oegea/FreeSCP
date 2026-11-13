@@ -1661,6 +1661,45 @@ int main(int argc, char ** argv)
   installContextMenu(right);
 
   // About dialog: icon on top, GPLv3, repo link, credit to WinSCP.
+  // "What is this and who pays for it" - shown once on first launch and from Help > Support FreeSCP.
+  // FreeSCP makes no network connection of its own (no update check, no usage reporting): the only
+  // traffic is to the servers the user connects to. The Ko-fi page opens in the browser, on click.
+  static const char * const kKofiUrl = "https://ko-fi.com/oriolegea";
+  auto showWelcome = [&](bool firstRun){
+    QDialog d(&window); d.setWindowTitle(firstRun ? "Welcome to FreeSCP" : "Support FreeSCP");
+    auto * lay = new QVBoxLayout(&d); lay->setContentsMargins(26, 22, 26, 18); lay->setSpacing(12);
+    auto * icon = new QLabel; icon->setAlignment(Qt::AlignHCenter);
+    icon->setPixmap(QPixmap(":/winscp.png").scaled(84, 84, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+    lay->addWidget(icon);
+    auto * body = new QLabel(
+      "<div align='center'>"
+      "<h2 style='margin:4px'>FreeSCP is 100% free</h2>"
+      "<p style='margin:2px;color:gray'>No paid tier, no ads, no account.</p>"
+      "</div>"
+      "<table cellspacing='8' style='margin-top:6px'>"
+      "<tr><td><b>Free&nbsp;forever</b></td><td>Every feature, for everyone. There is nothing to unlock.</td></tr>"
+      "<tr><td><b>Open&nbsp;source</b></td><td>GPLv3 &mdash; the code is at "
+      "<a href='https://github.com/oegea/FreeSCP'>github.com/oegea/FreeSCP</a>.</td></tr>"
+      "<tr><td><b>No&nbsp;telemetry</b></td><td>FreeSCP never phones home: no tracking, no usage data, "
+      "no update pings. It only talks to the servers you connect to.</td></tr>"
+      "</table>"
+      "<p style='margin:10px 2px 0'>FreeSCP is built in spare time. If it is useful to you and you would "
+      "like to help its development, you can buy me a coffee &mdash; entirely optional.</p>");
+    body->setTextFormat(Qt::RichText); body->setOpenExternalLinks(true); body->setWordWrap(true);
+    body->setMinimumWidth(430); body->setMaximumWidth(470);
+    lay->addWidget(body);
+    auto * bb = new QDialogButtonBox;
+    auto * coffee = bb->addButton(QString::fromUtf8("\xE2\x98\x95  Buy me a coffee (Ko-fi)"), QDialogButtonBox::ActionRole);
+    auto * go = bb->addButton(firstRun ? "Start using FreeSCP" : "Close", QDialogButtonBox::AcceptRole);
+    go->setDefault(true);
+    lay->addWidget(bb);
+    QObject::connect(coffee, &QPushButton::clicked, [&]{ QDesktopServices::openUrl(QUrl(kKofiUrl)); });
+    QObject::connect(bb, &QDialogButtonBox::accepted, &d, &QDialog::accept);
+    if (!qEnvironmentVariableIsEmpty("WINSCP_WELCOME_SHOT"))   // dev affordance: render the dialog and return
+      QTimer::singleShot(150, &d, [&]{ d.grab().save(qEnvironmentVariable("WINSCP_WELCOME_SHOT")); d.accept(); });
+    d.exec();
+  };
+
   auto showAbout = [&]{
     QDialog d(&window); d.setWindowTitle("About FreeSCP");
     auto * lay = new QVBoxLayout(&d);
@@ -1675,6 +1714,8 @@ int main(int argc, char ** argv)
       "<p style='margin:2px'>SFTP · SCP · FTP · WebDAV · S3</p>"
       "<p style='margin:8px 2px 2px'><a href='https://github.com/oegea/FreeSCP'>github.com/oegea/FreeSCP</a></p>"
       "<p style='margin:2px;color:gray'>Free software under the GPLv3 — project started by Oriol Egea.</p>"
+      "<p style='margin:8px 2px 2px'><b>100% free &middot; open source &middot; no telemetry.</b><br>"
+      "Want to support development? <a href='https://ko-fi.com/oriolegea'>Buy me a coffee on Ko-fi</a>.</p>"
       "<p style='margin:10px 8px 2px;color:gray'>With gratitude to Martin Přikryl and the WinSCP "
       "contributors. WinSCP has been a fantastic tool on Windows for many years; FreeSCP simply "
       "brings it to other platforms, using AI to help with the port. No ownership of their work is "
@@ -1798,6 +1839,7 @@ int main(int argc, char ** argv)
     { auto * a = new QAction(&window); a->setShortcut(Qt::CTRL | Qt::Key_B);
       QObject::connect(a, &QAction::triggered, addBookmark); window.addAction(a); }
     auto * mHelp = window.menuBar()->addMenu("&Help");
+    mHelp->addAction("&Support FreeSCP (free, open source, no telemetry)\xE2\x80\xA6", [&]{ showWelcome(false); });
     mHelp->addAction("&About FreeSCP", showAbout);
   }
 
@@ -1920,9 +1962,23 @@ int main(int argc, char ** argv)
       return;
     }, Qt::QueuedConnection);
 
+  // First launch: say once that the app is free / open source / telemetry-free and how to support it.
+  // Never in headless or scripted runs (offscreen platform, render hooks, smoke tests).
+  const bool scripted = qgetenv("QT_QPA_PLATFORM") == "offscreen" || !qEnvironmentVariableIsEmpty("WINSCP_SHOT")
+                        || !qEnvironmentVariableIsEmpty("WINSCP_NO_AUTOLOGIN");
+  const bool welcomeDue = !qEnvironmentVariableIsEmpty("WINSCP_WELCOME_SHOT")
+                          || (!scripted && !QSettings().value("ui/welcomeShown", false).toBool());
+
   // Offer the Login dialog on startup (like WinSCP), unless launched headless for a smoke test.
-  if (qEnvironmentVariableIsEmpty("WINSCP_NO_AUTOLOGIN"))
-    QMetaObject::invokeMethod(&window, [&]{ doConnect(); }, Qt::QueuedConnection);
+  QMetaObject::invokeMethod(&window, [&, welcomeDue]{
+    if (welcomeDue)
+    {
+      showWelcome(true);
+      if (!qEnvironmentVariableIsEmpty("WINSCP_WELCOME_SHOT")) { app.quit(); return; }
+      QSettings().setValue("ui/welcomeShown", true);
+    }
+    if (qEnvironmentVariableIsEmpty("WINSCP_NO_AUTOLOGIN")) doConnect();
+  }, Qt::QueuedConnection);
 
   int rc = app.exec();
   // Close sessions while the engine is alive (see engine::shutdown). If a transfer is still running

@@ -1,2 +1,4 @@
-custom: ["https://winscp.net/eng/donate.php", "https://apps.microsoft.com/detail/9p0pq8b65n8x"]
-patreon: winscp
+# FreeSCP (this port): support its development
+ko_fi: oriolegea
+# WinSCP, the original project whose engine FreeSCP runs: please consider supporting it too
+custom: ["https://winscp.net/eng/donate.php"]

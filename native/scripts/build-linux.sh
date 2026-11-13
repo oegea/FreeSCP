@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build FreeSCP for Linux x86-64 (dev build — not packaged).
+# Build FreeSCP for Linux, x86-64 or ARM64 (dev build — package with package-linux.sh).
 #
 # Requires clang (the engine needs -fshort-wchar / -fms-extensions / __declspec(property);
 # gcc cannot build it) plus cmake, ninja, Qt6, OpenSSL. On Debian/Ubuntu:
