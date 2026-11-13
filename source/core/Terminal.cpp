@@ -3411,10 +3411,10 @@ void __fastcall TTerminal::EnsureNonExistence(const UnicodeString FileName)
 //---------------------------------------------------------------------------
 // The stray `inline` on this out-of-line member definition lets the compiler emit no
 // external symbol; other TUs that ODR-use the 1-arg LogEvent (e.g. WebDAVFileSystem) then
-// fail to link. clang/ld on Linux drops the out-of-line copy where macOS clang/ld64 kept a
-// weak one. Drop the `inline` on Linux only so Windows and macOS stay byte-identical.
-// (UPSTREAM-PATCHES.md)
-#if defined(_WIN32) || defined(__APPLE__)
+// fail to link (Linux clang + GNU ld always; macOS clang + ld64 in optimized builds, where
+// no weak out-of-line copy is kept). Drop the `inline` off Windows so Windows stays
+// byte-identical. (UPSTREAM-PATCHES.md)
+#if defined(_WIN32)
 void __fastcall inline TTerminal::LogEvent(const UnicodeString & Str)
 #else
 void __fastcall TTerminal::LogEvent(const UnicodeString & Str)

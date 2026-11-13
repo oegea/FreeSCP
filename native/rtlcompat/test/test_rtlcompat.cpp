@@ -4,6 +4,10 @@
 //---------------------------------------------------------------------------
 #include "winscp/UnicodeString.h"
 #include "winscp/Property.h"
+#include "winscp/SysExtra.h"
+#include <algorithm>
+#include <string>
+#undef NDEBUG   // these tests ARE the asserts: keep them alive in Release builds (they were compiled out)
 #include <cassert>
 #include <cstdio>
 
@@ -51,6 +55,37 @@ int main()
   assert(static_cast<UnicodeString>(obj.Name) == UnicodeString(L"winscp"));  // read through getter
   obj.SetValue(21);
   assert(static_cast<int>(obj.Doubled) == 42);  // computed read-only property
+
+  // --- single-character search in 2-byte strings (regression: libc++ sent these to libc's
+  //     4-byte wmemchr under -fshort-wchar, so nothing was ever found; see ShortWchar.h) ---
+  {
+    std::u16string u16(u"/a\\b:c");
+    assert(u16.find(u'/') == 0);
+    assert(u16.find(u':') == 4);
+    assert(u16.find(u'z') == std::u16string::npos);
+    assert(std::find(u16.begin(), u16.end(), u'b') - u16.begin() == 3);
+    const unsigned short words[] = { 7, 8, 9, 10 };
+    assert(std::find(words, words + 4, (unsigned short)9) == words + 2);
+
+    UnicodeString path(L"/Users/me/app/winscp-qt");
+    assert(path.LastDelimiter(UnicodeString(L"/\\:")) == 14);
+    assert(path.IsDelimiter(UnicodeString(L"/\\:"), 7));
+    assert(path.Pos(UnicodeString(L"m")) == 8);
+    assert(ExtractFilePath(path) == UnicodeString(L"/Users/me/app/"));
+    assert(ExtractFileDir(path) == UnicodeString(L"/Users/me/app"));
+    assert(ExtractFileName(path) == UnicodeString(L"winscp-qt"));
+    assert(ChangeFileExt(UnicodeString(L"/x/y.txt"), UnicodeString(L".ini")) == UnicodeString(L"/x/y.ini"));
+
+    // std::wstring (2-byte here; used by the FileZilla FTP backend): header-inline length/compare/find.
+    // (Out-of-line members such as operator+/append live in the system libc++ built for 4-byte
+    // wchar_t and stay off-limits under -fshort-wchar; the engine does not use them.)
+    std::wstring w(L"hello world");
+    assert(w.size() == 11);
+    assert(w.find(L'w') == 6);
+    assert(w.find(L"world") == 6);
+    assert(w == std::wstring(L"hello world"));
+    assert(w.compare(L"hello worle") < 0);
+  }
 
   std::printf("rtlcompat: all assertions passed\n");
   return 0;

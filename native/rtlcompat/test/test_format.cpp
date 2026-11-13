@@ -3,6 +3,7 @@
 //---------------------------------------------------------------------------
 #include "SysUtils.hpp"
 #define FORMAT(S, F) Format(S, ARRAYOFCONST(F))
+#undef NDEBUG   // these tests ARE the asserts: keep them alive in Release builds (they were compiled out)
 #include <cassert>
 #include <cstdio>
 #include <string>

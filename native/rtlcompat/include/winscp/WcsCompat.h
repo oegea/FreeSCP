@@ -1,6 +1,8 @@
 #ifndef WINSCP_WCSCOMPAT_H
 #define WINSCP_WCSCOMPAT_H
 
+#include "ShortWchar.h"   // must precede every standard header (libc++ wide-char builtins)
+
 // The engine is compiled with -fshort-wchar (wchar_t == 2 bytes, Delphi UTF-16), but the libc
 // wcs* functions were built with the platform's 4-byte wchar_t. Calling them on our 2-byte
 // strings misreads memory: e.g. ValidLocalFileName's wcspbrk scanned past the string and

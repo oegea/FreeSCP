@@ -148,6 +148,7 @@ section. The two new `source/` touches (plus the defs.h `_WIN32` tightening abov
   nothing there.
 - **source/core/Terminal.cpp** — the 1-arg `TTerminal::LogEvent(const UnicodeString&)` definition
   carried a stray `inline`, so the compiler emitted no out-of-line symbol and cross-TU callers (e.g.
-  WebDAVFileSystem) failed to link. Dropped the `inline` **only on Linux** via
-  `#if defined(_WIN32) || defined(__APPLE__)`, so Windows and macOS keep the original token
-  byte-for-byte; clang 18 + GNU ld discard the inline copy where macOS clang 14 + ld64 kept a weak one.
+  WebDAVFileSystem) failed to link. Dropped the `inline` **off Windows** via
+  `#if defined(_WIN32)`, so Windows keeps the original token byte-for-byte. (It was first dropped on
+  Linux only, on the belief that macOS ld64 keeps a weak copy — true only for unoptimized builds; the
+  macOS Release build then failed to link with `TTerminal::LogEvent` undefined.)

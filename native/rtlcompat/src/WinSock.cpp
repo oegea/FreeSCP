@@ -59,6 +59,9 @@ int WSAEventSelect(SOCKET s, WSAEVENT hEventObject, long lNetworkEvents)
   else
   {
     SockReg & reg = g_socks[s];
+    // A new association on a different event object means a new socket that happens to reuse the
+    // fd number of one closed without closesocket(): its one-shot FD_CONNECT/FD_CLOSE start over.
+    if (reg.event != hEventObject) { reg.connectReported = false; reg.closeReported = false; }
     reg.mask = lNetworkEvents;
     reg.event = hEventObject;
     // mirror WSAEventSelect: socket goes non-blocking

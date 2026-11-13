@@ -23,7 +23,10 @@ add_library(rtlcompat STATIC
 target_include_directories(rtlcompat PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_features(rtlcompat PUBLIC cxx_std_17)
 # PUBLIC so the UTF-16 ABI + property syntax are consistent across the engine + UI.
-target_compile_options(rtlcompat PUBLIC -fshort-wchar -fms-extensions)
+target_compile_options(rtlcompat PUBLIC -fshort-wchar -fms-extensions
+  # Must accompany -fshort-wchar everywhere: stops libc++ sending 2-byte strings to libc's 4-byte
+  # wmemchr/wcslen/wmemcmp (see ShortWchar.h). PUBLIC so every dependent TU gets both together.
+  "SHELL:-include ${CMAKE_CURRENT_SOURCE_DIR}/include/winscp/ShortWchar.h")
 
 add_executable(test_rtlcompat test/test_rtlcompat.cpp)
 target_link_libraries(test_rtlcompat PRIVATE rtlcompat)
