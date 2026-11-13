@@ -290,3 +290,113 @@ that log before re-raising — the backtrace named `TryStartOperationWithFile` a
 directly. The engine's own session log (`Configuration->Logging`, LogProtocol=2) is the protocol-level
 truth but is heavy (100k+ lines/transfer) and crashed on native until `GetGlobalOptions()` was
 null-guarded (it's NULL with no CLI parser) — keep it opt-in (WINSCP_SESSIONLOG=1).
+
+## 19. The 6.7.1 sync + bug-hunt (2026-11-13): what bit, and how it was found
+
+All found by running things end to end, not by reading code. The test matrix that caught them is at
+the end of this section — re-run it after any engine/RTL change.
+
+**a. PuTTY expects STATIC error strings.** `ssh.c` does `sk_addr_free(addr); return dupstr(err);`
+where `err = sk_addr_error(addr)`. On Windows those are string literals. `uxnet.c` returned a heap
+string owned by the freed SockAddr → the "unreadable text" error on connect whenever the host name
+did not resolve. Rule: every `const char *` error leaving `uxnet.c` has static lifetime, and uses the
+same texts as `windows/network.c` so `SecureShell.cpp`'s translation table fires
+(`Host "x" does not exist.`, `Connection to "x" refused.`).
+
+**b. `SO_ERROR` is read-once.** The Winsock emulation fetched it in `WSAEnumNetworkEvents`, then
+`select_result` fetched it again, got 0 and treated a refused connection as connected → 15 s
+"Timeout waiting for server". The connect is now synchronous with the session timeout and walks all
+resolved addresses inside `sk_new` (exactly what WinSCP's MPEXT Windows backend does), so IPv6→IPv4
+fallback works too.
+
+**c. libc++ + `-fshort-wchar`.** Newer libc++ (Xcode 26) sends `std::find`/`char_traits` work on
+any 2-byte element to `__builtin_wmemchr`/`wcslen`/`wmemcmp` → libc's 4-byte versions.
+`std::u16string::find(ch)` silently found nothing: `LastDelimiter` = 0, `ExtractFilePath` = "".
+`winscp/ShortWchar.h` (force-included with `-fshort-wchar`, PUBLIC on rtlcompat) replaces the
+builtins with width-correct constexpr loops via function-like macros. If a toolchain update breaks
+string search again, look there first. `std::wstring` members exported from the libc++ dylib
+(`append`, `operator+`) stay unusable — see §13.
+
+**d. `assert()` tests vanish in Release.** The rtlcompat tests "passed" for months without running a
+single check (`-DNDEBUG`). They now `#undef NDEBUG`.
+
+**e. VCL zero-fills objects; C++ does not.** `TObject.NewInstance` hands out zeroed memory and the
+engine's constructors rely on it (`TSessionData::FUnsafeSettings`, added in 6.7, is only ever
+assigned). §16 was one instance; the general fix is `TObject::operator new` = `calloc` in
+`winscp/Object.h`. Symptom to remember: works on the first object, crashes on the second (reused
+heap), at a random-looking write.
+
+**f. Destructors that throw.** C++Builder destructors may throw; standard ones are `noexcept` →
+`std::terminate`. `TIniFileStorage::~TIniFileStorage` → `Flush()` was the live case (INI not
+writable). When the app dies with "terminating due to uncaught exception" and the trace shows
+`__clang_call_terminate` under a `~T...()`, this is it.
+
+**g. `UTF8String` must transcode.** `UnicodeString(UTF8String)` was widening bytes and
+`UTF8String(const wchar_t *)` narrowing them. Everything the engine routes through `UTF8String`
+was wrong for non-ASCII: FTP commands (uploads of "ñ"/CJK names failed), S3/WebDAV names,
+certificate fields, and — via `EncryptPassword`/`DecryptPassword` — non-ASCII passwords.
+AnsiString/RawByteString keep byte-for-byte widening on purpose (lossless Raw→Unicode→Raw).
+
+**h. `TRemoteFile::FullFileName` of a directory ends in "/".** Pass it to `CopyToLocal` as-is and
+`UnixExtractFileName()` is empty: the folder's contents land directly in the target directory. The
+bridge strips it (`UnixExcludeTrailingBackslash`).
+
+**i. Statics and exit.** Sessions held in a namespace-scope container were destroyed by static
+destructors after the engine's own statics → "mutex lock failed" abort on quit. Tear the engine
+down explicitly (`engine::shutdown`) before leaving `main`.
+
+**j. Resource ids must be upstream's.** A private enum in the FileZilla shim made every FTP status
+line `str#NN`. `LoadStr` text comes from `ResStrings.cpp`, generated from `source/resource`.
+
+**l. Win32 thread/message semantics FileZilla depends on.** `GetMessage` must return 0 for
+`WM_QUIT` (it ends `CMainThread::Run`), the handle from `CreateThread` must be waitable
+(`CFileZillaApi::Destroy` waits for the thread before its objects are freed) and may be closed by
+the thread itself, and messages are per thread (`PostThreadMessage(id)`, windows belong to their
+creating thread). The shim had none of the three: the FTP worker outlived every closed session and
+occasionally touched freed memory. A 10 s pause when closing an FTP session = that wait timing out,
+i.e. the worker did not get its quit message.
+
+**k. The engine's INI location.** By default it is `<executable>.ini` when the program directory is
+writable — inside the `.app` bundle. The bridge now sets it explicitly
+(`~/.config/winscp-qt.ini`, migrating an older in-bundle file).
+
+### Test servers (Docker, data on the host)
+
+The Docker VM disk can fill up (then uploads/mkdir fail with honest "disk full"-type errors — check
+`docker exec <c> df -h` before suspecting the engine). Bind-mount the data dirs:
+
+```sh
+D=/some/scratch/dir; mkdir -p $D/{sshhome,ftphome,davdata,s3data/testbucket}; chmod -R 777 $D/davdata $D/ftphome
+docker run -d --name freescp-e2e-sshd -e PASSWORD_ACCESS=true -e USER_NAME=winscp -e USER_PASSWORD=winscp123 \
+  -e PUID=$(id -u) -e PGID=$(id -g) -p 2223:2222 -v $D/sshhome:/config linuxserver/openssh-server
+docker run -d --name freescp-e2e-ftp -e 'USERS=winscp|winscp123|/home/winscp' -e ADDRESS=127.0.0.1 \
+  -p 21:21 -p 21000-21010:21000-21010 -v $D/ftphome:/home/winscp delfer/alpine-ftp-server
+docker run -d --name freescp-e2e-dav -e AUTH_TYPE=Basic -e USERNAME=winscp -e PASSWORD=winscp123 \
+  -p 8087:80 -v $D/davdata:/var/lib/dav bytemark/webdav
+docker run -d --name freescp-e2e-s3 -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin123 \
+  -p 9101:9000 -v $D/s3data:/data minio/minio server /data
+```
+
+### Harness hooks (native/harness/main.cpp)
+
+`WINSCP_SCP|FTP|DAV|DAVS|S3=1` protocol · `WINSCP_XFER=1` upload+download round trip ·
+`WINSCP_XFER_FILE=<file or directory>` what to round-trip (lands in `/tmp/dl/`) · `WINSCP_OPS=1`
+mkdir/rename/delete · `WINSCP_CD=/dir` change directory first (S3: `/testbucket`) ·
+`WINSCP_UTF8=1` force UTF-8 names (SCP against a non-UTF-8 server locale) · `WINSCP_PAUSE=<s>` idle
+then re-list (restart the server meanwhile) · `WINSCP_INI=<path>` INI location (use an unwritable
+one to test save failures).
+
+### The matrix to re-run
+
+1. `ctest` (asserts are live now).
+2. Per protocol (SFTP, SCP, FTP, WebDAV, S3): connect+list; `WINSCP_XFER=1 WINSCP_OPS=1`; a 40 MB
+   random file with a name like `big ñ file 测试.bin` and `cmp` the download; a directory tree with
+   nested/empty/space/non-ASCII entries and `diff -r`.
+3. Failures: unknown host, closed port, black-holed IP (10.255.255.1), wrong password, a non-SSH
+   port, unwritable INI, server restart during `WINSCP_PAUSE` — each must end in a readable message
+   and a normal exit code, never a signal.
+4. GUI offscreen: `QT_QPA_PLATFORM=offscreen WINSCP_NO_AUTOLOGIN=1 WINSCP_SHOT=out.png
+   WINSCP_AUTOCONNECT=host:port:user:pass:sftp WINSCP_AUTOXFER=a.txt,dir,big.bin winscp-qt` → exit
+   code 0, files in `/tmp/dlq`, and look at the PNG. Three or more items exercise the parallel
+   connections.
+

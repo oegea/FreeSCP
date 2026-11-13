@@ -8,15 +8,43 @@ later upstream changes in safely.
 
 | | |
 |---|---|
-| **Upstream commit** | `74a8c03f4b77a3de5930dc689de3b193cdcfb6a9` |
-| Subject | `Merge remote-tracking branch 'origin/translations'` |
-| Author / date | Martin Přikryl — 2026-06-17 |
-| First FreeSCP commit on top | `bea2d9b5c` (Add macOS/Linux native port foundation, Phase 0) |
-| Upstream repo | https://github.com/winscp/winscp (official mirror) |
+| **Upstream commit** | `82e192fff` — `Bumping devel version to 6.7.2` (= tag `6.7.1` + 6 post-release commits) |
+| Upstream version | WinSCP **6.7.1** (stable) plus the fixes for issues 2482–2485 |
+| Author / date | Martin Přikryl — 2026-11-11 |
+| Merged into the port | `8e38711ad` (2026-11-13), merge of `winscp/master` |
+| Bundled libraries at this base | PuTTY 0.85 · neon 0.37.1 · Expat 2.10.0 · OpenSSL 3.5.9 (vendored copy; the native build links the system/Homebrew OpenSSL 3) |
+| Upstream repo | https://github.com/winscp/winscp (official mirror) — remote `winscp` |
 
-Everything before `74a8c03f4` in this repo's history is unmodified WinSCP. Everything after is the
-port. The port lives in `native/` + `docs/porting/`; the only edits inside `source/`/`libs/` are the
-small, `#ifndef _WIN32`-guarded (or correct-everywhere) patches listed in **UPSTREAM-PATCHES.md**.
+History of bases:
+
+| Base | Date | Notes |
+|---|---|---|
+| `74a8c03f4` | 2026-06-17 | Original fork point. First FreeSCP commit on top: `bea2d9b5c`. |
+| `82e192fff` | 2026-11-13 | 737 upstream commits (6.5.x → 6.6 → 6.7.1). Triage and the port adaptation it needed are in the merge commit message of `8e38711ad`. |
+
+Everything in `source/`, `libs/`, `dotnet/`, `deployment/` is WinSCP's; the port lives in `native/` +
+`docs/porting/`. The only edits inside `source/`/`libs/` are the small guarded patches listed in
+**UPSTREAM-PATCHES.md**.
+
+### What the 6.5 → 6.7.1 update needed (so the next one is quicker)
+
+- **PuTTY bump (0.83 → 0.85)**: check `native/putty/CMakeLists.txt` against the new file layout
+  (the `conf.winscp.h` shadow and the `WINSCP_VS` crypto sub-build disappeared upstream), the
+  platform contract in `native/putty/src/*.c` (`platform_start_subprocess` gained a parameter) and
+  new globals the Windows backend defines (`auth_agent_implementation`).
+- **FileZilla / `libs/mfc`**: upstream replaced the MFC subset with a tiny `UnicodeString`-backed
+  one. Our shim (`native/filezilla/compat/afx.h`) must expose the same surface: diff
+  `libs/mfc/include/afx.h` after every update.
+- **genprops**: new spellings of constructs it rewrites (this time `reinterpret_cast<TProcessFileEventEx>`
+  and `StartAction(Method)`). A compile error "reference to non-static member function must be
+  called" or a `reinterpret_cast` between `std::function`s means a rule needs extending.
+- **rtlcompat**: new unit-scoped includes (`System.Math.hpp`, `Winapi.Windows.hpp`, ...) are one-line
+  forwards; new RTL functions go in `SysExtra`.
+- **Windows-only engine code** (COM, reparse points, SSPI): guard with `#ifdef _WIN32` and list it in
+  UPSTREAM-PATCHES.md.
+- **Resource strings**: regenerate `native/rtlcompat/src/ResStrings.cpp`
+  (`python3 native/tools/genstrings.py source/resource native/rtlcompat/src/ResStrings.cpp`).
+- **CMake globs**: re-run `cmake -B build` (new/removed `.c` files in neon/expat/putty).
 
 ## How to update to a newer WinSCP
 
@@ -27,7 +55,7 @@ When asked to "update to the latest WinSCP", follow this:
    git remote add winscp https://github.com/winscp/winscp.git
    git fetch winscp
    ```
-2. **Pick the target** upstream commit/tag, call it `$NEW`. Record the old base: `OLD=74a8c03f4`.
+2. **Pick the target** upstream commit/tag, call it `$NEW`. Record the old base: `OLD=82e192fff`.
 3. **Get the diff that matters** — only the parts the port compiles (engine + vendored libs), not the
    Windows GUI/IDE/build files we don't use:
    ```sh
@@ -55,7 +83,7 @@ When asked to "update to the latest WinSCP", follow this:
    ```sh
    cd native && cmake --build build && ctest --test-dir build
    ./native/build/harness/winscp-harness 127.0.0.1 2222 winscp winscp123   # SFTP smoke
-   # plus the WINSCP_SCP/DAV/S3/FTP harness modes (see LEARNINGS.md "HARNESS SELF-TESTS")
+   # plus the WINSCP_SCP/DAV/S3/FTP harness modes and the round-trip matrix in LEARNINGS.md §19
    ```
    Watch especially for: genprops output (engine headers changed → `__property`/`__closure` codegen),
    new RTL symbols (implement in `native/rtlcompat`), new resource-string IDs (`native/tools/genstrings`).

@@ -44,9 +44,10 @@ Windows/C++Builder build is byte-identical.
   storage, which otherwise built a registry-backed `TRegistryStorage` whose `RootKey==NULL` made
   `RootKeyToStr` call `Abort()` during host-key save) must be INI/file-backed. On Windows the
   detection is overridden by TWinConfiguration as before.
-- **source/putty/be_list.c** / **source/putty/settings.c** — `appname` and `get_remote_username`
-  wrapped in `#ifndef MPEXT`; WinSCP's PuttyIntf.cpp supplies both under MPEXT (the engine build
-  defines MPEXT), so the PuTTY originals would duplicate them at link.
+- **source/putty/be_list.c** — `appname` wrapped in `#ifndef MPEXT`; WinSCP's PuttyIntf.cpp supplies
+  it under MPEXT (the engine build defines MPEXT), so the PuTTY original would duplicate it at link.
+  (The same guard on `get_remote_username` in **settings.c** was DROPPED with the 6.7.1 merge:
+  PuttyIntf.cpp no longer defines it, so settings.c is unmodified again.)
 
 All other reconciliation is done outside source/ (native/putty/include shims, genprops, the
 rtlcompat/platform layers).
@@ -152,3 +153,31 @@ section. The two new `source/` touches (plus the defs.h `_WIN32` tightening abov
   `#if defined(_WIN32)`, so Windows keeps the original token byte-for-byte. (It was first dropped on
   Linux only, on the belief that macOS ld64 keeps a weak copy — true only for unoptimized builds; the
   macOS Release build then failed to link with `TTerminal::LogEvent` undefined.)
+
+## Added with the WinSCP 6.7.1 merge (2026-11-13)
+
+- **source/core/Common.cpp** — `FileGetSymLinkTargetSafe()`: the body reads NTFS reparse points
+  (`DeviceIoControl(FSCTL_GET_REPARSE_POINT)`). Under `#ifndef _WIN32` it returns
+  `FileGetSymLinkTarget()` (a `readlink`), which has the same "does not open the target, does not
+  throw" contract. The Windows body is unchanged inside `#else`.
+- **source/core/RemoteFiles.cpp** — `TFileOperationProgressSink` and the
+  `TSynchronizeChecklistFileOperation` member definitions (local↔local synchronization through the
+  Windows shell `IFileOperation` COM API, Issue 2020) are wrapped in `#ifdef _WIN32`. The class is
+  still declared in RemoteFiles.h; nothing in the port instantiates it yet. A native implementation
+  (plain recursive copy/delete) is the way to expose that feature later.
+- **source/core/HierarchicalStorage.cpp** — `TIniFileStorage::~TIniFileStorage()` calls `Flush()`,
+  which throws when the INI file cannot be written. C++Builder lets that propagate; a standard C++
+  destructor is `noexcept`, so it called `std::terminate()` (the app died while remembering a host
+  key during connect). Under `#ifndef _WIN32` the flush is wrapped in `try/catch (Exception &)` and
+  the failure goes to the application log. Explicit saves still report errors.
+- **source/core/Terminal.cpp** — the `LogEvent` `inline` guard is now `#if defined(_WIN32)` (was
+  `_WIN32 || __APPLE__`): macOS Release builds do not keep the weak out-of-line copy either.
+- **libs/neon/src/ne_socket.c** — `ne_sock_sspi_init()` (new upstream entry point for delayed SSPI
+  initialisation) calls `ne_sspi_init()` unconditionally; guarded with `#ifdef HAVE_SSPI`, returning
+  0 otherwise (SSPI is Windows integrated authentication).
+- **libs/libs3/src/request.c**, **source/core/FileBuffer.{h,cpp}**, **source/core/SessionInfo.cpp**,
+  **source/putty/defs.h** — existing patches re-applied on top of upstream's rewritten lines
+  (`TSafeHandleStream(NativeUInt)`, the new `HAVE_*` crypto switches, `static_cast<FILE *>`).
+- **source/core/Common.h** — our `inline IsWideChar` fix is gone: upstream turned it into a macro.
+- **source/filezilla/AsyncProxySocketLayer.cpp** — `sin_addr.S_un.S_addr` → `sin_addr.s_addr` (two
+  remaining places; the others vanished with upstream's removal of proxy listen support).

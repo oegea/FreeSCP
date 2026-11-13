@@ -19,12 +19,15 @@ toolbar · **signed + notarized macOS release** (v0.1.0) · public repo · **Git
 - ⬜ **Recent directories** dropdown in the address bar (per panel, persisted).
 - ⬜ **Find files** — recursive remote search (TTerminal search / per-dir walk).
 - ⬜ **Calculate directory sizes** (Space on a dir; show total in the panel).
+- ⬜ **Synchronize two local directories** (new in WinSCP 6.6; engine side merged, needs a native
+  replacement for the Windows shell copy/delete + UI).
 - ⬜ **Keep remote directory up to date** — watch local dir, auto-sync changes (WinSCP's killer sync).
 
 ## Auth / connection (fidelity gaps)
 - ⬜ **SSH tunneling** (jump host / bastion) — SessionData Tunnel* fields exist in the engine.
 - ⬜ **Proxy** (HTTP/SOCKS) UI + wiring.
-- ⬜ **ssh-agent / Pageant**, multiple keys.
+- ⬜ **ssh-agent** (Unix `SSH_AUTH_SOCK` client; 6.7 added an agent-implementation switch upstream), multiple keys.
+- ⬜ **UTF-8 file names On/Off/Auto** per site (SCP on servers with a non-UTF-8 locale needs "On").
 - ⬜ **2FA / keyboard-interactive** prompt UI (currently auto-answers the password).
 - ⬜ GSSAPI/Kerberos (engine has it stubbed: NO_GSSAPI).
 - ⬜ FTP: passive/active toggle UI, FTPS explicit vs implicit choice.

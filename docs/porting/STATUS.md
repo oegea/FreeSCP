@@ -2,7 +2,9 @@
 
 Update this whenever a target starts/stops building. Verify by actually building.
 
-_Last updated: 2026-06-22 (v0.1.0 public) — branded **FreeSCP** (native macOS/Linux port of WinSCP). All 5 protocols operational; GUI now has session tabs, directory tree, bookmarks, Copy/Move dialog, richer toolbar, app icon. See entries at bottom._
+_Last updated: 2026-11-13 — engine synced to **WinSCP 6.7.1** (+ post-release fixes; PuTTY 0.85, neon 0.37.1, Expat 2.10.0). All 5 protocols re-verified end to end on macOS arm64 after the merge; see "Upstream sync to 6.7.1 + bug-hunt" at the end. **Linux build NOT re-verified after this sync.**_
+
+_Previous header:_ Last updated: 2026-06-22 (v0.1.0 public) — branded **FreeSCP** (native macOS/Linux port of WinSCP). All 5 protocols operational; GUI now has session tabs, directory tree, bookmarks, Copy/Move dialog, richer toolbar, app icon. See entries at bottom._
 
 ## Current phase: 1.5 — compiling engine .cpp bodies (RTL bodies on demand)
 Phase 0 ✅ (foundation). Phase 1 ✅ (35/36 headers parse). Now: compile .cpp into libwinscpcore.
@@ -857,3 +859,54 @@ NEXT for Linux:
 - Runtime-test WebDAV/S3/FTP (spin the docker test servers).
 - Packaging (AppImage / .deb).
 - x86 AES-NI correctness is the one known perf TODO (currently software AES).
+
+## Upstream sync to 6.7.1 + bug-hunt (2026-11-13)
+
+Branch `upstream-sync-6.7.1` (local). Base moved `74a8c03f4` → `82e192fff`; details in
+UPSTREAM-SYNC.md, guarded edits in UPSTREAM-PATCHES.md, lessons in LEARNINGS.md §19.
+
+**Builds (macOS arm64, Xcode 26 / Apple clang 21, Release):** `cmake --build` green for every target
+(rtlcompat, puttycore, puttyplatform, expat, neon, libs3, winscpcore, winscpfilezilla,
+winscp-harness, winscp-qt). `puttycrypto_vs` no longer exists (upstream folded the software crypto
+back into the normal PuTTY build). `ctest` 2/2 — and the tests actually assert now.
+
+**Fixed (all reproduced first, then verified):**
+| Symptom | Cause | Where |
+|---|---|---|
+| Unreadable/garbage error text on connect (unresolvable host) | error string read after free | putty/src/uxnet.c |
+| "Connection refused" surfaced as a 15 s timeout; no IPv6→IPv4 fallback | SO_ERROR consumed twice; later addresses never serviced | uxnet.c, rtlcompat WinSock.cpp |
+| App killed when the peer closed mid-write | SIGPIPE not ignored | uxnet.c |
+| macOS build broken since the Linux commit | recursive case shims; `inline LogEvent` | filezilla/casecompat, Terminal.cpp |
+| `ExtractFilePath`/`LastDelimiter` returned nothing | libc++ wide builtins under -fshort-wchar | rtlcompat ShortWchar.h |
+| Abort right after accepting a host key when the INI is not writable | throwing destructor | HierarchicalStorage.cpp (guarded) |
+| INI + `wscp_*.tmp` written inside the .app bundle | engine default path; DELETE_ON_CLOSE ignored | enginebridge.cpp, SysExtra.cpp |
+| Non-ASCII file names broken on FTP/S3/WebDAV; non-ASCII passwords rejected | UTF8String did not transcode | rtlcompat strings |
+| FTP status/errors shown as `str#NN` | private resource ids | filezilla/compat/TextsFileZilla.h |
+| GUI segfault starting a multi-file transfer (2nd connection) | TObject memory not zero-filled | rtlcompat Object.h |
+| Crash report on every quit with a session open | static destruction order | enginebridge.cpp `shutdown` |
+| Downloading a folder dumped its contents into the target | trailing "/" in FullFileName | enginebridge.cpp |
+| Closing an FTP session: intermittent crash; with >1 FTP session, messages could reach the wrong worker | worker thread never got WM_QUIT (GetMessage always TRUE), its handle was not waitable, one message queue shared by all threads | filezilla/compat/winmsg.cpp, rtlcompat Threading.cpp |
+
+**Verified end to end** (OpenSSH, vsftpd, Apache mod_dav, MinIO — Docker, host-mounted data):
+connect/list, upload+download round trip, mkdir/rename/delete, 40 MB random file with a non-ASCII
+name (byte-identical), directory tree round trip (`diff -r` clean) on **SFTP, SCP, FTP, WebDAV, S3**;
+error paths (unknown host, closed port, black-holed address, wrong password, non-SSH port,
+unwritable INI, server restart mid-session) all end in a readable message and a normal exit; the Qt
+GUI offscreen: connect, 3-item queued download over parallel connections, exit code 0, render checked.
+
+**Not done / known gaps after this sync:**
+- **Linux**: not rebuilt (the Docker VM disk was full). `ShortWchar.h` only acts on clang; the
+  libstdc++ side of `std::wstring` under `-fshort-wchar` is unreviewed.
+- New upstream engine features are compiled in but **not exposed in the UI**: local↔local
+  synchronization (its Windows-shell half is guarded out — needs a native implementation),
+  OpenSSH-agent selection (the Unix agent client is still a stub), configurable checksum commands,
+  WebDAV redirect policy options, large-file editor warning.
+- SCP with a non-UTF-8 server locale shows non-ASCII names as Latin-1 (same as upstream "Auto");
+  the UI has no "UTF-8 file names: On" switch yet.
+- FTP timers are still stubs (`SetTimer`/`KillTimer` in filezilla/compat/winmsg.h): FileZilla's own
+  keep-alive and timeout timers never fire. Two simultaneous FTP sessions are now isolated at the
+  message-queue level but were not exercised; `parallelSupported()` still returns false for FTP.
+- `DWORD` is `unsigned long` (8 bytes) in rtlcompat — no failure traced to it, but it is not the
+  Windows width.
+- Release artifacts (v0.1.1) predate all of the above; a new signed build has not been cut.
+

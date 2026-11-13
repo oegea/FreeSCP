@@ -22,6 +22,9 @@ DWORD __fastcall WaitForMultipleObjects(DWORD Count, const HANDLE * Handles, BOO
 
 // Threads.
 DWORD __fastcall ResumeThread(HANDLE Thread);
+// Win32-style thread start (FileZilla backend): runs immediately; the returned HANDLE can be waited
+// on (signaled when Routine returns) and closed from any thread, including the new one.
+HANDLE __fastcall StartRoutineThread(unsigned long (* Routine)(void *), void * Parameter);
 DWORD __fastcall SuspendThread(HANDLE Thread);
 BOOL  __fastcall SetThreadPriority(HANDLE Thread, int Priority);
 int   __fastcall GetThreadPriority(HANDLE Thread);

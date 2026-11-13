@@ -22,7 +22,16 @@ HINSTANCE afxCurrentResourceHandle = nullptr;
 
 namespace {
 
-struct FzWindow { WNDPROC proc = nullptr; INT_PTR userData = 0; };
+struct FzWindow { WNDPROC proc = nullptr; INT_PTR userData = 0; DWORD owner = 0; };
+
+// Every queued message is addressed to ONE thread, as on Windows: a thread message to the id given
+// to PostThreadMessage, a window message to the thread that created the window. (All messages used
+// to share one anonymous queue, so with two FTP sessions open one session's worker thread could
+// swallow the other's commands, socket events and WM_QUIT.) The target id travels in MSG::time,
+// which nothing else uses. Id 0 = "whoever asks" (not produced any more; kept as a safe fallback).
+std::atomic<DWORD> g_nextTid{1};
+thread_local DWORD t_tid = 0;
+DWORD myTid() { if (t_tid == 0) t_tid = g_nextTid++; return t_tid; }
 
 std::mutex g_mtx;
 std::condition_variable g_cv;
@@ -31,7 +40,7 @@ std::deque<MSG> g_queue;                       // global message queue (filtered
 static std::u16string k16(const wchar_t * p) { std::u16string r; if (p) while (*p) r.push_back((char16_t)*p++); return r; }
 std::map<std::u16string, WNDPROC> g_classes;   // RegisterClassEx: class name -> wndproc
 
-struct SockReg { HWND hwnd; UINT msg; long events; };
+struct SockReg { HWND hwnd; UINT msg; long events; DWORD owner; };   // owner: thread of hwnd (captured while it is alive)
 std::map<SOCKET, SockReg> g_sockets;           // WSAAsyncSelect registrations
 std::map<SOCKET, long> g_posted;               // events already pending/posted per socket (latch)
 
@@ -47,9 +56,9 @@ bool queueHas(HWND hwnd, UINT msg, WPARAM w, LPARAM l)   // dedup a specific (so
   return false;   // FD_CONNECT/FD_WRITE, so downloads never read their data.
 }
 
-void postLocked(HWND hwnd, UINT msg, WPARAM w, LPARAM l)
+void postLocked(HWND hwnd, UINT msg, WPARAM w, LPARAM l, DWORD tid)
 {
-  g_queue.push_back(MSG{ hwnd, msg, w, l, 0 });
+  g_queue.push_back(MSG{ hwnd, msg, w, l, tid });
   g_cv.notify_all();
 }
 
@@ -94,7 +103,7 @@ void selectLoop()
         LPARAM l = MAKELONG(fd, 0);
         if (queueHas(reg.hwnd, reg.msg, (WPARAM)s, l)) return;   // dedup this exact (socket,event)
         if (getenv("FZ_TRACE")) fprintf(stderr, "[fz] post sock=%d event=0x%lx\n", s, fd);
-        postLocked(reg.hwnd, reg.msg, (WPARAM)s, l);
+        postLocked(reg.hwnd, reg.msg, (WPARAM)s, l, reg.owner);
         latch |= fd;
       };
       if (FD_ISSET(s, &wfds)) { fire(FD_CONNECT); fire(FD_WRITE); }
@@ -113,7 +122,7 @@ void selectLoop()
             if (::recv(s, &c, 1, MSG_PEEK | MSG_DONTWAIT) == 0)
             {
               if (getenv("FZ_TRACE")) fprintf(stderr, "[fz] post sock=%d event=0x20 (CLOSE/EOF)\n", s);
-              postLocked(reg.hwnd, reg.msg, (WPARAM)s, MAKELONG(FD_CLOSE, 0));
+              postLocked(reg.hwnd, reg.msg, (WPARAM)s, MAKELONG(FD_CLOSE, 0), reg.owner);
               latch |= FD_CLOSE;
             }
           }
@@ -135,22 +144,38 @@ void ensureSelectThread()
 } // namespace
 
 //=== threading + sync emulation ============================================
-namespace { struct FzThread { std::thread t; }; }
+HANDLE StartRoutineThread(unsigned long (* Routine)(void *), void * Parameter);   // rtlcompat (WinThreads.h)
+
+namespace {
+struct ThreadStart { LPTHREAD_START_ROUTINE fn; void * param; DWORD tid; };
+unsigned long threadTrampoline(void * p)
+{
+  ThreadStart st = *static_cast<ThreadStart *>(p);
+  delete static_cast<ThreadStart *>(p);
+  t_tid = st.tid;                                  // the id PostThreadMessage will be given
+  unsigned long r = st.fn ? st.fn(st.param) : 0;
+  { std::lock_guard<std::mutex> lk(g_mtx);         // nobody will read this thread's messages any more
+    for (auto it = g_queue.begin(); it != g_queue.end(); )
+      if (it->time == st.tid) it = g_queue.erase(it); else ++it; }
+  return r;
+}
+}
 
 HANDLE CreateThread(void *, size_t, LPTHREAD_START_ROUTINE fn, void * param, DWORD, DWORD * tid)
 {
-  if (tid) *tid = 0;
-  auto * h = new FzThread();
-  h->t = std::thread([fn, param]{ if (fn) fn(param); });   // CREATE_SUSPENDED ignored; ResumeThread is a no-op
-  h->t.detach();
-  return (HANDLE)h;
+  DWORD id = g_nextTid++;
+  if (tid) *tid = id;
+  // The handle must be WAITABLE: CFileZillaApi::Destroy does Quit() + WaitForSingleObject(thread,
+  // 10000) before TFileZillaIntern and the tools object are deleted. With a handle rtlcompat did
+  // not know, that wait returned at once and the still-running thread touched freed memory
+  // (crash when an FTP session was closed). CREATE_SUSPENDED is ignored; ResumeThread is a no-op.
+  return StartRoutineThread(threadTrampoline, new ThreadStart{ fn, param, id });
 }
 // ResumeThread / SetThreadPriority / WaitForSingleObject / CloseHandle are provided by rtlcompat
-// (WinThreads/SysExtra). FileZilla's CreateThread returns a detached std::thread handle that those
-// rtlcompat fns don't recognize (Lookup fails -> no-op), which is fine: our threads run immediately.
-BOOL  PostThreadMessage(DWORD, UINT msg, WPARAM w, LPARAM l)
-{ if (getenv("FZ_TRACE")) fprintf(stderr, "[fz] PostThreadMessage msg=%u wParam=%lu\n", msg, (unsigned long)w);
-  std::lock_guard<std::mutex> lk(g_mtx); postLocked(nullptr, msg, w, l); return TRUE; }  // thread msgs: hwnd=NULL
+// (WinThreads/SysExtra).
+BOOL  PostThreadMessage(DWORD tid, UINT msg, WPARAM w, LPARAM l)
+{ if (getenv("FZ_TRACE")) fprintf(stderr, "[fz] PostThreadMessage tid=%lu msg=%u wParam=%lu\n", (unsigned long)tid, msg, (unsigned long)w);
+  std::lock_guard<std::mutex> lk(g_mtx); postLocked(nullptr, msg, w, l, tid); return TRUE; }  // thread msgs: hwnd=NULL
 UINT  RegisterWindowMessage(const wchar_t *)
 { static std::atomic<UINT> next{0xC000}; return next++; }
 
@@ -165,6 +190,7 @@ unsigned short RegisterClassEx(const WNDCLASSEX * wc)
 HWND CreateWindow(const wchar_t * cls, const wchar_t *, DWORD, int, int, int, int, HWND, void *, HINSTANCE, void *)
 {
   auto * w = new FzWindow();
+  w->owner = myTid();   // window messages go to the creating thread's queue
   if (cls) { std::lock_guard<std::mutex> lk(g_mtx); auto it = g_classes.find(k16(cls)); if (it != g_classes.end()) w->proc = it->second; }
   return (HWND)w;
 }
@@ -200,12 +226,13 @@ INT_PTR SetWindowLongPtr(HWND hWnd, int index, INT_PTR value)
 BOOL PostMessage(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 {
   std::lock_guard<std::mutex> lk(g_mtx);
-  postLocked(hWnd, msg, wParam, lParam);
+  postLocked(hWnd, msg, wParam, lParam, hWnd ? ((FzWindow *)hWnd)->owner : myTid());
   return TRUE;
 }
 
 static bool matches(const MSG & m, HWND hwnd, UINT lo, UINT hi)
 {
+  if (m.time != 0 && m.time != myTid()) return false;   // addressed to another thread
   if (hwnd && m.hwnd != hwnd) return false;
   if (lo == 0 && hi == 0) return true;
   return m.message >= lo && m.message <= hi;
@@ -230,7 +257,15 @@ BOOL GetMessage(LPMSG out, HWND hWnd, UINT lo, UINT hi)
   for (;;)
   {
     for (auto it = g_queue.begin(); it != g_queue.end(); ++it)
-      if (matches(*it, hWnd, lo, hi)) { if (out) *out = *it; g_queue.erase(it); return TRUE; }
+      if (matches(*it, hWnd, lo, hi))
+      {
+        MSG m = *it; g_queue.erase(it);
+        if (out) *out = m;
+        // Win32: GetMessage returns 0 for WM_QUIT - that is what ends `while (GetMessage(...))`.
+        // It used to return TRUE, so CMainThread::Run never left its loop: the FTP worker thread
+        // outlived its session (and the objects it points to) every time a session was closed.
+        return (m.hwnd == nullptr && m.message == WM_QUIT) ? FALSE : TRUE;
+      }
     g_cv.wait(lk);
   }
 }
@@ -249,7 +284,7 @@ int WSAAsyncSelect(SOCKET s, HWND hWnd, UINT msg, long lEvent)
   if (getenv("FZ_TRACE")) fprintf(stderr, "[fz] WSAAsyncSelect sock=%d msg=%u events=0x%lx\n", s, msg, lEvent);
   std::lock_guard<std::mutex> lk(g_mtx);
   if (lEvent == 0) { g_sockets.erase(s); g_posted.erase(s); }
-  else { g_sockets[s] = SockReg{ hWnd, msg, lEvent }; g_posted[s] = 0; }
+  else { g_sockets[s] = SockReg{ hWnd, msg, lEvent, hWnd ? ((FzWindow *)hWnd)->owner : myTid() }; g_posted[s] = 0; }
   // (re)start + wake the select loop; ensureSelectThread re-locks via atomics only, safe here.
   if (!g_selRun.load()) { /* started outside the lock below */ }
   wakeSelect();
