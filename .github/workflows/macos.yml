@@ -1,0 +1,48 @@
+# Builds the universal (Apple Silicon + Intel) macOS app, unsigned. Signing and notarization need
+# the Developer ID certificate and are done afterwards with native/scripts/release-macos.sh on a
+# machine that has it (download the artifact, then: release-macos.sh <version> <path to FreeSCP.app>).
+name: macOS
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["ci-*"]
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  universal:
+    name: Universal app (arm64 + x86_64)
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build
+        run: |
+          brew install ninja
+          native/scripts/build-macos-universal.sh
+
+      - name: Unit tests (arm64, and x86_64 under Rosetta)
+        run: |
+          ctest --test-dir native/build-universal --output-on-failure
+          softwareupdate --install-rosetta --agree-to-license >/dev/null 2>&1 || true
+          arch -x86_64 native/build-universal/rtlcompat/test_rtlcompat
+          arch -x86_64 native/build-universal/rtlcompat/test_format
+
+      - name: Launch check of the staged bundle (both architectures, bundled Qt)
+        run: |
+          APP=native/build-universal/dist/FreeSCP.app/Contents/MacOS/winscp-qt
+          for A in arm64 x86_64; do
+            arch -$A env WINSCP_NO_AUTOLOGIN=1 WINSCP_SHOT=/tmp/shot-$A.png "$APP"
+            test -s /tmp/shot-$A.png
+            arch -$A native/build-universal/dist/winscp-harness no-such-host.invalid 22 a b 2>&1 | tee /tmp/h.txt || true
+            grep -q 'does not exist' /tmp/h.txt
+          done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: FreeSCP-macOS-unsigned
+          path: native/build-universal/dist/FreeSCP-macOS-unsigned.tar
+          if-no-files-found: error

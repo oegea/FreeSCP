@@ -11,6 +11,13 @@ BUILD="$1"; HOST="$2"; PORT="$3"; USER_="$4"; PASS="$5"
 H="$BUILD/harness/winscp-harness"
 if [ -x "$BUILD/ui-qt/winscp-qt.app/Contents/MacOS/winscp-qt" ]; then APP="$BUILD/ui-qt/winscp-qt.app/Contents/MacOS/winscp-qt"
 else APP="$BUILD/ui-qt/winscp-qt"; fi
+# Overrides for testing a packaged app instead of a build tree:
+#   E2E_HARNESS / E2E_APP  explicit binaries        E2E_RUN  launcher prefix, e.g. "arch -x86_64"
+#   E2E_QPA                Qt platform for the GUI run (default offscreen; "native" = the real one,
+#                          needed for a deployed bundle, which does not ship the offscreen plugin)
+H="${E2E_HARNESS:-$H}"; APP="${E2E_APP:-$APP}"
+RUN=(); [ -n "${E2E_RUN:-}" ] && read -r -a RUN <<< "$E2E_RUN"
+QPA="${E2E_QPA:-offscreen}"; QPAENV=(); [ "$QPA" != native ] && QPAENV=("QT_QPA_PLATFORM=$QPA")
 
 WORK="$(mktemp -d)"; trap 'rm -rf "$WORK"' EXIT
 BIG="$WORK/big ñ file 测试.bin"
@@ -26,7 +33,7 @@ for MODE in SFTP SCP; do
   echo "== $MODE"
   EXTRA=(); [ "$MODE" = SCP ] && EXTRA=(WINSCP_SCP=1 WINSCP_UTF8=1)
   # ${EXTRA[@]+...}: an empty array is "unbound" under `set -u` in bash 3.2 (macOS)
-  run() { env WINSCP_INI="$WORK/harness.ini" ${EXTRA[@]+"${EXTRA[@]}"} "$@" "$H" "$HOST" "$PORT" "$USER_" "$PASS" 2>&1; }
+  run() { env WINSCP_INI="$WORK/harness.ini" ${EXTRA[@]+"${EXTRA[@]}"} "$@" ${RUN[@]+"${RUN[@]}"} "$H" "$HOST" "$PORT" "$USER_" "$PASS" 2>&1; }
 
   fresh; OUT="$(run WINSCP_XFER=1 WINSCP_OPS=1)"; RC=$?
   { [ $RC -eq 0 ] && echo "$OUT" | grep -aq 'UPLOAD ok=1' && cmp -s /tmp/xfer-up.txt /tmp/dl/xfer-up.txt; } && r=ok || r=no
@@ -45,23 +52,23 @@ for MODE in SFTP SCP; do
 done
 
 echo "== failure paths"
-OUT="$("$H" no-such-host.invalid 22 a b 2>&1)"; RC=$?
+OUT="$(${RUN[@]+"${RUN[@]}"} "$H" no-such-host.invalid 22 a b 2>&1)"; RC=$?
 { [ $RC -eq 1 ] && echo "$OUT" | grep -aq 'does not exist'; } && r=ok || r=no
 check "unknown host -> readable error, exit 1" $r
 [ $r = ok ] || echo "$OUT" | tail -4
-OUT="$("$H" 127.0.0.1 1 a b 2>&1)"; RC=$?
+OUT="$(${RUN[@]+"${RUN[@]}"} "$H" 127.0.0.1 1 a b 2>&1)"; RC=$?
 { [ $RC -eq 1 ] && echo "$OUT" | grep -aqi 'refused'; } && r=ok || r=no
 check "closed port -> 'refused', exit 1" $r
 [ $r = ok ] || echo "$OUT" | tail -4
-OUT="$(env WINSCP_INI=/nonexistent-dir/x.ini "$H" "$HOST" "$PORT" "$USER_" "$PASS" 2>&1)"; RC=$?
+OUT="$(env WINSCP_INI=/nonexistent-dir/x.ini ${RUN[@]+"${RUN[@]}"} "$H" "$HOST" "$PORT" "$USER_" "$PASS" 2>&1)"; RC=$?
 { [ $RC -eq 0 ] && echo "$OUT" | grep -aq 'CONNECTED'; } && r=ok || r=no
 check "unwritable INI does not abort the connection" $r
 
-echo "== Qt GUI (offscreen)"
+echo "== Qt GUI ($QPA)"
 rm -rf /tmp/dlq
-env QT_QPA_PLATFORM=offscreen WINSCP_NO_AUTOLOGIN=1 WINSCP_SHOT="$WORK/gui.png" \
+env ${QPAENV[@]+"${QPAENV[@]}"} WINSCP_NO_AUTOLOGIN=1 WINSCP_SHOT="${E2E_SHOT:-$WORK/gui.png}" \
   "WINSCP_AUTOCONNECT=$HOST:$PORT:$USER_:$PASS:sftp" \
-  "WINSCP_AUTOXFER=xfer-up.txt,$(basename "$BIG"),tree" "$APP" > "$WORK/gui.txt" 2>&1; RC=$?
+  "WINSCP_AUTOXFER=xfer-up.txt,$(basename "$BIG"),tree" ${RUN[@]+"${RUN[@]}"} "$APP" > "$WORK/gui.txt" 2>&1; RC=$?
 { [ $RC -eq 0 ] && cmp -s "$BIG" "/tmp/dlq/$(basename "$BIG")" && diff -r "$WORK/tree" /tmp/dlq/tree > /dev/null 2>&1; } && r=ok || { r=no; tail -12 "$WORK/gui.txt"; }
 check "connect + 3-item queued download over parallel connections, exit 0 (got $RC)" $r
 
