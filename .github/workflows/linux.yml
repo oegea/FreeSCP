@@ -63,6 +63,12 @@ jobs:
       - name: End-to-end tests (engine, SFTP + SCP)
         run: native/scripts/e2e-ssh.sh native/build-linux 127.0.0.1 2222 winscp winscp123
 
+      - name: Backtrace (only if the end-to-end tests failed)
+        if: failure()
+        run: |
+          sudo apt-get install -y --no-install-recommends gdb >/dev/null
+          gdb -batch -ex run -ex bt -ex 'info registers pc' --args native/build-linux/harness/winscp-harness no-such-host.invalid 22 a b 2>&1 | tail -40
+
       - name: Package AppImage
         run: |
           curl -fL --retry 3 -o /tmp/appimagetool \
