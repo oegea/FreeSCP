@@ -138,6 +138,9 @@ inline int strnicmp(const char * a, const char * b, size_t n) { return strncasec
 // rand(): FileZilla computes (rand()*4)/(RAND_MAX+1) and (rand()*diff)/RAND_MAX, written for the
 // Windows CRT where RAND_MAX is 32767. With the POSIX 2^31-1 both overflow int: the keep-alive picked
 // a command index outside its 4-entry table and crashed. Give it the range it was written for.
+// (<algorithm> first: libstdc++'s std::random_shuffle calls std::rand(), which the macro below
+// would rewrite into std::fz_rand(); once included here, later includes are no-ops.)
+#include <algorithm>
 inline int fz_rand() { return ::rand() & 0x7fff; }
 #undef RAND_MAX
 #define RAND_MAX 0x7fff
