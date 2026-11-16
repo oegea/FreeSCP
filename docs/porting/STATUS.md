@@ -1085,6 +1085,10 @@ Preferences > Environment switches it off; Help > Check for Updates asks on dema
   AddressSanitizer builds, exit code 0 and no report every time; plus one real request to GitHub.
   `e2e-features.sh` has seven checks for it (answers come from local files).
 - Packaging: Linux AppImage bundles Qt's TLS plugin (`package-linux.sh`); macOS gets it from
-  `macdeployqt`. Not yet verified on Linux or on the packaged macOS app - check on the next release.
+  `macdeployqt`. Verified for the v0.3.1 release: CI runs the AppImage with an HTTPS test answer
+  (`freescp.com/update-test.json`, step "Update check works inside the AppImage") on x86-64 and
+  aarch64; the signed macOS app was checked against that file and against GitHub, natively and
+  under Rosetta (the first translated run takes several seconds longer; later ones ~2 s).
+- Released as **v0.3.1** (2026-11-17): Linux tag build 224/224 on `e2e-features.sh`.
 - Test hook: `WINSCP_UPDATE_URL` (any URL, including `file://`). Scripted/offscreen runs never make
   the request unless it is set.
