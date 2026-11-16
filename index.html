@@ -309,7 +309,7 @@
   <div class="gridfx" aria-hidden="true"></div>
   <canvas id="streams" aria-hidden="true"></canvas>
   <div class="wrap">
-    <a class="badge reveal" href="releases.html#latest"><b>v0.3</b> SSH tunnels &amp; proxies · 2FA · transfer settings · find &amp; compare &nbsp;→</a>
+    <a class="badge reveal" href="releases.html#latest"><b>v0.3.1</b> SSH tunnels &amp; proxies · 2FA · find &amp; compare · update notices &nbsp;→</a>
     <h1 class="reveal" style="--d:.08s">WinSCP. <span class="grad">Natively</span> on Mac &amp; Linux.</h1>
     <p class="sub reveal" style="--d:.16s">The dual-pane file manager people have loved on Windows for 20 years —
       <b>SFTP, FTP, SCP, WebDAV and S3</b> — now running natively on macOS and Linux. Free and open source.</p>
@@ -470,7 +470,7 @@
   <div class="center">
     <div class="eyebrow reveal">Download</div>
     <h2 class="reveal" style="--d:.06s">Pick your platform.</h2>
-    <p class="lead reveal" style="--d:.12s">Version 0.3 &mdash; the same app everywhere, built from the same source.</p>
+    <p class="lead reveal" style="--d:.12s">Version 0.3.1 &mdash; the same app everywhere, built from the same source.</p>
   </div>
   <div class="plats">
     <div class="plat reveal" data-os="mac">
@@ -509,7 +509,7 @@
   <div class="cols">
     <div class="pillar reveal"><b>100% free</b><p>Every feature, for everyone, forever. No paid tier, no trial, no ads, no account.</p></div>
     <div class="pillar reveal" style="--d:.08s"><b>Open source</b><p>GPLv3. Read it, build it, change it &mdash; the code is on <a href="https://github.com/oegea/FreeSCP">GitHub</a>.</p></div>
-    <div class="pillar reveal" style="--d:.16s"><b>No telemetry</b><p>FreeSCP never phones home: no tracking, no usage data, no update pings. It only talks to the servers you connect to.</p></div>
+    <div class="pillar reveal" style="--d:.16s"><b>No telemetry</b><p>No tracking, no usage data, no account &mdash; nothing about you ever leaves your computer. FreeSCP talks to the servers you connect to, plus one optional, anonymous check for a newer version that you can switch off.</p></div>
   </div>
   <div class="coffee reveal">
     <div class="cup" aria-hidden="true">&#9749;</div>
@@ -527,7 +527,8 @@
   <div class="faq reveal">
     <details><summary>Is this the real WinSCP?</summary><p>It runs WinSCP's real protocol engine &mdash; the same open-source code, recompiled for macOS and Linux &mdash; behind an interface rebuilt in Qt. It is an independent community port, not made or endorsed by the WinSCP team. On Windows, use the original <a href="https://winscp.net/" rel="noopener">WinSCP</a>.</p></details>
     <details><summary>Is it really free? What's the catch?</summary><p>There isn't one. It is GPLv3 open-source software with no paid version, no ads and no account. If you want to support the work you can <a href="https://ko-fi.com/oriolegea" rel="noopener">buy me a coffee</a>, but nothing is locked behind it.</p></details>
-    <details><summary>Does it collect any data?</summary><p>No. FreeSCP has no telemetry, analytics or crash reporting and does not check for updates on its own. The only network connections it makes are to the servers you tell it to connect to. Settings and cached host keys stay on your computer.</p></details>
+    <details><summary>Does it collect any data?</summary><p>No. FreeSCP has no telemetry, analytics or crash reporting, and no account. Settings and cached host keys stay on your computer, and the network connections it makes are to the servers you tell it to connect to. There is one exception, described next.</p></details>
+    <details><summary>How does it know there is a new version?</summary><p>Since version 0.3.1, when you open the app it asks GitHub&rsquo;s public API one question &mdash; &ldquo;what is the latest FreeSCP release?&rdquo; &mdash; at most once a day. The request says nothing about you, your computer or the version you run, and it goes straight to GitHub, not to any server of this project, so the author never learns who checks or who updates. If a newer version exists you get a small notice linking to the <a href="releases.html">release notes</a>; nothing is downloaded for you. FreeSCP is young and each release fixes real problems, so we think this one request is worth it &mdash; but if you prefer none at all, switch it off in <b>Preferences &rarr; Environment</b>.</p></details>
     <details><summary>Which Macs are supported?</summary><p>Any Mac running macOS 12 Monterey or newer, Apple Silicon or Intel &mdash; it is a single universal app. It is signed with a Developer ID and notarized by Apple, so it opens without security warnings.</p></details>
     <details><summary>The AppImage does not start on my Linux.</summary><p>Make it executable first (<code>chmod +x FreeSCP-Linux-*.AppImage</code>). AppImages need FUSE 2; if your distro does not ship it, install <code>libfuse2</code> or run it with <code>--appimage-extract-and-run</code>. It needs glibc 2.35 or newer and an X11 or XWayland session.</p></details>
     <details><summary>Which features of WinSCP are there?</summary><p>The Commander: dual panels, session tabs, directory tree, SFTP / SCP / FTP(S) / WebDAV / S3, public-key authentication, the transfer queue with parallel connections, remote editing, synchronized browsing and directory synchronization, bookmarks, drag &amp; drop &mdash; and since 0.3 SSH tunnels, proxies, two-factor logins, transfer settings with resume and speed limit, Find Files, directory sizes and file / directory comparison. Scripting, the Explorer-style interface, transfer presets and a few advanced site settings are not there yet &mdash; see the <a href="https://github.com/oegea/FreeSCP/blob/main/docs/porting/ROADMAP.md">roadmap</a>.</p></details>
