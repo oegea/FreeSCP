@@ -64,6 +64,18 @@ jobs:
       - name: End-to-end tests (engine, SFTP + SCP)
         run: native/scripts/e2e-ssh.sh native/build-linux 127.0.0.1 2222 winscp winscp123
 
+      # The feature suite needs Docker images that only exist for x86-64. It does not gate the
+      # packaging below (a flaky container must not block a release) - read its log before releasing.
+      - name: Feature tests against real servers (SFTP/SCP/FTP/FTPS/WebDAV/S3, tunnel, proxy, 2FA, GUI)
+        if: matrix.arch == 'x86_64'
+        continue-on-error: true
+        run: |
+          sudo apt-get install -y --no-install-recommends xxd time python3-venv >/dev/null
+          native/scripts/e2e/servers.sh up "$RUNNER_TEMP/e2e-data"
+          native/scripts/e2e-features.sh native/build-linux "$RUNNER_TEMP/e2e-data" 2>&1 | tee "$RUNNER_TEMP/e2e-features.log"
+          native/scripts/e2e/servers.sh down "$RUNNER_TEMP/e2e-data"
+          grep -q '^ALL OK' "$RUNNER_TEMP/e2e-features.log"
+
       - name: Backtrace (only if the end-to-end tests failed)
         if: failure()
         run: |

@@ -97,7 +97,7 @@ portable spelling. Needed because POSIX `struct in_addr` has no `S_un` union mem
 
 ## FTP backend (Phase 8) — guarded source edits
 - source/core/Terminal.cpp: un-guarded the fsFTP branch of TTerminal::Open() (FileZilla builds now).
-- source/core/FtpFileSystem.cpp: PreserveDownloadFileTime body `#ifdef _WIN32`-guarded (handle-type
+- (SUPERSEDED 2026-11-16 - guard removed, see "Feature round" below) source/core/FtpFileSystem.cpp: PreserveDownloadFileTime body `#ifdef _WIN32`-guarded (handle-type
   mismatch on the native CFile); DeleteFile falls back to File->FileName for trailing-slash dir paths
   (both `#ifndef _WIN32`).
 - source/filezilla/AsyncProxySocketLayer.cpp, FtpControlSocket.cpp: `sin_addr.S_un.S_addr` ->
@@ -190,3 +190,25 @@ section. The two new `source/` touches (plus the defs.h `_WIN32` tightening abov
   global of Common.cpp: link-order dependent, and with GNU ld it ran first and crashed at program
   start on Linux. Under `#ifndef _WIN32` it is a function-local static built from the literal.
 
+## Feature round 2026-11-16
+
+- **source/core/Configuration.cpp** — `TConfiguration::GetLocalEOLType()` returns `eolLF` under
+  `#ifndef _WIN32` (was a hard-coded `eolCRLF`): local text files end lines with LF on macOS/Linux, so
+  a text-mode download from a Unix server must not add a CR, and an upload to a CR/LF server must
+  convert LF -> CR/LF.
+- **source/core/Common.cpp** — `DoRecursiveDeleteFile` enumerates `IncludeTrailingBackslash(FileName) + L"*"`
+  under `#ifndef _WIN32` instead of `FileName + L"\\*"`: the literal backslash ended up inside the
+  paths of the files to delete, so Synchronize could not remove a local directory with content.
+- **source/core/FtpFileSystem.cpp** — REMOVED our earlier `#ifdef _WIN32` guard in
+  `TFTPFileSystem::PreserveDownloadFileTime`: the FileZilla compat `CFile` now hands over the same
+  fd-packed `HANDLE` as `CreateFile`, and `SetFileTime` is implemented, so the upstream line runs
+  unchanged (FTP downloads keep the file time). The file is back to upstream at that spot.
+
+- **source/core/Common.cpp** — `DoRecursiveDeleteFile`, second guard (`#ifndef _WIN32`): an entry that
+  is a symbolic link (`FileGetSymLinkTarget`) is deleted as a file. The attribute the port reports
+  follows the link, so a link to a directory was entered and its target emptied.
+- **source/filezilla/FtpControlSocket.cpp** — `CFtpControlSocket::Cancel` (`#ifndef _WIN32`): when a
+  transfer is cancelled in `FILETRANSFER_WAITFINISH`, `m_skipReply` is set only if the final reply
+  has not been received yet (`nGotTransferEndReply & 1`). Upstream sets it unconditionally; if the
+  226 was already consumed, the reply to the NEXT command is skipped and the session stalls until
+  the time-out. (The same race exists upstream; kept guarded so the Windows tree is unchanged.)

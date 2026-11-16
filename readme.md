@@ -68,11 +68,29 @@ builds on Windows; all port work lives under `native/`.
 
 ## Features
 
-Dual-pane Commander · **SFTP · SCP · FTP · WebDAV · S3** (＋TLS) · public-key auth (OpenSSH keys
+Dual-pane Commander · **SFTP · SCP · FTP / FTPS · WebDAV · S3** · public-key auth (OpenSSH keys
 auto-converted) · host-key verification · drag &amp; drop (incl. from Finder) · background transfer
 **queue** with parallel transfers · **edit remote files in any editor** (auto re-upload on save) ·
 built-in editor · directory **tree** · **session tabs** · synchronized browsing · bookmarks ·
 overwrite confirmation · recursive chmod · file masks · Open Terminal.
+
+New in **0.3**:
+
+- **Connect anywhere** — SSH **tunnel** through a jump host, **proxies** (SOCKS4, SOCKS5, HTTP),
+  **two-factor / keyboard-interactive** login prompts, **FTPS** (explicit and implicit TLS), FTP
+  active mode, UTF-8 file-name switch.
+- **Transfer Settings** — binary / text / automatic mode, keep timestamps, set permissions, change
+  name case, include/exclude **file masks**, newer-only, **speed limit**, and interrupted transfers
+  **resume** where they stopped.
+- **Find Files** (local and remote, WinSCP masks) · **Calculate Directory Sizes** ·
+  **Compare Directories** · **Compare Files** side by side (local vs remote).
+- **Synchronize** now decides by real timestamps: correct time zones, timestamps preserved on every
+  protocol that can carry them.
+- Sturdier: FTP time-outs and keep-alive, clean errors when a server dies or a directory cannot be
+  read, no more idle CPU use while waiting on the network.
+
+What is still missing compared with WinSCP is tracked in
+[`docs/porting/ROADMAP.md`](docs/porting/ROADMAP.md).
 
 ## Build (macOS, Apple Silicon)
 
@@ -106,12 +124,15 @@ native/platform    macOS/Linux platform adapters
 native/putty       PuTTY unix backend (sockets/select/entropy)
 native/neon|libs3|filezilla   native builds of the vendored protocol libs
 native/ui-qt       the Qt 6 GUI + enginebridge (the UI↔engine boundary)
-docs/porting       PLAN / STATUS / LEARNINGS / UPSTREAM-PATCHES
+native/scripts     build, packaging and end-to-end test scripts (e2e/ = test servers)
+docs/porting       PLAN / STATUS / ROADMAP / LEARNINGS / UPSTREAM-PATCHES
 ```
 
 ## Status & license
 
-All five protocols work end-to-end (connect / list / transfer / file ops). GPLv3, inherited from
+All five protocols work end-to-end (connect / list / transfer / file ops) and are exercised by the
+suites in `native/scripts` (`e2e-ssh.sh`, `e2e-features.sh`, `e2e-adversarial.sh`) against real
+servers; see `docs/porting/STATUS.md`. GPLv3, inherited from
 WinSCP. FreeSCP is an independent port and is not affiliated with or endorsed by Martin Přikryl /
 WinSCP.
 

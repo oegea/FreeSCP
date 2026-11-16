@@ -400,3 +400,83 @@ one to test save failures).
    code 0, files in `/tmp/dlq`, and look at the PNG. Three or more items exercise the parallel
    connections.
 
+## 20. The feature round (2026-11-16): Win32 semantics the engine silently depends on
+
+Adding UI for features the engine "already supports" (tunnel, proxy, transfer settings, synchronize)
+is mostly a test of the platform layer: each feature leaned on a Win32 behaviour that had been
+stubbed because nothing exercised it. The pattern to remember — **a stub that returns success is
+invisible until a feature needs the value** — and the concrete cases:
+
+**a. Widths.** `DWORD` is 8 bytes here. Anything the engine stores in a narrower type or
+reinterprets breaks quietly: `GetCurrentThreadId()` compared against an `unsigned int` copy (the
+tunnel thought every callback came from another thread), `FILETIME` read as `__int64`, `FIONREAD`
+writing an `int` into a `DWORD`. When something "never matches" or "is never zero", check the width.
+
+**b. Return values are API.** `ResumeThread` returns the previous suspend count and
+`TSimpleThread::Start` tests `== 1`; `FindFirst("dir\\*")` on Windows always succeeds because of
+`.` and `..`; `GetLastError()` after `SetLastError(WSAEWOULDBLOCK)` is how FileZilla's layers talk
+to each other. Emulate the documented result, not "0 = fine".
+
+**c. Edge, not level.** `WSAEventSelect` reports `FD_READ` once until you read and `FD_WRITE` once
+until a send blocks. Level-triggered emulation "worked" and burned a core. The socket owner now
+re-arms explicitly (`winscp_socket_rearm`).
+
+**d. Time is three separate things.** (1) the zone as a `TIME_ZONE_INFORMATION` with *relative*
+transition rules — derived from the tz database by locating this year's offset changes; (2) file
+times through `GetFileTime`/`SetFileTime`/find data; (3) Delphi `TDateTime` arithmetic, where
+rounding matters twice: decode after rounding to the millisecond (else midnight becomes 24:00 of the
+previous day) and `Variant` -> integer rounds to nearest. `test_wintime` pins all three, including
+southern-hemisphere and no-DST zones.
+
+**e. `GetTickCount` must not start near zero.** The speed limiter treats second 0 as "no budget
+set yet". Use the monotonic clock's own epoch.
+
+**f. macOS cannot answer `SO_ACCEPTCONN`.** Track listening sockets where `listen()` is called.
+
+**g. Report what the engine reports.** Non-fatal command errors arrive through
+`OnShowExtendedException`, not as C++ exceptions; without a handler an unreadable directory is an
+empty directory and a refused rename is a success.
+
+**h. PuTTY's HTTP proxy negotiator needs one byte after the 407 header block** before it treats the
+headers as complete (real proxies send an error page). A body-less keep-alive 407 stalls it — keep
+that in mind when writing test doubles (`native/scripts/e2e/proxy.py`).
+
+**i. Test artifacts that looked like engine bugs:** a file created through a Docker bind mount can
+be stat'ed with a stale size for a moment (create fixtures with `docker exec` when the server must
+see an exact size); `localhost` targets bypass proxies by design; zsh does not word-split `$VAR`
+(drive tests from bash scripts).
+
+### Test tooling added
+- `freescp-bridge-cli key=value... -- "cmd|arg|..."` — the bridge API from the command line (connect
+  options, prompts with scripted answers, transfer settings, find, sizes, sync). Exit 0/1/2.
+- `WINSCP_UITEST="cmd;cmd"` — scripted GUI: `nav|left|/dir`, `select|right|*.txt`, `xfer|left`,
+  `waitidle`, `print|left`, `find|right|mask`, `dirsizes|left`, `comparedirs|time|size`,
+  `comparefiles|left`, `setxfer|k=v`, `login`, `loginpreset`, `shot|file.png`.
+  `WINSCP_DIALOG_SHOTS=<dir>` renders every dialog that opens to `<dir>/<name>.png` and closes it;
+  `WINSCP_PROMPT_ANSWERS=a|b` answers authentication prompts; `WINSCP_AUTOCONNECT_SITE=<name>`
+  connects with a saved site. No dialog ever blocks a scripted run.
+- `native/scripts/e2e/servers.sh up|down <dir>` + `native/scripts/e2e-features.sh <build> <dir> [sections]`.
+
+
+### Added by the 0.3.0 bug hunt
+
+**j. HANDLE is two things.** A Win32 `HANDLE` names files and wait objects alike and `CloseHandle`
+closes either. Here a file handle is an fd and a wait object an id - they must never share numbers,
+and `CloseHandle` must really close the fd (it did not: a descriptor leaked per transferred file).
+
+**k. `-fshort-wchar` is a promise about libc that we do not keep.** LLVM 20+ recognizes
+`while (*p) ++p` over `wchar_t` and emits `wcslen`; it did so inside our own `winscp_wcslen`.
+`-fno-builtin-wcslen` goes with `-fshort-wchar`. Check `nm -u` for `_wcslen` after toolchain updates.
+
+**l. Timers are part of the protocol logic.** FileZilla's time-out, keep-alive and speed-limit
+refresh hang off `WM_TIMER`, which Windows delivers only when the queue is otherwise empty. Stubbed
+timers hid three bugs (no time-outs at all, a `RAND_MAX` overflow, a cancel race); un-prioritized
+timers created a fourth (time-out checked before "transfer ended" was processed).
+
+**m. Sanitizers find what tests cannot.** One ASan build + the existing suites found (k) in minutes.
+`cmake -B build-asan -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_C_FLAGS="-fsanitize=address
+-fno-omit-frame-pointer" -DCMAKE_CXX_FLAGS=<same> -DCMAKE_EXE_LINKER_FLAGS=-fsanitize=address`, then
+`ASAN_OPTIONS=detect_leaks=0:log_path=/tmp/asan/log` and run `e2e-features.sh build-asan <data>`.
+
+**n. Ask someone who did not write it.** The independent review found the `CloseHandle` and symlink
+defects by reading; neither had a failing test. Give the reviewer the diff, not the conclusions.

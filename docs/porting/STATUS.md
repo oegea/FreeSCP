@@ -2,7 +2,9 @@
 
 Update this whenever a target starts/stops building. Verify by actually building.
 
-_Last updated: 2026-11-13 — engine synced to **WinSCP 6.7.1** (+ post-release fixes; PuTTY 0.85, neon 0.37.1, Expat 2.10.0). All 5 protocols re-verified end to end on macOS arm64 after the merge; see "Upstream sync to 6.7.1 + bug-hunt" at the end. **Linux build NOT re-verified after this sync.**_
+_Last updated: 2026-11-16 — **v0.3.0**: feature round on top of 6.7.1 + a pre-release bug hunt (see the last two sections): SSH tunnel, proxies, 2FA prompts, FTPS, Transfer Settings + resume, Find Files, directory sizes, Compare Directories, side-by-side file comparison — and the platform-layer bugs that end-to-end testing of those exposed (time zones / file timestamps, FindFirst, port forwarding, socket event loop). See "Feature round" at the end. **Verified on macOS arm64 only; the Linux build has not been rebuilt with these changes.**_
+
+_Previous header:_ Last updated: 2026-11-13 — engine synced to **WinSCP 6.7.1** (+ post-release fixes; PuTTY 0.85, neon 0.37.1, Expat 2.10.0). All 5 protocols re-verified end to end on macOS arm64 after the merge; see "Upstream sync to 6.7.1 + bug-hunt" at the end. **Linux build NOT re-verified after this sync.**_
 
 _Previous header:_ Last updated: 2026-06-22 (v0.1.0 public) — branded **FreeSCP** (native macOS/Linux port of WinSCP). All 5 protocols operational; GUI now has session tabs, directory tree, bookmarks, Copy/Move dialog, richer toolbar, app icon. See entries at bottom._
 
@@ -932,3 +934,115 @@ The app now shows a first-launch dialog (and Help → Support FreeSCP): free, GP
 optional Ko-fi link. "No telemetry" is literal: the GUI contains no network code of its own
 (`grep QNetwork native/ui-qt` is empty) and the engine's usage counters are never sent anywhere.
 
+## Feature round: connection options, transfer settings, find / sizes / compare (2026-11-16)
+
+### What is new in the GUI
+| Feature | Where | Engine path |
+|---|---|---|
+| **SSH tunnel** (jump host; password or key) | Login > Advanced > Tunnel | `TSessionData::Tunnel*` -> `TTerminal::OpenTunnel` (PuTTY port forwarding) |
+| **Proxy**: SOCKS4, SOCKS5, HTTP (with credentials) | Login > Advanced > Proxy | `ProxyMethod/Host/Port/...` (PuTTY, FileZilla, neon) |
+| **Authentication prompts**: password, key passphrase, keyboard-interactive / 2FA, proxy password | dialog during login | `OnPromptUser` -> `engine::setPromptCallback` |
+| **FTPS** explicit / implicit, **FTP active mode** | Login (Encryption), Advanced > Connection | `Ftps`, `FtpPasvMode` |
+| **UTF-8 file names** Auto/On/Off, **server CR/LF** | Advanced > Connection | `NotUtf`, `EOLType` |
+| **Transfer Settings**: binary/text/automatic, preserve timestamp, set permissions, name case, file mask, exclude hidden, newer only, resume (.filepart), speed limit | Options menu, Preferences > Transfer, Copy/Move dialog | `TCopyParamType` (`FillCopyParam`) |
+| **Find Files** (local + remote, WinSCP masks, Focus) | Commands > Find Files (Ctrl+Alt+F) | `TTerminal::FilesFind` / `engine::localFind` |
+| **Calculate Directory Sizes** | Files menu / context menu (Shift+Alt+Enter) | `TTerminal::CalculateFilesSize` |
+| **Compare Directories** (by time and/or size) | Commands (Shift+F2), criteria in Preferences > Panels | `panelcompare.h` |
+| **Compare Files** side by side, local vs remote | Files menu / context menu (Ctrl+Shift+D) | `textdiff.{h,cpp}` + `diffview.cpp` |
+| Listing errors are shown (never an empty panel); Open Terminal uses `ssh -J` for tunnelled sessions | | `OnShowExtendedException` |
+
+New UI sources: `logindialog`, `transferdialog`, `finddialog`, `diffview`, `textdiff`, `panelcompare.h`,
+`uicommon.h`. New targets: `freescp-bridge-cli` (drives the bridge API without Qt), `test_uilogic`,
+`test_wintime`.
+
+### Bugs found by running the new features end to end (all fixed)
+| Symptom | Cause | Where |
+|---|---|---|
+| Every upload stamped the remote file **2009-04-22**; downloads kept "now"; remote listings in UTC | `GetFileTime`/`SetFileTime`/`GetTimeZoneInformation`/`FileTimeTo*` were stubs ("local == UTC"), and `FILETIME` was 16 bytes while the engine reads it as an `__int64` | new `rtlcompat/src/WinTime.cpp`, `wintypes.h` |
+| A timestamp at exactly midnight shown as `Dec 31 24:00:00` | day/time split of a double without rounding to the millisecond | `SysExtra.cpp` `Split` |
+| Synchronize: local times were garbage; "delete local" could not remove a directory with content | `FindData.ftLastWriteTime` never filled; engine builds `dir\\file` paths | `SysExtra.cpp`, guarded `Common.cpp` |
+| `FindFirst("<dir>/<name>")` returned the first entry of the directory for ANY name | mask/name part of the path ignored | `SysExtra.cpp` |
+| WebDAV listings had no timestamps | `TFormatSettings` month names empty (RFC 1123 date parse) | `SysUtils.hpp` |
+| FTP: server time zone never detected (files off by the UTC offset; sync re-uploaded everything) | `wcstol` not shimmed for 2-byte `wchar_t` (MDTM parse); `Variant` -> integer truncated instead of rounding | `WcsCompat`, `SysUtils.hpp` |
+| SSH tunnel: crash, then "host key wasn't verified", then hang on disconnect | no listening sockets in `uxnet.c`; `GetCurrentThreadId` 64-bit vs the engine's `unsigned int`; `ResumeThread` returned 0; `StoredSessions` NULL | `uxnet.c`, `Threading.cpp`, `enginebridge.cpp` |
+| A tunnel accepted only its first forwarded connection (S3 hung) | `SO_ACCEPTCONN` cannot be queried on macOS; listeners are now declared explicitly | `WinSock.cpp`, `uxnet.c`, FileZilla `winmsg.cpp` |
+| **100% of a CPU core** while the engine waited on the network (permanent with a tunnel open) | `FD_READ`/`FD_WRITE` re-reported at level instead of Windows' edge semantics | `WinSock.cpp`, `uxnet.c` |
+| SOCKS proxies got a garbage destination | `sk_addrcopy` copied the sockaddr instead of the address bytes; unresolved names not typed `ADDRTYPE_NAME` | `uxnet.c` |
+| FTP through any proxy hung after login | FIONREAD wrote 4 bytes into an 8-byte `DWORD`; `recv` blocked where FileZilla expects `WSAEWOULDBLOCK` | FileZilla `compat/winsock2.h` |
+| FTPS never completed its handshake | `SetLastError` was a no-op and FileZilla's `GetLastError()` returned 0 | `SysExtra.cpp`, FileZilla `compat/afx.h` |
+| Speed limit ignored for a transfer in the program's first second | `GetTickCount` counted from process start | `SysExtra.cpp` |
+| "Exclude hidden files" did nothing for local files | dot files not flagged `faHidden` | `SysExtra.cpp` |
+| Text-mode downloads would gain a CR per line | `GetLocalEOLType()` hard-coded to CRLF | guarded `Configuration.cpp` |
+| 2FA with two fields answered field 0 with the password and left the code empty | headless `IsPasswordOrPassphrasePrompt` stub broader than upstream | `harness/interface_stub.cpp` |
+| Unreadable remote directory shown as an empty one; rename/mkdir errors lost | `OnShowExtendedException` not handled by the bridge | `enginebridge.cpp` |
+| Synchronize listed deletions it would not perform | unchecked checklist items were shown | `enginebridge.cpp` |
+| FTP download did not keep the file time | obsolete `#ifdef` guard (the handle is an fd now) | `FtpFileSystem.cpp` (guard removed) |
+| Random() always 0 (tunnel port "randomization") | stub | `SysExtra.cpp` |
+
+### Verified end to end (macOS arm64; OpenSSH x2, vsftpd x3, Apache mod_dav, MinIO, local proxies, asyncssh 2FA servers)
+`native/scripts/e2e/servers.sh up <dir>` starts everything; `native/scripts/e2e-features.sh <build> <dir>`
+runs **217 checks** (conn 12, auth 11, tunnel 14, proxy 20, ftps 4, xfer 48, resume 9, find 48, sync 20,
+gui 31 — some need a LAN address / asyncssh and are skipped otherwise) and passes; so do `ctest` (4),
+`e2e-ssh.sh`, and the LEARNINGS §19 matrix on FTP / WebDAV / S3 (40 MB non-ASCII file, tree round
+trip) with its failure paths. Throughput after the event-loop change: 200 MB SFTP up + down in 6.7 s
+direct, 7.7 s through a tunnel; an idle tunnelled session uses ~0.15 s CPU per 10 s.
+
+### Not done / known limits
+- **Linux not rebuilt** with any of this (the Docker VM disk was full again). `WinTime.cpp`, `uxnet.c`
+  and `WinSock.cpp` have a Linux path by construction (`st_mtim`, glibc `tm_gmtoff`, `MSG_DONTWAIT`)
+  but it is unverified; the CI workflow will be the first to compile it.
+- Checked only offscreen + by rendering every dialog to PNG; nobody has clicked through the new
+  dialogs on a real display yet.
+- SFTP/SCP connections to `localhost` are never sent through a proxy (PuTTY/WinSCP default); there is
+  no "proxy local addresses too" switch.
+- FTP through an SSH tunnel: only the control connection is tunnelled (as in WinSCP); listing fails
+  with the server's message.
+- Resume was exercised on SFTP only. FTP resume (REST) and the S3/WebDAV paths were not tested.
+- Site passwords (now also tunnel/proxy passwords) are still stored as typed in the settings store;
+  there is no master password yet.
+- Transfer Settings are global (as edited from the Copy dialog they become the new defaults), not
+  per transfer or per site; no presets.
+- Compare Files is read-only and loads both files in memory (text view up to 16 MB each).
+- S3 "rename directory" in the harness ops test reports `rename ok=0` (unchanged, pre-existing).
+- (FTP timers: implemented in the bug hunt below.) Two simultaneous FTP sessions in tabs work for
+  listing and transfers (adversarial suite); `parallelSupported()` still returns false for FTP.
+
+
+## Pre-release bug hunt for 0.3.0 (2026-11-16)
+
+Method: an independent read-only review of the whole diff, a second build with **AddressSanitizer**
+(every suite re-run under it), and an adversarial suite (`native/scripts/e2e-adversarial.sh`, 84
+checks) aimed at what could break: time zones, cancellation, servers dying or freezing, descriptor
+limits, symlinks, odd file names, several sessions in tabs, sites saved by 0.2.
+
+| Found | Cause | Fix |
+|---|---|---|
+| **Every transferred file leaked a descriptor**, and closing local file N destroyed wait object N (another session's socket event -> that session hung) | `CloseHandle` only knew wait objects, and their ids shared the small-integer space of fds | `Threading.cpp`: ids start at 0x40000000, `CloseHandle` closes fds (500 files with `ulimit -n 256`: 5 fds before and after, all protocols) |
+| Synchronize "delete local" **followed directory symlinks** and deleted the target's contents (reachable only since recursive delete started working) | attribute follows links | guarded `Common.cpp`: a link is unlinked |
+| `winscp_wcslen` (and any hand-written wchar loop) compiled into a call to the system 4-byte `wcslen` with LLVM 20+ / Xcode 26: wrong lengths, out-of-bounds reads | loop-idiom recognition trusts `-fshort-wchar` to describe libc | `-fno-builtin-wcslen` wherever `-fshort-wchar` is used (found by ASan) |
+| **FTP never timed out** (frozen server = endless wait) and never sent keep-alives | `SetTimer` was a stub | timers in `filezilla/compat/winmsg.cpp`, delivered low-priority like `WM_TIMER` |
+| ...which exposed: crash in the FTP keep-alive; false "timeout" at the end of a long upload | `(rand()*4)/(RAND_MAX+1)` overflows with POSIX `RAND_MAX`; timer handled before the "transfer ended" message | `rand()`/`RAND_MAX` Windows-ranged for FileZilla; timer priority |
+| FTP: cancel a download the server had already finished sending -> next command hung | FileZilla skips "the next reply" although the 226 was already consumed | guarded `FtpControlSocket.cpp` |
+| Downloaded `what?.txt` saved as `what%3F.txt`; local `a%20b` uploaded as `a b` | Windows invalid-character replacement | `InvalidCharsReplacement = NoReplacement` |
+| A local file whose name contains `*`, `?` looked up as a mask | `FindFirst` | an existing path is taken literally first |
+| A tab returned to the directory it was opened in after another session was opened | tab state saved only on tab switch | saved before connecting |
+| Copy/Move to a typed target that cannot be opened transferred into the previous directory | no check after navigation | cancelled with the error |
+| PuTTY socket list shared by threads without a lock; `GetTickCount` 64-bit vs the engine's 32-bit copies; EOF kept signalling the event loop; quit during a background job touched freed objects; `TFileStream` narrowed non-ASCII paths; diff view rows shifted by lone CR / U+2028; shared error string between parallel workers; `wcstol` macro form (libstdc++) | review findings | fixed individually |
+| Sites saved by 0.2 on port 443 lost their TLS setting | key did not exist before | inferred on load |
+
+**Final verification of the release code (macOS arm64):** `ctest` 4/4 · `e2e-ssh.sh` ALL OK ·
+LEARNINGS §19 matrix on FTP/WebDAV/S3 + failure paths OK · `e2e-features.sh` **217/217** ·
+`e2e-adversarial.sh` **84/84** · `ctest`, `e2e-ssh.sh`, `e2e-features.sh` and `e2e-adversarial.sh`
+again on an AddressSanitizer build: all pass, no report.
+
+### Known limits (documented, not bugs of this port)
+- **SCP** lists the server's own clock (no zone information in `ls`); WinSCP's "time zone offset"
+  session setting is not exposed yet. Timestamps of transferred files are exact.
+- **FTP servers without MLSD** (vsftpd): one detected offset is applied to every listed file, so a
+  file dated on the other side of a DST change is shown, and downloaded, one hour off - upstream
+  behaviour. Uploads are exact.
+- A local file name containing a **backslash** is uploaded under the part after it (the engine
+  treats `\` as a separator).
+- A file explicitly selected but excluded by the Transfer Settings **file mask** is skipped
+  silently and its queue row reads "done" (the engine reports success).
+- Linux: built and tested only by CI.

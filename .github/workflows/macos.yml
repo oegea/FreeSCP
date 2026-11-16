@@ -30,6 +30,8 @@ jobs:
           softwareupdate --install-rosetta --agree-to-license >/dev/null 2>&1 || true
           arch -x86_64 native/build-universal/rtlcompat/test_rtlcompat
           arch -x86_64 native/build-universal/rtlcompat/test_format
+          arch -x86_64 native/build-universal/rtlcompat/test_wintime
+          arch -x86_64 native/build-universal/ui-qt/test_uilogic
 
       - name: Launch check of the staged bundle (both architectures, bundled Qt)
         run: |
