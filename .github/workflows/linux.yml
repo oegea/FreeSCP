@@ -73,6 +73,19 @@ jobs:
           sudo apt-get install -y --no-install-recommends xxd time python3-venv >/dev/null
           native/scripts/e2e/servers.sh up "$RUNNER_TEMP/e2e-data"
           native/scripts/e2e-features.sh native/build-linux "$RUNNER_TEMP/e2e-data" 2>&1 | tee "$RUNNER_TEMP/e2e-features.log"
+          if ! grep -q '^ALL OK' "$RUNNER_TEMP/e2e-features.log"; then
+            echo "::group::diagnostics"
+            sudo apt-get install -y --no-install-recommends gdb curl >/dev/null
+            docker ps -a --format '{{.Names}}  {{.Status}}'
+            for c in ftp dav s3 jump; do echo "--- logs $c"; docker logs --tail 25 freescp-e2e-$c 2>&1; done
+            ls -lan "$RUNNER_TEMP/e2e-data" "$RUNNER_TEMP/e2e-data/davdata" "$RUNNER_TEMP/e2e-data/ftphome" | head -60
+            echo "--- curl ftp"; curl -sS -m 20 -v ftp://winscp:winscp123@127.0.0.1/ 2>&1 | tail -25
+            echo "--- bridge cli ftp under gdb"
+            WINSCP_INI=/tmp/diag.ini timeout 120 gdb -batch -ex run -ex 'thread apply all bt 25' --args \
+              native/build-linux/ui-qt/freescp-bridge-cli port=21 user=winscp pass=winscp123 proto=ftp -- ls 2>&1 | tail -150
+            echo "--- session log"; tail -80 /tmp/winscp-session.log 2>/dev/null
+            echo "::endgroup::"
+          fi
           native/scripts/e2e/servers.sh down "$RUNNER_TEMP/e2e-data"
           grep -q '^ALL OK' "$RUNNER_TEMP/e2e-features.log"
 

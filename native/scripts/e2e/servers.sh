@@ -70,13 +70,22 @@ docker run -d --name freescp-e2e-ftpsi -e 'USERS=winscp|winscp123|/home/winscp' 
   -oforce_local_data_ssl=YES -oforce_local_logins_ssl=YES -ossl_ciphers=HIGH >/dev/null
 docker run -d --name freescp-e2e-dav --network freescp-e2e -e AUTH_TYPE=Basic -e USERNAME=winscp -e PASSWORD=winscp123 \
   -p 8087:80 -v "$D/davdata:/var/lib/dav" bytemark/webdav >/dev/null
-docker run -d --name freescp-e2e-s3 --network freescp-e2e -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin123 \
-  -p 9101:9000 -v "$D/s3data:/data" minio/minio server /data >/dev/null
+# MinIO: the upstream image was withdrawn from the registries; use it if it is still cached locally,
+# otherwise the archived Bitnami build of the same server.
+chmod -R 777 "$D/s3data" 2>/dev/null
+if docker image inspect minio/minio >/dev/null 2>&1; then
+  docker run -d --name freescp-e2e-s3 --network freescp-e2e -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin123 \
+    -p 9101:9000 -v "$D/s3data:/data" minio/minio server /data >/dev/null
+else
+  docker run -d --name freescp-e2e-s3 --network freescp-e2e -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin123 \
+    -e MINIO_DEFAULT_BUCKETS=testbucket -p 9101:9000 -v "$D/s3data:/bitnami/minio/data" bitnamilegacy/minio >/dev/null
+fi
 
 # the jump host must allow forwarding (the image ships with it off); its config appears after first start
-for i in $(seq 1 30); do [ -f "$D/jumphome/sshd/sshd_config" ] && break; sleep 1; done
-if grep -q '^AllowTcpForwarding no' "$D/jumphome/sshd/sshd_config" 2>/dev/null; then
-  sed -i.bak 's/^AllowTcpForwarding no/AllowTcpForwarding yes/' "$D/jumphome/sshd/sshd_config"
+# (edited inside the container: on a Linux host the file belongs to the container's user)
+for i in $(seq 1 30); do docker exec freescp-e2e-jump test -f /config/sshd/sshd_config 2>/dev/null && break; sleep 1; done
+if docker exec freescp-e2e-jump grep -q '^AllowTcpForwarding no' /config/sshd/sshd_config 2>/dev/null; then
+  docker exec freescp-e2e-jump sed -i 's/^AllowTcpForwarding no/AllowTcpForwarding yes/' /config/sshd/sshd_config
   docker restart freescp-e2e-jump >/dev/null
 fi
 
