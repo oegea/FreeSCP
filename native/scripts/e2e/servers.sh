@@ -89,6 +89,10 @@ if docker exec freescp-e2e-jump grep -q '^AllowTcpForwarding no' /config/sshd/ss
   docker restart freescp-e2e-jump >/dev/null
 fi
 
+# WebDAV root: the tests create directories in it from the host (a Linux host honours the owner)
+for i in $(seq 1 20); do docker exec freescp-e2e-dav test -d /var/lib/dav/data 2>/dev/null && break; sleep 1; done
+docker exec freescp-e2e-dav chmod 777 /var/lib/dav/data 2>/dev/null
+
 # host helpers
 stop_host_helpers
 PY="$(command -v python3)"
