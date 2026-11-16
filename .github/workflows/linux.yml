@@ -116,6 +116,15 @@ jobs:
           test "$(cat /tmp/dlq/hello.txt)" = hello
           test "$(cat /tmp/dlq/testdir/nested.txt)" = n
 
+      # The "newer version?" request is HTTPS through Qt Network: this proves the AppImage carries a
+      # working TLS backend. The answer is a fixed test file on the project site (v0.0.1).
+      - name: Update check works inside the AppImage (HTTPS)
+        run: |
+          xvfb-run -a env WINSCP_NO_AUTOLOGIN=1 WINSCP_UITEST="wait|12000" \
+            WINSCP_UPDATE_URL=https://freescp.com/update-test.json \
+            ./FreeSCP-Linux-${{ matrix.arch }}.AppImage --appimage-extract-and-run 2>&1 | tee /tmp/update-check.log | grep -a "update" || true
+          grep -aq '\[update\] latest=0.0.1 current=' /tmp/update-check.log
+
       - uses: actions/upload-artifact@v4
         with:
           name: FreeSCP-Linux-${{ matrix.arch }}

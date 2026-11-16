@@ -27,8 +27,10 @@ On Windows, use the original [WinSCP](https://winscp.net/).
 ## Free, open, private — and how to support it
 
 FreeSCP is **free for everyone, with every feature**: no paid tier, no ads, no account. It is **open
-source** under the GPLv3, and it has **no telemetry** — it makes no network connection of its own
-(no tracking, no usage data, no update pings); it only talks to the servers you connect to.
+source** under the GPLv3, and it has **no telemetry** — no tracking, no usage data, no account. It
+talks to the servers you connect to. The one request it makes on its own (from 0.3.1) is a check for
+a newer version: once a day at most, it asks GitHub for the latest release number, sending nothing
+about you or your computer, and Preferences can switch it off.
 
 It is built in spare time. If it is useful to you and you want to help its development, you can
 [**buy me a coffee on Ko-fi**](https://ko-fi.com/oriolegea) ☕ — entirely optional. And please consider

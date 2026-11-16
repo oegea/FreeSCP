@@ -62,6 +62,7 @@
 #include <QMenu>
 #include <QTimer>
 #include <QSettings>
+#include "updatecheck.h"
 #include <QProgressDialog>
 #include <QDesktopServices>
 #include <QUrl>
@@ -1747,8 +1748,9 @@ int main(int argc, char ** argv)
 
   // About dialog: icon on top, GPLv3, repo link, credit to WinSCP.
   // "What is this and who pays for it" - shown once on first launch and from Help > Support FreeSCP.
-  // FreeSCP makes no network connection of its own (no update check, no usage reporting): the only
-  // traffic is to the servers the user connects to. The Ko-fi page opens in the browser, on click.
+  // FreeSCP sends no usage data. The only request it makes on its own is the optional check for a
+  // newer version (updatecheck.h); everything else is traffic to the servers the user connects to.
+  // The Ko-fi page opens in the browser, on click.
   static const char * const kKofiUrl = "https://ko-fi.com/oriolegea";
   auto showWelcome = [&](bool firstRun){
     QDialog d(&window); d.setWindowTitle(firstRun ? "Welcome to FreeSCP" : "Support FreeSCP");
@@ -1765,8 +1767,9 @@ int main(int argc, char ** argv)
       "<tr><td><b>Free&nbsp;forever</b></td><td>Every feature, for everyone. There is nothing to unlock.</td></tr>"
       "<tr><td><b>Open&nbsp;source</b></td><td>GPLv3 &mdash; the code is at "
       "<a href='https://github.com/oegea/FreeSCP'>github.com/oegea/FreeSCP</a>.</td></tr>"
-      "<tr><td><b>No&nbsp;telemetry</b></td><td>FreeSCP never phones home: no tracking, no usage data, "
-      "no update pings. It only talks to the servers you connect to.</td></tr>"
+      "<tr><td><b>No&nbsp;telemetry</b></td><td>No tracking, no usage data, no account. FreeSCP talks to "
+      "the servers you connect to; the one exception is a check for a newer version (it sends nothing "
+      "about you, and Preferences can turn it off).</td></tr>"
       "</table>"
       "<p style='margin:10px 2px 0'>FreeSCP is built in spare time. If it is useful to you and you would "
       "like to help its development, you can buy me a coffee &mdash; entirely optional.</p>");
@@ -1864,7 +1867,12 @@ int main(int argc, char ** argv)
       auto * cbHidden = new QCheckBox("Show hidden files"); cbHidden->setChecked(gShowHidden);
       auto * cbDel = new QCheckBox("Confirm file deletion"); cbDel->setChecked(gConfirmDelete);
       auto * cbOvr = new QCheckBox("Confirm overwrites"); cbOvr->setChecked(gConfirmOverwrite);
-      envLay->addWidget(cbHidden); envLay->addWidget(cbDel); envLay->addWidget(cbOvr); envLay->addStretch(1);
+      auto * cbUpd = new QCheckBox("Check for new &versions at startup"); cbUpd->setChecked(updates::enabled());
+      auto * updHint = new QLabel("Asks GitHub for the latest version number, at most once a day. Nothing about you "
+                                  "or this computer is sent, and nothing is downloaded.");
+      updHint->setWordWrap(true); updHint->setStyleSheet("color: gray; margin-left: 22px;");
+      envLay->addWidget(cbHidden); envLay->addWidget(cbDel); envLay->addWidget(cbOvr);
+      envLay->addSpacing(10); envLay->addWidget(cbUpd); envLay->addWidget(updHint); envLay->addStretch(1);
       tabs->addTab(envTab, "Environment");
 
       // --- Transfer ---
@@ -1901,6 +1909,7 @@ int main(int argc, char ** argv)
       gShowHidden = cbHidden->isChecked(); gConfirmDelete = cbDel->isChecked();
       gConfirmOverwrite = cbOvr->isChecked(); gParallelMax = spinPar->value(); gAltColors = cbAlt->isChecked();
       gCompareByTime = cbCmpTime->isChecked(); gCompareBySize = cbCmpSize->isChecked();
+      updates::setEnabled(cbUpd->isChecked());
       actHidden->setChecked(gShowHidden);
       QSettings s;
       s.setValue("prefs/showHidden", gShowHidden); s.setValue("prefs/confirmDelete", gConfirmDelete);
@@ -1946,6 +1955,7 @@ int main(int argc, char ** argv)
       QObject::connect(a, &QAction::triggered, addBookmark); window.addAction(a); }
     auto * mHelp = window.menuBar()->addMenu("&Help");
     mHelp->addAction("&Support FreeSCP (free, open source, no telemetry)\xE2\x80\xA6", [&]{ showWelcome(false); });
+    mHelp->addAction("Check for &Updates\xE2\x80\xA6", [&]{ updates::check(&window, true); });
     mHelp->addAction("&About FreeSCP", showAbout);
   }
 
@@ -2131,6 +2141,7 @@ int main(int argc, char ** argv)
     QString r = doCompareFiles();
     fprintf(stdout, "[compare] %s\n", r.toUtf8().constData()); fflush(stdout);
   };
+  uiCmd["checkupdate"] = [&](const QStringList &) { updates::check(&window, true); };   // Help > Check for Updates
   uiCmd["prefs"] = [&](const QStringList &) { if (actPrefs) actPrefs->trigger(); };
   uiCmd["xfersettings"] = [&](const QStringList &) { editTransferSettings(&window); };   // the dialog (render / accept)
   uiCmd["printxfer"] = [&](const QStringList &) {
@@ -2225,6 +2236,9 @@ int main(int argc, char ** argv)
     }
     if (qEnvironmentVariableIsEmpty("WINSCP_NO_AUTOLOGIN") && qEnvironmentVariableIsEmpty("WINSCP_UITEST")) doConnect();
   }, Qt::QueuedConnection);
+
+  // A newer version? (at most once a day, optional - see updatecheck.h). After the first-launch note.
+  if (!welcomeDue) QTimer::singleShot(1200, &window, [&]{ updates::check(&window, false); });
 
   int rc = app.exec();
   // Close sessions while the engine is alive (see engine::shutdown). If a transfer is still running

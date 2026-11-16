@@ -74,6 +74,8 @@ Scripting CLI (.com) + .NET assembly · Finder/Nautilus shell extension · `sftp
 portable INI mode.
 
 ## Known deltas vs WinSCP (intentional/simplifications)
+- Updates: a notice that a newer version exists (0.3.1), with a link to the releases page. No
+  in-app download or automatic install (WinSCP has both).
 - File names are transferred verbatim: no `%XX` replacement of the characters Windows forbids.
 - Transfer Settings are one global set (no presets); a file excluded by the mask shows "done".
 - Sync browsing mirror is relative + no-ops if the subdir doesn't exist (WinSCP is similar).

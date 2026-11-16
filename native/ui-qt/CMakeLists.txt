@@ -1,6 +1,6 @@
 # Qt 6 GUI. Dual-pane Commander; local panel backed by the ported engine via enginebridge.
 
-find_package(Qt6 COMPONENTS Widgets QUIET)
+find_package(Qt6 COMPONENTS Widgets Network QUIET)
 
 if(NOT Qt6_FOUND)
   message(WARNING "Qt6 not found; skipping ui-qt target. brew install qt, then re-run cmake "
@@ -30,8 +30,8 @@ find_package(OpenSSL REQUIRED)
 set(WINSCP_ICNS ${CMAKE_CURRENT_SOURCE_DIR}/winscp.icns)
 set(CMAKE_AUTORCC ON)
 # Single source of truth for the app version (shown in About + baked into the bundle).
-set(FREESCP_VERSION "0.3.0")
-add_executable(winscp-qt MACOSX_BUNDLE main.cpp logindialog.cpp transferdialog.cpp finddialog.cpp diffview.cpp resources.qrc ${WINSCP_ICNS})
+set(FREESCP_VERSION "0.3.1")
+add_executable(winscp-qt MACOSX_BUNDLE main.cpp updatecheck.cpp logindialog.cpp transferdialog.cpp finddialog.cpp diffview.cpp resources.qrc ${WINSCP_ICNS})
 target_compile_definitions(winscp-qt PRIVATE FREESCP_VERSION="${FREESCP_VERSION}")
 if(APPLE)
   set_source_files_properties(${WINSCP_ICNS} PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
@@ -51,7 +51,7 @@ foreach(lib winscpcore winscp_harness puttycore puttyplatform)
   endif()
 endforeach()
 target_link_libraries(winscp-qt PRIVATE
-  Qt6::Widgets enginebridge
+  Qt6::Widgets Qt6::Network enginebridge
   winscpcore winscp_harness puttycore puttyplatform rtlcompat
   neon expat libs3                        # Phase 4: WebDAV + S3 deps, on-demand
   winscpfilezilla                         # Phase 8: FTP backend

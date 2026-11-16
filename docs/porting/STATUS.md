@@ -931,8 +931,9 @@ result → `gh release create vX.Y.Z --draft` with the two macOS zips → push t
 attaches both AppImages) → publish the release → update the version strings on the website (`gh-pages`).
 
 The app now shows a first-launch dialog (and Help → Support FreeSCP): free, GPLv3, no telemetry,
-optional Ko-fi link. "No telemetry" is literal: the GUI contains no network code of its own
-(`grep QNetwork native/ui-qt` is empty) and the engine's usage counters are never sent anywhere.
+optional Ko-fi link. "No telemetry" is literal: the engine's usage counters are never sent anywhere.
+(Until 0.3.0 the GUI had no network code at all; since 0.3.1 its only request is the version check
+described at the end of this file, `native/ui-qt/updatecheck.cpp` - the only user of Qt Network.)
 
 ## Feature round: connection options, transfer settings, find / sizes / compare (2026-11-16)
 
@@ -1065,3 +1066,25 @@ Same pipeline as v0.2.0. The signed + notarized universal app was tested with `e
 natively and under Rosetta (`E2E_RUN="arch -x86_64"`), with `E2E_QPA=native`: the staged bundle
 ships only the cocoa platform plugin, so the default offscreen GUI run aborts in Qt start-up.
 The MinIO test image is no longer downloadable; `servers.sh` falls back to `bitnamilegacy/minio`.
+
+## 0.3.1: "a newer version is available" (2026-11-17)
+
+On startup (at most once every 24 h) the app asks `api.github.com/repos/oegea/FreeSCP/releases/latest`
+for the latest tag and, if it is later than its own version, shows a notice with **Update...** (opens
+`freescp.com/releases.html#latest` in the browser) and **Close**. Nothing is downloaded or installed.
+Preferences > Environment switches it off; Help > Check for Updates asks on demand.
+
+- `native/ui-qt/updatecheck.{h,cpp}` (Qt Network, the app's only own request; User-Agent "FreeSCP"
+  with no version, no identifiers), `versioncmp.h` (numeric comparison, unit-tested).
+- Failure policy: any problem = no notice. Total time limit 12 s, answer limit 512 KB, at most 3
+  redirects, a bad certificate ends the request, only a tag of the exact form `v1.2.3` is believed.
+  Quitting with the request open cancels it. Nothing is written except two settings keys.
+- Verified on macOS: newer / same / older / malformed answers, HTTP 404 and 500, refused
+  connection, a server that never answers, one that drips, an endless answer, a redirect loop, a
+  truncated answer, markup or control characters in the tag, quitting mid-request - normal and
+  AddressSanitizer builds, exit code 0 and no report every time; plus one real request to GitHub.
+  `e2e-features.sh` has seven checks for it (answers come from local files).
+- Packaging: Linux AppImage bundles Qt's TLS plugin (`package-linux.sh`); macOS gets it from
+  `macdeployqt`. Not yet verified on Linux or on the packaged macOS app - check on the next release.
+- Test hook: `WINSCP_UPDATE_URL` (any URL, including `file://`). Scripted/offscreen runs never make
+  the request unless it is set.

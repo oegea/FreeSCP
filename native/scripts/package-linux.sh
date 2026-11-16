@@ -62,6 +62,13 @@ for img in libqjpeg.so libqgif.so libqico.so libqsvg.so; do
   [ -f "$QTPLUGINS/imageformats/$img" ] && cp "$QTPLUGINS/imageformats/$img" "$APPDIR/usr/plugins/imageformats/"
 done
 
+# TLS backend for Qt Network (the optional "newer version?" check is an HTTPS request). Without it
+# the check simply finds nothing - it never fails loudly - but then nobody is told about updates.
+if [ -d "$QTPLUGINS/tls" ]; then
+  mkdir -p "$APPDIR/usr/plugins/tls"
+  cp "$QTPLUGINS"/tls/libqopensslbackend.so "$APPDIR/usr/plugins/tls/" 2>/dev/null || cp "$QTPLUGINS"/tls/*.so "$APPDIR/usr/plugins/tls/" 2>/dev/null || :
+fi
+
 collect_libs "$APPDIR/usr/bin/winscp-qt"
 collect_libs "$APPDIR/usr/plugins/platforms/libqxcb.so"
 for so in "$APPDIR"/usr/plugins/*/*.so; do collect_libs "$so"; done

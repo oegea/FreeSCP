@@ -366,6 +366,24 @@ if want gui; then
   gui WINSCP_DIALOG_SHOTS=$SH WINSCP_UITEST="xfersettings";                chk "Transfer Settings dialog renders" "[ -s $SH/transfersettings.png ]"
   gui WINSCP_DIALOG_SHOTS=$SH WINSCP_UITEST="prefs";                       chk "Preferences render" "[ -s $SH/preferences.png ]"
 
+  # "a newer version is available": the answer comes from a local file, never from the network
+  UPD="$W/upd"; mkdir -p "$UPD"; rm -f "$SH/update.png"
+  echo '{"tag_name":"v99.0.0"}' > "$UPD/new.json"; echo '{"tag_name":"v0.0.1"}' > "$UPD/old.json"; echo '<html>not json</html>' > "$UPD/bad.json"
+  gui WINSCP_UPDATE_URL="file://$UPD/new.json" WINSCP_DIALOG_SHOTS=$SH WINSCP_DIALOG_ACCEPT=update WINSCP_UITEST="wait|3000"
+  chk "update: a newer version shows the notice; Update opens the releases page" "[ $RC -eq 0 ] && [ -s $SH/update.png ] && ghas 'newer=1' && ghas 'open https://freescp.com/releases.html'"
+  rm -f "$SH/update.png"; gui WINSCP_UPDATE_URL="file://$UPD/new.json" WINSCP_DIALOG_SHOTS=$SH WINSCP_UITEST="wait|3000"
+  chk "update: Close does nothing else" "[ $RC -eq 0 ] && [ -s $SH/update.png ] && ! ghas 'open https'"
+  rm -f "$SH/update.png"; gui WINSCP_UPDATE_URL="file://$UPD/old.json" WINSCP_DIALOG_SHOTS=$SH WINSCP_UITEST="wait|3000"
+  chk "update: no notice when up to date" "[ $RC -eq 0 ] && ghas 'newer=0' && [ ! -e $SH/update.png ]"
+  gui WINSCP_UPDATE_URL="file://$UPD/bad.json" WINSCP_DIALOG_SHOTS=$SH WINSCP_UITEST="wait|3000"
+  chk "update: an unusable answer is ignored" "[ $RC -eq 0 ] && ghas 'check failed' && [ ! -e $SH/update.png ]"
+  gui WINSCP_UPDATE_URL="file://$UPD/missing.json" WINSCP_DIALOG_SHOTS=$SH WINSCP_UITEST="wait|3000"
+  chk "update: a failed request is ignored" "[ $RC -eq 0 ] && ghas 'check failed' && [ ! -e $SH/update.png ]"
+  gui WINSCP_UPDATE_URL="http://127.0.0.1:9/x" WINSCP_UITEST="wait|1500;checkupdate;wait|2500"
+  chk "update: manual check that fails says so and nothing more" "[ $RC -eq 0 ] && ghas 'Could not check'"
+  gui WINSCP_UITEST="wait|2500"
+  chk "update: scripted runs never go to the network by themselves" "[ $RC -eq 0 ] && ! ghas '\\[update\\]'"
+
   if [ -n "$IP" ]; then
     proxylog socks; rm -rf /tmp/dlq
     echo "gui tunnel" > "$DATA/sshhome/gui-a.txt"; head -c 5000000 /dev/urandom > "$DATA/sshhome/gui-b.bin"; mkdir -p "$DATA/sshhome/gui-dir/sub"; echo x > "$DATA/sshhome/gui-dir/sub/x.txt"

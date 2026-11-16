@@ -48,8 +48,30 @@ static engine::DirEntry F(const char * name, long long size, long long mtime, bo
 static engine::DirEntry D(const char * name) { engine::DirEntry e; e.name = name; e.isDir = true; return e; }
 static std::string J(const std::vector<std::string> & v) { std::string s; for (auto & x : v) s += x + ","; return s; }
 
+#include "versioncmp.h"
+static int versionTests()
+{
+  int bad = 0;
+  auto expect = [&](bool got, bool want, const char * what) { if (got != want) { printf("FAIL version: %s\n", what); ++bad; } };
+  expect(versionIsNewer("v0.3.1", "0.3.0"), true,  "patch");
+  expect(versionIsNewer("0.4.0", "0.3.9"),  true,  "minor");
+  expect(versionIsNewer("1.0", "0.99.99"),  true,  "major, fewer parts");
+  expect(versionIsNewer("0.10.0", "0.9.0"), true,  "numeric, not lexical");
+  expect(versionIsNewer("v0.3.0", "0.3.0"), false, "same");
+  expect(versionIsNewer("0.3", "0.3.0"),    false, "same, fewer parts");
+  expect(versionIsNewer("0.3.0.1", "0.3.0"), true, "extra part");
+  expect(versionIsNewer("0.2.9", "0.3.0"),  false, "older");
+  expect(versionIsNewer("0.3.0-beta", "0.3.0"), false, "suffix ignored");
+  expect(versionIsNewer("", "0.3.0"),       false, "empty");
+  expect(versionIsNewer("latest", "0.3.0"), false, "garbage");
+  expect(versionIsNewer("99999999999999999999", "0.3.0"), false, "overflow");
+  expect(versionIsNewer("<html>", "0.3.0"), false, "html");
+  return bad;
+}
+
 int main()
 {
+  if (versionTests() != 0) return 1;
   //--- splitLines ---
   {
     bool crlf = true;
