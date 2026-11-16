@@ -26,6 +26,7 @@
 #include <sys/select.h>
 #include <poll.h>
 #include <signal.h>
+#include <pthread.h>
 #include <stdio.h>
 
 #include "putty.h"
@@ -43,6 +44,8 @@ typedef struct NetSocket {
     Plug *plug;
     int fd;
     bool connected;
+    bool listener;            /* listening socket (port forwarding): readable = a connection to accept */
+    bool localhost_only;      /* listener: refuse peers that are not this machine */
     bool frozen;
     bool pending_error;
     int  pending_errno;
@@ -57,9 +60,36 @@ typedef struct NetSocket {
 
 static NetSocket *g_head = NULL;
 
-static void ns_link(NetSocket *s)   { s->next = g_head; s->prev = NULL; if (g_head) g_head->prev = s; g_head = s; }
-static void ns_unlink(NetSocket *s) { if (s->prev) s->prev->next = s->next; else g_head = s->next; if (s->next) s->next->prev = s->prev; }
-static NetSocket *ns_find(int fd)   { for (NetSocket *s = g_head; s; s = s->next) if (s->fd == fd) return s; return NULL; }
+/* rtlcompat's WSAEventSelect emulation reports FD_READ / FD_WRITE edge-style, as Windows does: it
+ * must be told when we have read from a socket (FD_READ may fire again) and when a send could not
+ * complete (FD_WRITE is wanted). */
+void winscp_socket_rearm(SOCKET s, long events);
+void winscp_socket_mark_listener(SOCKET s);   /* readable = FD_ACCEPT for this socket */
+
+/* The list is shared by every connection of the process and those live on different threads (the
+ * thread that services an SSH tunnel, parallel-transfer workers): guard it. */
+static pthread_mutex_t g_list_mtx = PTHREAD_MUTEX_INITIALIZER;
+static void ns_link(NetSocket *s)
+{
+    pthread_mutex_lock(&g_list_mtx);
+    s->next = g_head; s->prev = NULL; if (g_head) g_head->prev = s; g_head = s;
+    pthread_mutex_unlock(&g_list_mtx);
+}
+static void ns_unlink(NetSocket *s)
+{
+    pthread_mutex_lock(&g_list_mtx);
+    if (s->prev) s->prev->next = s->next; else g_head = s->next;
+    if (s->next) s->next->prev = s->prev;
+    pthread_mutex_unlock(&g_list_mtx);
+}
+static NetSocket *ns_find(int fd)
+{
+    NetSocket *r = NULL;
+    pthread_mutex_lock(&g_list_mtx);
+    for (NetSocket *s = g_head; s; s = s->next) if (s->fd == fd) { r = s; break; }
+    pthread_mutex_unlock(&g_list_mtx);
+    return r;
+}
 
 /* ---------- error strings (static lifetime; same texts as windows/network.c so the engine's
  * message translation table in SecureShell.cpp matches) ---------- */
@@ -160,9 +190,24 @@ void sk_getaddr(SockAddr *addr, char *buf, int buflen)
 }
 const char *sk_addr_error(SockAddr *addr) { return addr->error; }
 bool sk_addr_needs_port(SockAddr *addr) { (void)addr; return true; }
-int sk_addrtype(SockAddr *addr) { return addr->ais && addr->ais->ai_family == AF_INET6 ? 2 : 1; }
+/* As windows/network.c: an address that was never resolved (sk_nonamelookup - the proxy will do the
+ * DNS) is ADDRTYPE_NAME; the SOCKS/HTTP negotiators then send the host name instead of an IP. */
+int sk_addrtype(SockAddr *addr)
+{
+    if (!addr->ais) return ADDRTYPE_NAME;
+    return addr->ais->ai_family == AF_INET6 ? ADDRTYPE_IPV6 :
+           addr->ais->ai_family == AF_INET ? ADDRTYPE_IPV4 : ADDRTYPE_NAME;
+}
+/* Copies the RAW address bytes (4 for IPv4, 16 for IPv6) - what the SOCKS negotiators put on the
+ * wire - not the sockaddr structure (which made every SOCKS request name a garbage address). */
 void sk_addrcopy(SockAddr *addr, char *buf)
-{ if (addr->ais) memcpy(buf, addr->ais->ai_addr, addr->ais->ai_addrlen); }
+{
+    if (!addr->ais) return;
+    if (addr->ais->ai_family == AF_INET)
+        memcpy(buf, &((struct sockaddr_in *)addr->ais->ai_addr)->sin_addr, sizeof(struct in_addr));
+    else if (addr->ais->ai_family == AF_INET6)
+        memcpy(buf, &((struct sockaddr_in6 *)addr->ais->ai_addr)->sin6_addr, sizeof(struct in6_addr));
+}
 SockAddr *sk_addr_dup(SockAddr *addr) { if (addr) addr->refcount++; return addr; }
 void sk_addr_free(SockAddr *addr)
 {
@@ -197,6 +242,7 @@ static void ns_try_flush(NetSocket *s)
             if (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR && !s->pending_error) {
                 s->pending_error = true; s->pending_errno = errno;
             }
+            winscp_socket_rearm(s->fd, FD_WRITE);   /* tell us when it is writable again (or to report the error) */
             break;
         }
     }
@@ -229,7 +275,12 @@ static size_t ns_write(Socket *ss, const void *data, size_t len)
 }
 static size_t ns_write_oob(Socket *ss, const void *data, size_t len) { return ns_write(ss, data, len); }
 static void ns_write_eof(Socket *ss) { NetSocket *s = (NetSocket *)ss; if (bufchain_size(&s->output) == 0) shutdown(s->fd, SHUT_WR); }
-static void ns_set_frozen(Socket *ss, bool frozen) { ((NetSocket *)ss)->frozen = frozen; }
+static void ns_set_frozen(Socket *ss, bool frozen)
+{
+    NetSocket *s = (NetSocket *)ss;
+    s->frozen = frozen;
+    if (!frozen && s->fd >= 0) winscp_socket_rearm(s->fd, FD_READ);   /* data that arrived meanwhile */
+}
 static const char *ns_socket_error(Socket *ss) { return ((NetSocket *)ss)->error; }
 static SocketEndpointInfo *ns_endpoint_info(Socket *ss, bool peer) { (void)ss; (void)peer; return NULL; }
 
@@ -326,8 +377,104 @@ Socket *sk_new(SockAddr *addr, int port, bool privport, bool oobinline,
     return &s->sock;
 }
 
+/* ---------- listening sockets (SSH port forwarding: the tunnel's local end) ----------
+ * Mirrors windows/network.c: sk_newlistener binds + listens and registers the fd with the engine
+ * (do_select); an incoming connection is accepted in select_result and handed to the Plug with
+ * plug_accepting(), which calls back ns_accept() to wrap the new fd in a Socket. */
+static Socket *ns_accept(accept_ctx_t ctx, Plug *plug)
+{
+    NetSocket *s = snew(NetSocket);
+    memset(s, 0, sizeof(*s));
+    s->sock.vt = &NetSocket_vt;
+    s->plug = plug;
+    s->fd = ctx.i;
+    s->connected = true;
+    s->frozen = true;             /* as on Windows: the forwarding unfreezes it once its channel is open */
+    bufchain_init(&s->output);
+    if (s->fd < 0) { s->error = ux_error_string(EBADF); return &s->sock; }
+    set_nonblock(s->fd);
+    fcntl(s->fd, F_SETFD, FD_CLOEXEC);
+    {
+        int one = 1;
+#ifdef SO_NOSIGPIPE
+        setsockopt(s->fd, SOL_SOCKET, SO_NOSIGPIPE, &one, sizeof(one));
+#endif
+        setsockopt(s->fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
+    }
+    ns_link(s);
+    const char *err = do_select(plug, s->fd, true);
+    if (err) s->error = err;
+    return &s->sock;
+}
+
+static bool ux_peer_is_local(const struct sockaddr *sa)
+{
+    if (sa->sa_family == AF_INET)
+        return (ntohl(((const struct sockaddr_in *)sa)->sin_addr.s_addr) >> 24) == 127;
+    if (sa->sa_family == AF_INET6)
+        return IN6_IS_ADDR_LOOPBACK(&((const struct sockaddr_in6 *)sa)->sin6_addr) != 0;
+    return false;
+}
+
+static void ns_do_accept(NetSocket *s)
+{
+    struct sockaddr_storage peer; socklen_t pl = sizeof(peer);
+    memset(&peer, 0, sizeof(peer));
+    int t = accept(s->fd, (struct sockaddr *)&peer, &pl);
+    if (t < 0) return;            /* EAGAIN / aborted before we got to it: nothing to do */
+    if (t >= FD_SETSIZE || (s->localhost_only && !ux_peer_is_local((struct sockaddr *)&peer))) { close(t); return; }
+    accept_ctx_t actx; actx.i = t;
+    if (plug_accepting(s->plug, ns_accept, actx)) close(t);   /* denied or error */
+}
+
 Socket *sk_newlistener(const char *srcaddr, int port, Plug *plug, bool local_host_only, int address_family)
-{ (void)srcaddr; (void)port; (void)plug; (void)local_host_only; (void)address_family; return NULL; }
+{
+    NetSocket *s = snew(NetSocket);
+    memset(s, 0, sizeof(*s));
+    s->sock.vt = &NetSocket_vt;
+    s->plug = plug;
+    s->fd = -1;
+    s->listener = true;
+    s->localhost_only = local_host_only;
+    s->port = port;
+    bufchain_init(&s->output);
+
+    const bool v6 = (address_family == ADDRTYPE_IPV6);
+    struct sockaddr_storage ss; socklen_t sl;
+    memset(&ss, 0, sizeof(ss));
+    if (v6) {
+        struct sockaddr_in6 *a6 = (struct sockaddr_in6 *)&ss;
+        a6->sin6_family = AF_INET6; a6->sin6_port = htons((unsigned short)port);
+        a6->sin6_addr = local_host_only ? in6addr_loopback : in6addr_any;
+        if (srcaddr && *srcaddr) inet_pton(AF_INET6, srcaddr, &a6->sin6_addr);
+        sl = sizeof(*a6);
+    } else {
+        struct sockaddr_in *a4 = (struct sockaddr_in *)&ss;
+        a4->sin_family = AF_INET; a4->sin_port = htons((unsigned short)port);
+        a4->sin_addr.s_addr = htonl(local_host_only ? INADDR_LOOPBACK : INADDR_ANY);
+        if (srcaddr && *srcaddr) inet_pton(AF_INET, srcaddr, &a4->sin_addr);
+        sl = sizeof(*a4);
+    }
+
+    int fd = socket(v6 ? AF_INET6 : AF_INET, SOCK_STREAM, 0);
+    if (fd < 0) { s->error = ux_error_string(errno); return &s->sock; }
+    if (fd >= FD_SETSIZE) { close(fd); s->error = ux_error_string(EMFILE); return &s->sock; }
+    fcntl(fd, F_SETFD, FD_CLOEXEC);
+    int one = 1;
+    setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
+    if (bind(fd, (struct sockaddr *)&ss, sl) != 0 || listen(fd, SOMAXCONN) != 0) {
+        s->error = ux_error_string(errno);
+        close(fd);
+        return &s->sock;
+    }
+    set_nonblock(fd);
+    s->fd = fd;
+    ns_link(s);
+    const char *err = do_select(plug, fd, true);
+    if (err) s->error = err;
+    winscp_socket_mark_listener(fd);
+    return &s->sock;
+}
 
 /* ---------- select integration ----------
  * do_select is provided by WinSCP's PuttyIntf.cpp (routes socket events into the engine), so it
@@ -339,6 +486,11 @@ void select_result(WPARAM wParam, LPARAM lParam)
     if (!s) return;
 
     int event = (int)lParam & 0xFF;   /* rtlcompat's WSAMAKESELECTREPLY packs (event | error << 8) */
+
+    if (s->listener) {
+        if (event & (FD_ACCEPT | FD_READ)) ns_do_accept(s);
+        return;
+    }
 
     if (s->notify_connected) {
         s->notify_connected = false;
@@ -360,6 +512,7 @@ void select_result(WPARAM wParam, LPARAM lParam)
     if ((event & FD_READ) && !s->frozen) {
         char buf[16384];
         ssize_t n = recv(s->fd, buf, sizeof(buf), 0);
+        winscp_socket_rearm(s->fd, FD_READ);   /* we have read: more data is news again */
         if (n > 0) plug_receive(s->plug, 0, buf, (size_t)n);
         else if (n == 0) plug_closing_normal(s->plug);
         else if (errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR) plug_closing_error(s->plug, ux_error_string(errno));
@@ -367,14 +520,25 @@ void select_result(WPARAM wParam, LPARAM lParam)
 }
 
 /* iterate live socket fds (WinSCP event-loop helper) */
-SOCKET first_socket(int *state) { *state = 0; return g_head ? g_head->fd : INVALID_SOCKET; }
+SOCKET first_socket(int *state)
+{
+    SOCKET r;
+    *state = 0;
+    pthread_mutex_lock(&g_list_mtx);
+    r = g_head ? g_head->fd : INVALID_SOCKET;
+    pthread_mutex_unlock(&g_list_mtx);
+    return r;
+}
 SOCKET next_socket(int *state)
 {
     int idx = ++(*state), i = 0;
-    for (NetSocket *s = g_head; s; s = s->next, i++) if (i == idx) return s->fd;
-    return INVALID_SOCKET;
+    SOCKET r = INVALID_SOCKET;
+    pthread_mutex_lock(&g_list_mtx);
+    for (NetSocket *s = g_head; s; s = s->next, i++) if (i == idx) { r = s->fd; break; }
+    pthread_mutex_unlock(&g_list_mtx);
+    return r;
 }
-int socket_writable(SOCKET skt) { NetSocket *s = ns_find(skt); return s && (!s->connected || bufchain_size(&s->output) > 0); }
+int socket_writable(SOCKET skt) { NetSocket *s = ns_find(skt); return s && !s->listener && (!s->connected || bufchain_size(&s->output) > 0); }
 void socket_reselect_all(void) {}
 
 /* One select() pass over all live sockets; dispatch via select_result. Returns #ready.
@@ -386,7 +550,7 @@ int winscp_net_select(int ms)
     for (NetSocket *s = g_head; s; s = s->next) {
         if (s->fd < 0) continue;
         if (!s->frozen) FD_SET(s->fd, &rfd);
-        if (!s->connected || bufchain_size(&s->output) > 0) FD_SET(s->fd, &wfd);
+        if (!s->listener && (!s->connected || bufchain_size(&s->output) > 0)) FD_SET(s->fd, &wfd);
         if (s->fd > maxfd) maxfd = s->fd;
     }
     if (maxfd < 0) return 0;
@@ -399,7 +563,7 @@ int winscp_net_select(int ms)
     for (NetSocket *s = g_head; s; s = s->next) {
         if (s->fd < 0 || nf >= FD_SETSIZE) continue;
         int ev = 0;
-        if (FD_ISSET(s->fd, &rfd)) ev |= FD_READ;
+        if (FD_ISSET(s->fd, &rfd)) ev |= (s->listener ? FD_ACCEPT : FD_READ);
         if (FD_ISSET(s->fd, &wfd)) ev |= (s->connected ? FD_WRITE : FD_CONNECT);
         if (ev) { fds[nf] = s->fd; events[nf] = ev; nf++; }
     }

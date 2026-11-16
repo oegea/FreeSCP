@@ -45,7 +45,10 @@ typedef LONG_PTR        LRESULT;
 #define HKEY_CURRENT_CONFIG   ((HKEY)(ULONG_PTR)0x80000005)
 #define HKEY_DYN_DATA         ((HKEY)(ULONG_PTR)0x80000006)
 
-struct FILETIME   { DWORD dwLowDateTime; DWORD dwHighDateTime; };
+// Two 32-bit halves, 8 bytes in all, as on Win32: the engine reinterprets a FILETIME as an __int64
+// (Common.cpp ConvertTimestampToUnix / DateTimeToFileTime). DWORD is 8 bytes on LP64, so DWORD
+// members made that cast read only the low half.
+struct FILETIME   { unsigned int dwLowDateTime; unsigned int dwHighDateTime; };
 struct SYSTEMTIME { Word wYear, wMonth, wDayOfWeek, wDay, wHour, wMinute, wSecond, wMilliseconds; };
 
 // Version-info fixed block (FileInfo.h). Layout matches Win32 VS_FIXEDFILEINFO.

@@ -2054,7 +2054,13 @@ void __fastcall TConfiguration::SetPuttyRegistryStorageKey(UnicodeString value)
 //---------------------------------------------------------------------------
 TEOLType __fastcall TConfiguration::GetLocalEOLType()
 {
+#ifdef _WIN32
   return eolCRLF;
+#else
+  // WINSCP-NATIVE-PORT: text files on macOS/Linux end lines with LF. With CRLF here a text-mode
+  // download from a Unix server gained a CR on every line.
+  return eolLF;
+#endif
 }
 //---------------------------------------------------------------------
 bool __fastcall TConfiguration::GetCollectUsage()

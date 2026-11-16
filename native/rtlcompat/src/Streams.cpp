@@ -76,10 +76,7 @@ __int64 __fastcall THandleStream::Seek(__int64 Offset, Word Origin)
 __fastcall TFileStream::TFileStream(const UnicodeString & FileName, Word Mode)
   : THandleStream(-1)
 {
-  // UTF-16 -> UTF-8 path (naive ASCII/latin path for now; full UTF-8 in platform layer).
-  const std::u16string & w = FileName.raw();
-  std::string path; path.reserve(w.size());
-  for (char16_t c : w) path.push_back(static_cast<char>(c));
+  std::string path(UTF8String(FileName).c_str());   // (was a byte-narrowing copy: non-ASCII names opened the wrong path)
   int flags;
   if (Mode == fmCreate) flags = O_RDWR | O_CREAT | O_TRUNC;
   else if ((Mode & 0x0F) == fmOpenWrite) flags = O_WRONLY;

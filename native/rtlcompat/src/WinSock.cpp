@@ -3,10 +3,14 @@
 //
 // WSAEventSelect records a (socket -> mask, event) association and makes the socket
 // non-blocking. WSAEnumNetworkEvents probes the socket with a zero-timeout select() and reports
-// the ready bits intersected with the mask. FD_CONNECT and FD_CLOSE are one-shot (edge) like
-// Windows — tracked per socket — while FD_READ/FD_WRITE/FD_OOB re-report at level. The blocking
-// readiness wait is provided separately by winscp_net_select() (PuTTY uxnet) and the engine's
-// rewired event loop.
+// the ready bits intersected with the mask. All events are edge-style, like Windows - tracked per
+// socket: FD_CONNECT and FD_CLOSE are one-shot; FD_READ is reported once and again only after the
+// owner has read from the socket; FD_WRITE once after the connect and again only after a send
+// could not complete. The socket owner (PuTTY uxnet) reports those two moments with
+// winscp_socket_rearm(). (FD_READ/FD_WRITE used to re-report at level: a connected socket is
+// almost always writable, so the engine's event loop never slept - a full CPU core for as long as
+// it waited, permanently for the thread that services an SSH tunnel.) The blocking readiness wait
+// is provided separately by winscp_net_select() (PuTTY uxnet) and the engine's rewired event loop.
 //---------------------------------------------------------------------------
 #include <map>
 #include <mutex>
@@ -26,6 +30,9 @@ struct SockReg
   WSAEVENT event = nullptr;
   bool connectReported = false;
   bool closeReported = false;
+  bool listener = false;     // listening socket: readable = FD_ACCEPT (declared by the owner)
+  bool readArmed = true;     // FD_READ may be reported (cleared when reported, set again by a recv)
+  bool writeArmed = true;    // FD_WRITE may be reported (cleared when reported, set again by EWOULDBLOCK)
 };
 
 std::mutex g_mutex;
@@ -61,7 +68,7 @@ int WSAEventSelect(SOCKET s, WSAEVENT hEventObject, long lNetworkEvents)
     SockReg & reg = g_socks[s];
     // A new association on a different event object means a new socket that happens to reuse the
     // fd number of one closed without closesocket(): its one-shot FD_CONNECT/FD_CLOSE start over.
-    if (reg.event != hEventObject) { reg.connectReported = false; reg.closeReported = false; }
+    if (reg.event != hEventObject) { reg.connectReported = false; reg.closeReported = false; reg.readArmed = true; reg.writeArmed = true; reg.listener = false; }
     reg.mask = lNetworkEvents;
     reg.event = hEventObject;
     // mirror WSAEventSelect: socket goes non-blocking
@@ -79,7 +86,7 @@ int WSAEnumNetworkEvents(SOCKET s, WSAEVENT hEventObject, LPWSANETWORKEVENTS lpN
   for (int i = 0; i < FD_MAX_EVENTS; ++i) lpNetworkEvents->iErrorCode[i] = 0;
 
   long mask;
-  bool wantConnectShot = false, wantCloseShot = false;
+  bool wantConnectShot = false, wantCloseShot = false, readArmed = false, writeArmed = false, listening = false;
   {
     std::lock_guard<std::mutex> lock(g_mutex);
     auto it = g_socks.find(s);
@@ -87,6 +94,9 @@ int WSAEnumNetworkEvents(SOCKET s, WSAEVENT hEventObject, LPWSANETWORKEVENTS lpN
     mask = it->second.mask;
     wantConnectShot = (mask & FD_CONNECT) && !it->second.connectReported;
     wantCloseShot   = (mask & FD_CLOSE)   && !it->second.closeReported;
+    readArmed = it->second.readArmed;
+    writeArmed = it->second.writeArmed;
+    listening = it->second.listener;
   }
 
   bool rd, wr, ex;
@@ -103,6 +113,15 @@ int WSAEnumNetworkEvents(SOCKET s, WSAEVENT hEventObject, LPWSANETWORKEVENTS lpN
     std::lock_guard<std::mutex> lock(g_mutex);
     auto it = g_socks.find(s); if (it != g_socks.end()) it->second.connectReported = true;
   }
+  // A listening socket (SSH port forwarding) is "readable" when a connection is waiting: that is
+  // FD_ACCEPT on Windows, never FD_READ/FD_CLOSE. The owner declares it (winscp_socket_mark_listener):
+  // SO_ACCEPTCONN cannot be queried on macOS (ENOPROTOOPT).
+  if (listening)
+  {
+    if (rd && (mask & FD_ACCEPT)) ev |= FD_ACCEPT;
+    lpNetworkEvents->lNetworkEvents = ev;
+    return 0;
+  }
   if (rd && (mask & FD_READ))
   {
     // distinguish a graceful close: peek for 0 bytes
@@ -116,44 +135,86 @@ int WSAEnumNetworkEvents(SOCKET s, WSAEVENT hEventObject, LPWSANETWORKEVENTS lpN
         auto it = g_socks.find(s); if (it != g_socks.end()) it->second.closeReported = true;
       }
     }
-    else
+    else if (readArmed)
     {
       ev |= FD_READ;
+      std::lock_guard<std::mutex> lock(g_mutex);
+      auto it = g_socks.find(s); if (it != g_socks.end()) it->second.readArmed = false;
     }
   }
-  if (wr && (mask & FD_WRITE) && !(ev & FD_CONNECT)) ev |= FD_WRITE;
+  if (wr && (mask & FD_WRITE) && !(ev & FD_CONNECT) && !wantConnectShot && writeArmed)
+  {
+    ev |= FD_WRITE;
+    std::lock_guard<std::mutex> lock(g_mutex);
+    auto it = g_socks.find(s); if (it != g_socks.end()) it->second.writeArmed = false;
+  }
   if (ex && (mask & FD_OOB)) ev |= FD_OOB;
   lpNetworkEvents->lNetworkEvents = ev;
   return 0;
 }
 
+// The socket owner declares a listening socket (after registering it with WSAEventSelect).
+void winscp_socket_mark_listener(SOCKET s)
+{
+  std::lock_guard<std::mutex> lock(g_mutex);
+  auto it = g_socks.find(s);
+  if (it != g_socks.end()) it->second.listener = true;
+}
+
+// The socket owner tells the emulation that an event may be reported again: FD_READ after it has
+// read from the socket (or is ready to read again), FD_WRITE after a send came back EWOULDBLOCK.
+void winscp_socket_rearm(SOCKET s, long events)
+{
+  std::lock_guard<std::mutex> lock(g_mutex);
+  auto it = g_socks.find(s);
+  if (it == g_socks.end()) return;
+  if (events & FD_READ) it->second.readArmed = true;
+  if (events & FD_WRITE) it->second.writeArmed = true;
+}
+
 // Bridge socket readiness to the WSA event handles: zero-timeout select() over every registered
-// socket; if any has a ready bit within its mask, SetEvent on its associated handle. The engine's
-// WaitForMultipleObjects calls this each poll cycle so its FSocketEvent wakes on socket activity
-// (the WSAEventSelect emulation can't auto-signal at the kernel level). Returns #events signaled.
+// socket; if any has something WSAEnumNetworkEvents would report, SetEvent on its associated handle.
+// The engine's WaitForMultipleObjects calls this each poll cycle so its FSocketEvent wakes on socket
+// activity (the WSAEventSelect emulation can't auto-signal at the kernel level). Returns #events signaled.
 int winscp_pump_socket_events(void)
 {
-  std::vector<std::pair<SOCKET, WSAEVENT>> snapshot;
+  struct Item { SOCKET s; WSAEVENT event; bool wantRead, wantEof, wantWrite; };
+  std::vector<Item> snapshot;
   long maxfd = -1;
-  fd_set rd, wr, ex;
-  FD_ZERO(&rd); FD_ZERO(&wr); FD_ZERO(&ex);
+  fd_set rd, wr;
+  FD_ZERO(&rd); FD_ZERO(&wr);
   {
     std::lock_guard<std::mutex> lock(g_mutex);
     for (auto & kv : g_socks)
     {
-      SOCKET s = kv.first;
-      FD_SET(s, &rd); FD_SET(s, &wr); FD_SET(s, &ex);
-      if (s > maxfd) maxfd = s;
-      snapshot.push_back({s, kv.second.event});
+      const SockReg & reg = kv.second;
+      Item it;
+      it.s = kv.first; it.event = reg.event;
+      // (after FD_CLOSE was reported there is nothing more to read: EOF stays "readable" forever)
+      it.wantRead = reg.readArmed && !reg.closeReported && (reg.mask & (FD_READ | FD_ACCEPT));
+      it.wantEof = (reg.mask & FD_CLOSE) && !reg.closeReported;
+      it.wantWrite = ((reg.mask & FD_CONNECT) && !reg.connectReported) || ((reg.mask & FD_WRITE) && reg.writeArmed);
+      if (!it.wantRead && !it.wantEof && !it.wantWrite) continue;
+      if (it.wantRead || it.wantEof) FD_SET(it.s, &rd);
+      if (it.wantWrite) FD_SET(it.s, &wr);
+      if (it.s > maxfd) maxfd = it.s;
+      snapshot.push_back(it);
     }
   }
   if (snapshot.empty()) return 0;
   struct timeval tv{0, 0};
-  if (::select((int)maxfd + 1, &rd, &wr, &ex, &tv) <= 0) return 0;
+  if (::select((int)maxfd + 1, &rd, &wr, nullptr, &tv) <= 0) return 0;
   int signaled = 0;
   for (auto & p : snapshot)
-    if (FD_ISSET(p.first, &rd) || FD_ISSET(p.first, &wr) || FD_ISSET(p.first, &ex))
-    { if (p.second) { SetEvent(p.second); ++signaled; } }
+  {
+    bool ready = p.wantWrite && FD_ISSET(p.s, &wr);
+    if (!ready && FD_ISSET(p.s, &rd))
+    {
+      if (p.wantRead) ready = true;
+      else { char c; ready = (::recv(p.s, &c, 1, MSG_PEEK) == 0); }   // unread data is not news; EOF is
+    }
+    if (ready && p.event) { SetEvent(p.event); ++signaled; }
+  }
   return signaled;
 }
 

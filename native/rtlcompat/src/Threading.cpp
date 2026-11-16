@@ -10,6 +10,7 @@
 #include <map>
 #include <memory>
 #include <chrono>
+#include <unistd.h>
 
 // Socket-readiness pump (WinSock.cpp): signals WSA event handles whose sockets are ready, so the
 // engine's WaitForMultipleObjects loop wakes on network activity. Weakly used; harmless if no
@@ -67,7 +68,8 @@ struct ThreadObject : WaitObject
     });
   }
   ~ThreadObject() override { if (Th.joinable()) { Resume(); Th.join(); } }
-  void Resume() { { std::lock_guard<std::mutex> l(M); Resumed = true; } StartCV.notify_all(); }
+  // Returns whether the thread was still suspended (i.e. this call is what started it).
+  bool Resume() { bool was; { std::lock_guard<std::mutex> l(M); was = !Resumed; Resumed = true; } StartCV.notify_all(); return was; }
   bool Wait(DWORD ms) override
   {
     std::unique_lock<std::mutex> l(M);
@@ -100,7 +102,11 @@ struct RoutineThreadObject : WaitObject
 typedef std::shared_ptr<WaitObject> WaitObjectPtr;
 std::mutex g_mtx;
 std::map<int, WaitObjectPtr> g_objects;
-int g_next = 1;
+// Wait-object ids live far above any file descriptor: a HANDLE is either one of these or an fd
+// packed by CreateFile (SysExtra.cpp), and CloseHandle must tell them apart. (Both used to be small
+// integers: closing local file 9 destroyed wait object 9 - e.g. another session's socket event.)
+const int kFirstObjectId = 0x40000000;
+int g_next = kFirstObjectId;
 
 int Register(WaitObjectPtr o) { std::lock_guard<std::mutex> l(g_mtx); int id = g_next++; g_objects[id] = std::move(o); return id; }
 int Register(WaitObject * o) { return Register(WaitObjectPtr(o)); }
@@ -134,11 +140,29 @@ DWORD __fastcall WaitForMultipleObjects(DWORD Count, const HANDLE * Handles, BOO
   }
 }
 
-DWORD __fastcall ResumeThread(HANDLE Thread)  { WaitObjectPtr sp = Lookup(Thread); auto * t = dynamic_cast<ThreadObject *>(sp.get()); if (t) t->Resume(); return 0; }
+// Win32 returns the PREVIOUS suspend count: 1 for a thread created CREATE_SUSPENDED. The engine
+// depends on it - TSimpleThread::Start() only clears FFinished `if (ResumeThread(FThread) == 1)`,
+// and a thread still marked finished is never told to terminate (TTunnelThread kept running and
+// closing a tunnelled session blocked forever in the join).
+DWORD __fastcall ResumeThread(HANDLE Thread)
+{
+  WaitObjectPtr sp = Lookup(Thread);
+  auto * t = dynamic_cast<ThreadObject *>(sp.get());
+  if (t == nullptr) return (DWORD)-1;
+  return t->Resume() ? 1 : 0;
+}
 DWORD __fastcall SuspendThread(HANDLE)        { return 0; }  // not supported post-start
 BOOL  __fastcall SetThreadPriority(HANDLE, int) { return TRUE; }
 int   __fastcall GetThreadPriority(HANDLE)    { return THREAD_PRIORITY_NORMAL; }
-DWORD __fastcall GetCurrentThreadId()         { return (DWORD)(NativeUInt)std::hash<std::thread::id>{}(std::this_thread::get_id()); }
+// A Windows thread id is 32 bits and the engine stores it in `unsigned int` (TTunnelUI::FTerminalThread,
+// TTerminalQueue::FMainThread). DWORD is 8 bytes here, so the full hash never compared equal to the
+// stored copy: TTunnelUI answered every host-key query / prompt as "other thread" = abort, and no SSH
+// tunnel could be opened. Keep the id within 32 bits.
+DWORD __fastcall GetCurrentThreadId()
+{
+  size_t h = std::hash<std::thread::id>{}(std::this_thread::get_id());
+  return (DWORD)(unsigned int)(h ^ (h >> 32));
+}
 HANDLE __fastcall GetCurrentThread()          { return (HANDLE)(NativeInt)-2; }
 BOOL  __fastcall GetExitCodeThread(HANDLE Thread, DWORD * ExitCode)
 { WaitObjectPtr sp = Lookup(Thread); auto * t = dynamic_cast<ThreadObject *>(sp.get()); if (t && ExitCode) *ExitCode = t->ExitCode; return t != nullptr; }
@@ -152,8 +176,13 @@ BOOL __fastcall CloseHandle(HANDLE h)
   {
     std::lock_guard<std::mutex> l(g_mtx);
     auto it = g_objects.find((int)(NativeInt)h);
-    if (it != g_objects.end()) { dying = std::move(it->second); g_objects.erase(it); }
+    if (it != g_objects.end()) { dying = std::move(it->second); g_objects.erase(it); return TRUE; }
   }
+  // Not one of ours: a file handle from CreateFile. Win32 CloseHandle closes the file - the engine
+  // relies on it (uploads, downloads, timestamp updates); without the close every transferred file
+  // leaked a descriptor until the process ran out of them.
+  const NativeInt v = (NativeInt)h;
+  if (v > 2 && v < kFirstObjectId) return (::close((int)v) == 0) ? TRUE : FALSE;
   return TRUE;
 }
 

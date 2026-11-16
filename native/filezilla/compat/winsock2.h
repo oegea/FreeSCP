@@ -83,7 +83,12 @@ typedef struct addrinfo      ADDRINFOT;
 #define SD_SEND     SHUT_WR
 #define SD_BOTH     SHUT_RDWR
 
-inline int  closesocket(SOCKET s) { return ::close(s); }
+// Listening sockets are tracked explicitly (winmsg.cpp): SO_ACCEPTCONN cannot be queried on macOS
+// (ENOPROTOOPT), so the select loop never recognized one there and FD_ACCEPT was never posted.
+void fz_mark_listening(SOCKET s, bool on);
+inline int  closesocket(SOCKET s) { fz_mark_listening(s, false); return ::close(s); }
+inline int  fz_listen(SOCKET s, int backlog) { int r = ::listen(s, backlog); if (r == 0) fz_mark_listening(s, true); return r; }
+#define listen fz_listen
 // Windows reports a non-blocking connect-in-progress as WSAEWOULDBLOCK; POSIX uses EINPROGRESS.
 // FileZilla's connect path checks for WSAEWOULDBLOCK, so translate it here.
 inline int  WSAGetLastError() { return (errno == EINPROGRESS) ? EWOULDBLOCK : errno; }
@@ -97,7 +102,18 @@ inline int  ioctlsocket(SOCKET s, long cmd, unsigned long * argp)
     if (argp && *argp) fl |= O_NONBLOCK; else fl &= ~O_NONBLOCK;
     return ::fcntl(s, F_SETFL, fl) < 0 ? SOCKET_ERROR : 0;
   }
-  return ::ioctl(s, cmd, argp) < 0 ? SOCKET_ERROR : 0;   // FIONREAD etc
+  if (cmd == (long)FIONREAD)
+  {
+    // The kernel writes an `int`; the caller's argument is a DWORD, 8 bytes here. Handing the DWORD
+    // straight to ioctl() left its upper half untouched - garbage for the callers that do not
+    // initialize it (CAsyncSocketEx with a proxy/TLS layer: "bytes available" looked non-zero, so
+    // OnReceive ran with nothing to read and blocked the FTP worker in recv() forever).
+    int avail = 0;
+    if (::ioctl(s, FIONREAD, &avail) < 0) return SOCKET_ERROR;
+    if (argp) *argp = (unsigned long)(avail < 0 ? 0 : avail);
+    return 0;
+  }
+  return ::ioctl(s, cmd, argp) < 0 ? SOCKET_ERROR : 0;
 }
 inline int WSACancelAsyncRequest(HANDLE) { return 0; }
 #include <cstdio>
@@ -114,8 +130,12 @@ inline ssize_t fz_send(SOCKET s, const void * b, size_t n, int f)
   if (getenv("FZ_TRACE") && n < 200) { fprintf(stderr, "[fz] send sock=%d n=%zd: ", s, r); fwrite(b, 1, (r>0?(size_t)r:0), stderr); }
   return r; }
 #define send fz_send
+// Reads never block (MSG_DONTWAIT), as on a WSAAsyncSelect socket, which Windows makes non-blocking.
+// FileZilla relies on it: its proxy and TLS layers trigger FD_READ unconditionally and expect a recv
+// with nothing pending to come back WSAEWOULDBLOCK ("No data to read"). With a blocking recv the FTP
+// worker hung there on the first such event - any connection through a proxy never got past login.
 inline ssize_t fz_recv(SOCKET s, void * b, size_t n, int f)
-{ ssize_t r = ::recv(s, b, n, f);
+{ ssize_t r = ::recv(s, b, n, f | MSG_DONTWAIT);
   if (getenv("FZ_TRACE") && !(f & MSG_PEEK)) fprintf(stderr, "[fz] recv sock=%d n=%zd\n", s, r);
   return r; }
 #define recv fz_recv

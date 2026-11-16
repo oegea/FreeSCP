@@ -2497,7 +2497,14 @@ static bool __fastcall DoRecursiveDeleteFile(
     Result = FileSearchRec(FileName, InitialSearchRec);
     if (Result)
     {
+#ifdef _WIN32
       if (!InitialSearchRec.IsDirectory())
+#else
+      // WINSCP-NATIVE-PORT: a symbolic link to a directory is removed as the link it is; its
+      // target's contents are not ours to delete (the attribute follows the link here).
+      UnicodeString SymLinkTarget;
+      if (!InitialSearchRec.IsDirectory() || FileGetSymLinkTarget(FileName, SymLinkTarget))
+#endif
       {
         Result = DeleteFile(ApiPath(FileName));
         if (Result)
@@ -2508,7 +2515,13 @@ static bool __fastcall DoRecursiveDeleteFile(
       else
       {
         TSearchRecOwned SearchRec;
+#ifdef _WIN32
         Result = (FindFirstUnchecked(FileName + L"\\*", faAnyFile, SearchRec) == 0);
+#else
+        // WINSCP-NATIVE-PORT: a literal backslash is not a path separator here; it ended up in the
+        // paths of the files to delete ("dir\\file"), so no directory with content could be removed.
+        Result = (FindFirstUnchecked(IncludeTrailingBackslash(FileName) + L"*", faAnyFile, SearchRec) == 0);
+#endif
 
         if (Result)
         {

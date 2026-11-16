@@ -45,10 +45,20 @@ bool __fastcall IsAuthenticationPrompt(TPromptKind Kind)
          (Kind == pkNewPassword) || (Kind == pkTIS) || (Kind == pkCryptoCard) ||
          (Kind == pkKeybInteractive);
 }
-bool __fastcall IsPasswordOrPassphrasePrompt(TPromptKind Kind, TStrings *)
+// Same rule as upstream CoreMain.cpp: only a single hidden field is a "password" the engine may
+// answer with the remembered one. A multi-field keyboard-interactive challenge (password + one-time
+// code) is NOT - the earlier "any keyboard-interactive" shortcut answered field 0 and left the rest empty.
+bool __fastcall IsPasswordOrPassphrasePrompt(TPromptKind Kind, TStrings * Prompts)
 {
-  return (Kind == pkPassword) || (Kind == pkPassphrase) || (Kind == pkNewPassword) ||
-         (Kind == pkTIS) || (Kind == pkCryptoCard) || (Kind == pkKeybInteractive);
+  return
+    (Prompts != nullptr) && (Prompts->Count == 1) &&
+    ((reinterpret_cast<intptr_t>(Prompts->Objects[0]) & pupEcho) == 0) &&
+    ((Kind == pkPassword) || (Kind == pkPassphrase) || (Kind == pkKeybInteractive) ||
+     (Kind == pkTIS) || (Kind == pkCryptoCard));
+}
+bool __fastcall IsPasswordPrompt(TPromptKind Kind, TStrings * Prompts)
+{
+  return IsPasswordOrPassphrasePrompt(Kind, Prompts) && (Kind != pkPassphrase);
 }
 void __fastcall AnswerNameAndCaption(unsigned int, UnicodeString & Name, UnicodeString & Caption)
 { Name = UnicodeString(); Caption = UnicodeString(); }

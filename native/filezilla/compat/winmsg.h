@@ -89,11 +89,13 @@ inline BOOL TranslateMessage(const MSG *) { return FALSE; }
 LRESULT DispatchMessage(const MSG * msg);
 LRESULT DefWindowProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
-// Timers: stubbed for now (FileZilla uses WM_TIMER for keepalive/timeouts). SetTimer returns the id;
-// no WM_TIMER is posted yet — wire a timer thread when keepalive/timeout behavior is needed.
+// Timers (winmsg.cpp): WM_TIMER is posted to the owner's message queue every `ms` milliseconds, as on
+// Win32 (hwnd == NULL: a thread timer of the calling thread, the returned id identifies it; pending
+// WM_TIMERs of one timer are coalesced). FileZilla depends on them for the control-connection
+// timeout, keep-alive and the delayed close notification of layered (TLS / proxy) sockets.
 typedef void (CALLBACK * TIMERPROC)(HWND, UINT, UINT_PTR, DWORD);
-inline UINT_PTR SetTimer(HWND, UINT_PTR id, UINT, TIMERPROC) { return id ? id : 1; }
-inline BOOL KillTimer(HWND, UINT_PTR) { return TRUE; }
+UINT_PTR SetTimer(HWND hWnd, UINT_PTR id, UINT ms, TIMERPROC);
+BOOL KillTimer(HWND hWnd, UINT_PTR id);
 
 // WSAAsyncSelect: register socket -> (hwnd, baseMsg, eventMask). lEvent==0 unregisters. A background
 // select() thread posts baseMsg with wParam=socket, lParam=MAKELONG(FD_event, 0) on readiness.

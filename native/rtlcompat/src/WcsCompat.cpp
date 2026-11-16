@@ -10,6 +10,7 @@
 #include <stdarg.h>
 #include <stdio.h>
 #include <string>
+#include <cstdlib>
 
 extern "C" {
 
@@ -25,6 +26,30 @@ int winscp_swscanf(const wchar_t * s, const wchar_t * fmt, ...)
   int r = ::vsscanf(ns.c_str(), nf.c_str(), ap);
   va_end(ap);
   return r;
+}
+
+// The numeric text is ASCII: narrow the leading run that can belong to a number, let strtol /
+// strtoul do the parsing (sign, base prefixes, overflow), and map the end pointer back.
+static const char * winscp_narrow_number(const wchar_t * s, std::string & narrow)
+{
+  for (const wchar_t * p = s; *p != 0 && *p < 128; ++p) narrow.push_back(static_cast<char>(*p));
+  return narrow.c_str();
+}
+long winscp_wcstol(const wchar_t * s, wchar_t ** end, int base)
+{
+  std::string narrow; char * nend = nullptr;
+  const char * n = winscp_narrow_number(s, narrow);
+  long v = ::strtol(n, &nend, base);
+  if (end != nullptr) *end = const_cast<wchar_t *>(s) + (nend - n);
+  return v;
+}
+unsigned long winscp_wcstoul(const wchar_t * s, wchar_t ** end, int base)
+{
+  std::string narrow; char * nend = nullptr;
+  const char * n = winscp_narrow_number(s, narrow);
+  unsigned long v = ::strtoul(n, &nend, base);
+  if (end != nullptr) *end = const_cast<wchar_t *>(s) + (nend - n);
+  return v;
 }
 
 size_t winscp_wcslen(const wchar_t * s)

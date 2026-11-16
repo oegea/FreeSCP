@@ -10,10 +10,12 @@
 #include <vector>
 #include <deque>
 #include <map>
+#include <set>
 #include <string>
 #include <mutex>
 #include <condition_variable>
 #include <thread>
+#include <chrono>
 #include <atomic>
 #include <sys/select.h>
 #include <sys/socket.h>
@@ -43,6 +45,12 @@ std::map<std::u16string, WNDPROC> g_classes;   // RegisterClassEx: class name ->
 struct SockReg { HWND hwnd; UINT msg; long events; DWORD owner; };   // owner: thread of hwnd (captured while it is alive)
 std::map<SOCKET, SockReg> g_sockets;           // WSAAsyncSelect registrations
 std::map<SOCKET, long> g_posted;               // events already pending/posted per socket (latch)
+std::set<SOCKET> g_listening;                  // sockets that had listen() called (see fz_mark_listening)
+
+// Timers (SetTimer/KillTimer). Fired from the select loop.
+struct FzTimer { HWND hwnd; DWORD owner; UINT_PTR id; UINT ms; std::chrono::steady_clock::time_point next; };
+std::vector<FzTimer> g_timers;
+UINT_PTR g_nextThreadTimerId = 0x7000;
 
 std::thread g_selThread;
 std::atomic<bool> g_selRun{false};
@@ -79,8 +87,29 @@ void selectLoop()
         if (s > maxfd) maxfd = s;
       }
     }
-    timeval tv{ 0, 100000 };   // 100ms
+    long waitUs = 100000;   // 100ms, or less if a timer is due sooner
+    {
+      std::lock_guard<std::mutex> lk(g_mtx);
+      const auto now = std::chrono::steady_clock::now();
+      for (const FzTimer & t : g_timers)
+      {
+        long us = (long)std::chrono::duration_cast<std::chrono::microseconds>(t.next - now).count();
+        if (us < waitUs) waitUs = us < 1000 ? 1000 : us;
+      }
+    }
+    timeval tv{ 0, (int)waitUs };
     int r = ::select(maxfd + 1, &rfds, &wfds, nullptr, &tv);
+    {
+      // due timers -> WM_TIMER (one pending message per timer at most, like Windows)
+      std::lock_guard<std::mutex> lk(g_mtx);
+      const auto now = std::chrono::steady_clock::now();
+      for (FzTimer & t : g_timers)
+      {
+        if (t.next > now) continue;
+        t.next = now + std::chrono::milliseconds(t.ms);
+        if (!queueHas(t.hwnd, WM_TIMER, (WPARAM)t.id, 0)) postLocked(t.hwnd, WM_TIMER, (WPARAM)t.id, 0, t.owner);
+      }
+    }
     if (r < 0)
     {
       if (errno == EBADF)   // a socket was closed without unregistering; drop dead fds to stop spinning
@@ -109,9 +138,8 @@ void selectLoop()
       if (FD_ISSET(s, &wfds)) { fire(FD_CONNECT); fire(FD_WRITE); }
       if (FD_ISSET(s, &rfds))
       {
-        int listening = 0; socklen_t ol = sizeof(listening);   // the event mask is always 0x3f, so only
-        ::getsockopt(s, SOL_SOCKET, SO_ACCEPTCONN, &listening, &ol);  // a REAL listening socket gets FD_ACCEPT
-        if (listening) { fire(FD_ACCEPT); }
+        // the event mask is always 0x3f, so only a REAL listening socket gets FD_ACCEPT
+        if (g_listening.count(s) != 0) { fire(FD_ACCEPT); }
         else
         {
           fire(FD_READ);   // level-triggered: drives FileZilla's state machine + reads data-channel bytes
@@ -134,11 +162,13 @@ void selectLoop()
 
 void ensureSelectThread()
 {
-  if (g_selRun.load()) return;
-  if (g_wake[0] < 0) { if (::pipe(g_wake) == 0) { ::fcntl(g_wake[0], F_SETFL, O_NONBLOCK); } }
-  g_selRun = true;
-  g_selThread = std::thread(selectLoop);
-  g_selThread.detach();
+  static std::once_flag once;
+  std::call_once(once, [] {
+    if (g_wake[0] < 0) { if (::pipe(g_wake) == 0) { ::fcntl(g_wake[0], F_SETFL, O_NONBLOCK); ::fcntl(g_wake[1], F_SETFL, O_NONBLOCK); } }
+    g_selRun = true;
+    g_selThread = std::thread(selectLoop);
+    g_selThread.detach();
+  });
 }
 
 } // namespace
@@ -155,6 +185,8 @@ unsigned long threadTrampoline(void * p)
   t_tid = st.tid;                                  // the id PostThreadMessage will be given
   unsigned long r = st.fn ? st.fn(st.param) : 0;
   { std::lock_guard<std::mutex> lk(g_mtx);         // nobody will read this thread's messages any more
+    for (auto it = g_timers.begin(); it != g_timers.end(); )
+      if (it->owner == st.tid) it = g_timers.erase(it); else ++it;
     for (auto it = g_queue.begin(); it != g_queue.end(); )
       if (it->time == st.tid) it = g_queue.erase(it); else ++it; }
   return r;
@@ -199,6 +231,8 @@ BOOL DestroyWindow(HWND hWnd)
 {
   if (!hWnd) return FALSE;
   { std::lock_guard<std::mutex> lk(g_mtx);
+    for (auto it = g_timers.begin(); it != g_timers.end(); )  // its timers die with it
+      if (it->hwnd == hWnd) it = g_timers.erase(it); else ++it;
     for (auto it = g_queue.begin(); it != g_queue.end(); )   // drop pending messages for this window
       if (it->hwnd == hWnd) it = g_queue.erase(it); else ++it; }
   delete (FzWindow *)hWnd;
@@ -238,11 +272,16 @@ static bool matches(const MSG & m, HWND hwnd, UINT lo, UINT hi)
   return m.message >= lo && m.message <= hi;
 }
 
+// WM_TIMER is a low-priority message on Win32: it is delivered only when nothing else is waiting.
+// FileZilla depends on that order - e.g. the "transfer ended" notification must be handled before
+// the next timeout check, or a control connection that was rightly silent during a long transfer is
+// declared dead. pass 0 = everything but timers, pass 1 = timers.
 BOOL PeekMessage(LPMSG out, HWND hWnd, UINT lo, UINT hi, UINT removeFlag)
 {
   std::lock_guard<std::mutex> lk(g_mtx);
+  for (int pass = 0; pass < 2; ++pass)
   for (auto it = g_queue.begin(); it != g_queue.end(); ++it)
-    if (matches(*it, hWnd, lo, hi))
+    if (((it->message == WM_TIMER) == (pass == 1)) && matches(*it, hWnd, lo, hi))
     {
       if (out) *out = *it;
       if (removeFlag & PM_REMOVE) { SOCKET s = (SOCKET)it->wParam; (void)s; g_queue.erase(it); }
@@ -256,8 +295,9 @@ BOOL GetMessage(LPMSG out, HWND hWnd, UINT lo, UINT hi)
   std::unique_lock<std::mutex> lk(g_mtx);
   for (;;)
   {
+    for (int pass = 0; pass < 2; ++pass)
     for (auto it = g_queue.begin(); it != g_queue.end(); ++it)
-      if (matches(*it, hWnd, lo, hi))
+      if (((it->message == WM_TIMER) == (pass == 1)) && matches(*it, hWnd, lo, hi))
       {
         MSG m = *it; g_queue.erase(it);
         if (out) *out = m;
@@ -279,6 +319,12 @@ LRESULT DispatchMessage(const MSG * msg)
 
 LRESULT DefWindowProc(HWND, UINT, WPARAM, LPARAM) { return 0; }
 
+void fz_mark_listening(SOCKET s, bool on)
+{
+  std::lock_guard<std::mutex> lk(g_mtx);
+  if (on) g_listening.insert(s); else g_listening.erase(s);
+}
+
 int WSAAsyncSelect(SOCKET s, HWND hWnd, UINT msg, long lEvent)
 {
   if (getenv("FZ_TRACE")) fprintf(stderr, "[fz] WSAAsyncSelect sock=%d msg=%u events=0x%lx\n", s, msg, lEvent);
@@ -286,8 +332,34 @@ int WSAAsyncSelect(SOCKET s, HWND hWnd, UINT msg, long lEvent)
   if (lEvent == 0) { g_sockets.erase(s); g_posted.erase(s); }
   else { g_sockets[s] = SockReg{ hWnd, msg, lEvent, hWnd ? ((FzWindow *)hWnd)->owner : myTid() }; g_posted[s] = 0; }
   // (re)start + wake the select loop; ensureSelectThread re-locks via atomics only, safe here.
-  if (!g_selRun.load()) { /* started outside the lock below */ }
   wakeSelect();
-  static std::once_flag once; std::call_once(once, []{ ensureSelectThread(); });
+  ensureSelectThread();
   return 0;
+}
+
+UINT_PTR SetTimer(HWND hWnd, UINT_PTR id, UINT ms, TIMERPROC)
+{
+  {
+    std::lock_guard<std::mutex> lk(g_mtx);
+    const DWORD owner = hWnd ? ((FzWindow *)hWnd)->owner : myTid();
+    if (!hWnd) id = g_nextThreadTimerId++;                 // thread timer: the system picks the id
+    FzTimer t{ hWnd, owner, id, ms ? ms : 1, std::chrono::steady_clock::now() + std::chrono::milliseconds(ms ? ms : 1) };
+    bool replaced = false;
+    for (FzTimer & e : g_timers) if (e.hwnd == hWnd && e.id == id && e.owner == owner) { e = t; replaced = true; }
+    if (!replaced) g_timers.push_back(t);
+  }
+  ensureSelectThread();
+  wakeSelect();
+  return id;
+}
+
+BOOL KillTimer(HWND hWnd, UINT_PTR id)
+{
+  std::lock_guard<std::mutex> lk(g_mtx);
+  bool found = false;
+  for (auto it = g_timers.begin(); it != g_timers.end(); )
+    if (it->hwnd == hWnd && it->id == id) { it = g_timers.erase(it); found = true; } else ++it;
+  for (auto it = g_queue.begin(); it != g_queue.end(); )    // and its pending notifications
+    if (it->hwnd == hWnd && it->message == WM_TIMER && it->wParam == (WPARAM)id) it = g_queue.erase(it); else ++it;
+  return found ? TRUE : FALSE;
 }

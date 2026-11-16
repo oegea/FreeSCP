@@ -6,6 +6,7 @@
 #ifndef WINSCP_RTLCOMPAT_SYSUTILS_HPP
 #define WINSCP_RTLCOMPAT_SYSUTILS_HPP
 
+#include <cmath>
 #include "winscp/rtldefs.h"
 #include "winscp/wintypes.h"
 #include "winscp/WinCompat.h"
@@ -74,6 +75,19 @@ struct TFormatSettings
   StaticArray<UnicodeString, 13> LongMonthNames;
   StaticArray<UnicodeString, 8> ShortDayNames;
   StaticArray<UnicodeString, 8> LongDayNames;
+  // English names (the port is not localized; the engine only ever asks for locale 1033 by id, to
+  // parse/print RFC 1123 dates). Indexed from 0, as C++Builder's StaticArray is. With these left
+  // empty every "Mon, 16 Nov 2026 ..." date failed to parse: WebDAV listings had no timestamps.
+  TFormatSettings()
+  {
+    static const wchar_t * const sm[12] = { L"Jan", L"Feb", L"Mar", L"Apr", L"May", L"Jun", L"Jul", L"Aug", L"Sep", L"Oct", L"Nov", L"Dec" };
+    static const wchar_t * const lm[12] = { L"January", L"February", L"March", L"April", L"May", L"June", L"July", L"August",
+                                            L"September", L"October", L"November", L"December" };
+    static const wchar_t * const sd[7] = { L"Sun", L"Mon", L"Tue", L"Wed", L"Thu", L"Fri", L"Sat" };
+    static const wchar_t * const ld[7] = { L"Sunday", L"Monday", L"Tuesday", L"Wednesday", L"Thursday", L"Friday", L"Saturday" };
+    for (int i = 0; i < 12; ++i) { ShortMonthNames[i] = sm[i]; LongMonthNames[i] = lm[i]; }
+    for (int i = 0; i < 7; ++i) { ShortDayNames[i] = sd[i]; LongDayNames[i] = ld[i]; }
+  }
   static TFormatSettings __fastcall Create() { return TFormatSettings(); }
   static TFormatSettings __fastcall Create(int /*Locale*/) { return TFormatSettings(); }
 };
@@ -216,9 +230,13 @@ public:
   Variant(unsigned long v) : FValue((long long)v), FNull(false) {}
   Variant(double v) : FDbl(v), FIsDbl(true), FNull(false) {}   // e.g. TDateTime difference (days)
   Variant(const UnicodeString & s) : FStr(s), FIsStr(true), FNull(false) {}
-  operator int() const { return FIsDbl ? static_cast<int>(FDbl) : static_cast<int>(FValue); }
-  operator unsigned int() const { return FIsDbl ? static_cast<unsigned int>(FDbl) : static_cast<unsigned int>(FValue); }
-  operator long long() const { return FIsDbl ? static_cast<long long>(FDbl) : FValue; }
+  // A floating-point Variant converts to an integer by ROUNDING (to nearest, ties to even), as in
+  // Delphi - not by truncation. The engine relies on it: the FTP time-zone detection computes
+  // SecsPerDay * (difference in days) and reads it as whole seconds; truncated, 3599.99999 became
+  // 3599 and every listed time was off by a second (enough to make synchronized files look different).
+  operator int() const { return FIsDbl ? static_cast<int>(std::llrint(FDbl)) : static_cast<int>(FValue); }
+  operator unsigned int() const { return FIsDbl ? static_cast<unsigned int>(std::llrint(FDbl)) : static_cast<unsigned int>(FValue); }
+  operator long long() const { return FIsDbl ? std::llrint(FDbl) : FValue; }
   operator double() const { return FIsDbl ? FDbl : (FIsStr ? FStr.ToDouble() : static_cast<double>(FValue)); }
   operator UnicodeString() const { return FIsStr ? FStr : UnicodeString(static_cast<long long>(FValue)); }
   bool __fastcall IsNull() const { return FNull; }

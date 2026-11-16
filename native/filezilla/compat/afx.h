@@ -135,6 +135,14 @@ inline int _istspace(wchar_t c) { return c == L' ' || c == L'\t' || c == L'\r' |
 inline int _ttoi(const wchar_t * s) { int v = 0, sign = 1; if (!s) return 0; while (_istspace(*s)) ++s; if (*s == L'-') { sign = -1; ++s; } else if (*s == L'+') ++s; while (_istdigit(*s)) v = v * 10 + (*s++ - L'0'); return v * sign; }
 inline long long _ttoi64(const wchar_t * s) { long long v = 0, sign = 1; if (!s) return 0; while (_istspace(*s)) ++s; if (*s == L'-') { sign = -1; ++s; } else if (*s == L'+') ++s; while (_istdigit(*s)) v = v * 10 + (*s++ - L'0'); return v * sign; }
 inline int strnicmp(const char * a, const char * b, size_t n) { return strncasecmp(a, b, n); }
+// rand(): FileZilla computes (rand()*4)/(RAND_MAX+1) and (rand()*diff)/RAND_MAX, written for the
+// Windows CRT where RAND_MAX is 32767. With the POSIX 2^31-1 both overflow int: the keep-alive picked
+// a command index outside its 4-entry table and crashed. Give it the range it was written for.
+inline int fz_rand() { return ::rand() & 0x7fff; }
+#undef RAND_MAX
+#define RAND_MAX 0x7fff
+#define rand() fz_rand()
+
 // TCHAR string fns (TCHAR == 2-byte wchar; the wcs* names resolve to WcsCompat shims).
 #define _tcslen   wcslen
 #define _tcscpy   wcscpy
@@ -388,7 +396,11 @@ typedef CString CStringW;
 #include <ctime>
 #include <fcntl.h>
 #include <cerrno>
-inline DWORD GetLastError() { return 0; }
+// The thread's last error = errno, with the same translation as WSAGetLastError (winsock2.h): on
+// Windows the two are one value, and FileZilla's TLS / transfer layers read socket errors with a
+// bare GetLastError(). (It returned a constant 0: "would block" was never recognized there, every
+// EWOULDBLOCK became a network error and no TLS handshake could complete.)
+inline DWORD GetLastError() { return (DWORD)((errno == EINPROGRESS) ? EWOULDBLOCK : errno); }
 void fz_raise_os_error(int err);                       // throws EOSError (afx_format.cpp)
 std::string fz_path_utf8(const wchar_t * name);        // UTF-16 path -> UTF-8 (afx_format.cpp)
 

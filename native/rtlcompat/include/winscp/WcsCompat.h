@@ -53,6 +53,11 @@ wchar_t * winscp_wcsdup(const wchar_t * s);
 // converts the (ASCII) format + input to narrow and forwards to vsscanf. NUMERIC conversions
 // only — %s/%ls would write the wrong width; the sole engine call site parses integers.
 int winscp_swscanf(const wchar_t * s, const wchar_t * fmt, ...);
+// 2-byte-wchar wcstol / wcstoul. libc's read the string as 4-byte characters: FileZilla's MDTM
+// reply parser (FtpControlSocket.cpp atoui) got garbage for every field, so a file's UTC time could
+// never be read and the FTP server's time zone was never detected.
+long winscp_wcstol(const wchar_t * s, wchar_t ** end, int base);
+unsigned long winscp_wcstoul(const wchar_t * s, wchar_t ** end, int base);
 #ifdef __cplusplus
 }
 #endif
@@ -70,5 +75,9 @@ int winscp_swscanf(const wchar_t * s, const wchar_t * fmt, ...);
 #define wcsdup  winscp_wcsdup
 #define _wcsdup winscp_wcsdup
 #define swscanf winscp_swscanf
+// Function-like on purpose: libstdc++'s <string> takes the ADDRESS of std::wcstol / std::wcstoul
+// (std::stol(const wstring &) ...), which an object-like macro would rewrite into a non-member.
+#define wcstol(s, e, b)  winscp_wcstol((s), (e), (b))
+#define wcstoul(s, e, b) winscp_wcstoul((s), (e), (b))
 
 #endif

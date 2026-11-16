@@ -4005,8 +4005,21 @@ void CFtpControlSocket::Cancel(BOOL bQuit/*=FALSE*/)
   }
   else if (nOpMode & CSMODE_TRANSFER)
   {
+#ifdef _WIN32
     if (m_Operation.nOpState == FILETRANSFER_WAITFINISH || m_Operation.nOpState == FILETRANSFER_LIST_WAITFINISH)
       m_skipReply = true;
+#else
+    // WINSCP-NATIVE-PORT: only a reply that is still to come may be skipped. If the server has
+    // already answered the transfer (226 received while the data connection was still being
+    // drained - the normal case when a download is cancelled on a fast link), skipping "the next
+    // reply" swallows the answer to the next command and the session stalls until the timeout.
+    if (m_Operation.nOpState == FILETRANSFER_WAITFINISH || m_Operation.nOpState == FILETRANSFER_LIST_WAITFINISH)
+    {
+      CFileTransferData * pTransferData = static_cast<CFileTransferData *>(m_Operation.pData);
+      if ((pTransferData == NULL) || ((pTransferData->nGotTransferEndReply & 1) == 0))
+        m_skipReply = true;
+    }
+#endif
     ResetOperation(FZ_REPLY_ERROR | FZ_REPLY_CANCEL | FZ_REPLY_ABORTED);
   }
   else if (nOpMode != CSMODE_NONE)

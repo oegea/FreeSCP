@@ -11,6 +11,8 @@
 #include <cstring>
 #include <cstdio>
 #include <map>
+#include <mutex>
+#include <random>
 #include <vector>
 #include <unistd.h>
 #include <sys/stat.h>
@@ -68,10 +70,18 @@ TDateTime __fastcall EncodeDate(int Year, int Month, int Day)
 TDateTime __fastcall EncodeTime(int Hour, int Min, int Sec, int MSec)
 { return TDateTime((((Hour * 60.0 + Min) * 60.0 + Sec) * 1000.0 + MSec) / MSecsPerDay); }
 
+// Day number + fraction of the day, with the value first rounded to the millisecond (Delphi's own
+// resolution). Splitting the raw double instead let a time a hair before midnight (2026-01-01
+// 00:00:00 arrives as 46022.99999999999 after the engine's time zone arithmetic) decode as the
+// PREVIOUS day at 24:00:00.
 static void Split(const TDateTime & dt, long & days, double & frac)
 {
-  double v = dt; days = static_cast<long>(std::floor(v)); frac = v - days;
-  if (frac < 0) { frac += 1; days -= 1; }
+  double v = static_cast<double>(dt);
+  long long ms = std::llround(v * static_cast<double>(MSecsPerDay));
+  long long d = ms / MSecsPerDay, r = ms % MSecsPerDay;
+  if (r < 0) { r += MSecsPerDay; --d; }
+  days = static_cast<long>(d);
+  frac = static_cast<double>(r) / static_cast<double>(MSecsPerDay);
 }
 void __fastcall DecodeDate(const TDateTime & DT, Word & Year, Word & Month, Word & Day)
 { long days; double f; Split(DT, days, f); int y,m,d; SerialToDate(days, y, m, d);
@@ -252,17 +262,33 @@ UnicodeString __fastcall GetEnvironmentVariable(const UnicodeString & Name)
 bool __fastcall PathIsRelative(const wchar_t * Path) { UnicodeString p(Path); return p.IsEmpty() || (p[1] != L'/' && p[1] != L'\\'); }
 
 //=== FindFirst/Next/Close (std::filesystem) ===
+void winscp_stat_to_filetimes(const struct stat & st, FILETIME * creation, FILETIME * access, FILETIME * write);  // WinTime.cpp
 namespace {
 struct FindState { std::vector<fs::directory_entry> entries; size_t pos = 0; };
 std::map<int, FindState *> g_finds; int g_nextHandle = 1;
+std::mutex g_findsMtx;   // parallel transfers enumerate local directories from several threads
 void Fill(TSearchRec & F, const fs::directory_entry & e)
 {
   std::error_code ec;
   F.Name = FromU8(e.path().filename().string());
   F.Attr = e.is_directory(ec) ? faDirectory : 0;
+  // Unix convention: a leading dot hides the entry (Windows has an attribute bit for it). The engine
+  // reads faHidden for "exclude hidden files" in transfers and synchronization.
+  if (F.Name.Length() > 1 && F.Name[1] == L'.' && F.Name != UnicodeString(L"..") && F.Name != UnicodeString(L".")) F.Attr |= faHidden;
   F.Size = e.is_regular_file(ec) ? static_cast<__int64>(e.file_size(ec)) : 0;
   std::memset(&F.FindData, 0, sizeof(F.FindData));
   F.FindData.dwFileAttributes = static_cast<DWORD>(F.Attr);
+  // Win32 find data: timestamps + size. TSearchRecSmart::GetLastWriteTime (local side of
+  // Synchronize / "newer only") reads ftLastWriteTime, not TimeStamp.
+  {
+    struct stat st;
+    if (::stat(e.path().c_str(), &st) == 0 || ::lstat(e.path().c_str(), &st) == 0)
+    {
+      winscp_stat_to_filetimes(st, &F.FindData.ftCreationTime, &F.FindData.ftLastAccessTime, &F.FindData.ftLastWriteTime);
+      F.FindData.nFileSizeLow = static_cast<DWORD>(static_cast<unsigned long long>(F.Size) & 0xFFFFFFFFULL);
+      F.FindData.nFileSizeHigh = static_cast<DWORD>(static_cast<unsigned long long>(F.Size) >> 32);
+    }
+  }
   // last-write time -> TDateTime (best-effort; file_clock -> system_clock -> local tm).
   auto ftime = fs::last_write_time(e.path(), ec);
   if (!ec)
@@ -276,33 +302,129 @@ void Fill(TSearchRec & F, const fs::directory_entry & e)
   }
 }
 }
+namespace {
+// Windows wildcard match of one file name: '*' = any run, '?' = any one character.
+bool MaskMatch(const std::u16string & mask, size_t mi, const std::u16string & name, size_t ni)
+{
+  while (mi < mask.size())
+  {
+    char16_t m = mask[mi];
+    if (m == u'*')
+    {
+      while (mi < mask.size() && mask[mi] == u'*') ++mi;
+      if (mi == mask.size()) return true;
+      for (size_t k = ni; k <= name.size(); ++k) if (MaskMatch(mask, mi, name, k)) return true;
+      return false;
+    }
+    if (ni >= name.size()) return false;
+    if (m != u'?' && m != name[ni]) return false;
+    ++mi; ++ni;
+  }
+  return ni == name.size();
+}
+bool FindMaskMatches(const std::u16string & mask, const std::u16string & name)
+{
+  if (mask == u"*" || mask == u"*.*") return true;            // "*.*" is "everything" on Windows
+  if (MaskMatch(mask, 0, name, 0)) return true;
+  // "name.*" also matches "name" (no extension), as on Windows
+  if (mask.size() > 2 && mask.compare(mask.size() - 2, 2, u".*") == 0)
+    return MaskMatch(mask.substr(0, mask.size() - 2), 0, name, 0);
+  return false;
+}
+} // namespace
+
+// FindFirst("<dir>/<name or mask>"): the last path component selects WHAT is returned - one specific
+// file, or the entries matching a wildcard mask. (It used to be ignored: every call enumerated the
+// whole directory, so a lookup of one file - FileSearchRec - returned whichever entry came first,
+// and "does this file exist" was true for any name in a non-empty directory.)
 int __fastcall FindFirst(const UnicodeString & Path, int /*Attr*/, TSearchRec & F)
 {
-  UnicodeString dir = ExtractFilePath(Path);
+  const std::u16string & raw = Path.raw();
+  size_t sep = raw.find_last_of(u"/\\");                 // the engine also builds "<dir>\\*"
+  std::u16string dirPart = (sep == std::u16string::npos) ? std::u16string() : raw.substr(0, sep + 1);
+  std::u16string mask = (sep == std::u16string::npos) ? raw : raw.substr(sep + 1);
+  if (!dirPart.empty() && dirPart.back() == u'\\') dirPart.back() = u'/';
+  std::string dirU8 = dirPart.empty() ? std::string(".") : ToU8(UnicodeString(dirPart.c_str(), (int)dirPart.size()));
   std::error_code ec;
   auto * st = new FindState();
-  std::string dirU8 = ToU8(dir.IsEmpty() ? UnicodeString(L".") : dir);
-  for (auto & e : fs::directory_iterator(dirU8, ec))
-    st->entries.push_back(e);
-  if (ec) { delete st; return ERROR_FILE_NOT_FOUND; }   // Delphi returns an OS error code, not -1
-  int h = g_nextHandle++; g_finds[h] = st; F.FindHandle = h;
-  return FindNext(F);
+  bool wild = (mask.find_first_of(u"*?") != std::u16string::npos);
+  // A path that exists as given is that file - even if its name contains '*', '?' or a backslash
+  // (all legal in a Unix file name), which would otherwise be read as a mask / a separator.
+  {
+    struct stat whole;
+    const std::string asGiven = ToU8(Path);
+    if (!raw.empty() && raw.back() != u'/' && mask != u"*" && mask != u"*.*" && ::lstat(asGiven.c_str(), &whole) == 0)
+    {
+      st->entries.push_back(fs::directory_entry(fs::path(asGiven), ec));
+      { std::lock_guard<std::mutex> lock(g_findsMtx); int h = g_nextHandle++; g_finds[h] = st; F.FindHandle = h; }
+      if (FindNext(F) == 0) return 0;
+      FindClose(F);
+      return ERROR_FILE_NOT_FOUND;
+    }
+  }
+  if (mask.empty())
+  {
+    delete st; return ERROR_FILE_NOT_FOUND;              // "dir/" names no file (FindFirstFile fails too)
+  }
+  else if (!wild)
+  {
+    // one specific entry: no enumeration (also keeps a lookup O(1) in huge directories)
+    fs::path p = fs::path(dirU8) / ToU8(UnicodeString(mask.c_str(), (int)mask.size()));
+    struct stat sb;
+    if (::lstat(p.c_str(), &sb) != 0) { delete st; return ERROR_FILE_NOT_FOUND; }
+    st->entries.push_back(fs::directory_entry(p, ec));
+  }
+  else
+  {
+    // "*" / "*.*" also return "." and ".." first, as FindFirstFile does. Engine code written for
+    // Windows counts on it: a "<dir>\\*" search of an EMPTY directory still succeeds there (see
+    // DoRecursiveDeleteFile, which otherwise could not remove an empty directory); every consumer
+    // already skips the two entries (IsRealFile).
+    if (mask == u"*" || mask == u"*.*")
+    {
+      std::error_code de;
+      if (fs::is_directory(dirU8, de))
+      {
+        st->entries.push_back(fs::directory_entry(fs::path(dirU8) / ".", de));
+        st->entries.push_back(fs::directory_entry(fs::path(dirU8) / "..", de));
+      }
+    }
+    for (auto & e : fs::directory_iterator(dirU8, ec))
+    {
+      UnicodeString name = FromU8(e.path().filename().string());
+      if (FindMaskMatches(mask, name.raw())) st->entries.push_back(e);
+    }
+    if (ec) { delete st; return ERROR_FILE_NOT_FOUND; }   // Delphi returns an OS error code, not -1
+  }
+  { std::lock_guard<std::mutex> lock(g_findsMtx); int h = g_nextHandle++; g_finds[h] = st; F.FindHandle = h; }
+  int r = FindNext(F);
+  if (r != 0) { FindClose(F); return wild ? r : ERROR_FILE_NOT_FOUND; }
+  return 0;
 }
 int __fastcall FindNext(TSearchRec & F)
 {
   // Returns ERROR_NO_MORE_FILES (not -1) at end-of-directory: the engine's FindCheck treats any other
   // non-zero code as a fatal "Error listing directory" (this broke Synchronize's local enumeration).
-  auto it = g_finds.find(F.FindHandle);
-  if (it == g_finds.end()) return ERROR_NO_MORE_FILES;
-  FindState * st = it->second;
+  FindState * st;
+  {
+    std::lock_guard<std::mutex> lock(g_findsMtx);
+    auto it = g_finds.find(F.FindHandle);
+    if (it == g_finds.end()) return ERROR_NO_MORE_FILES;
+    st = it->second;                       // a search record is used by one thread at a time
+  }
   if (st->pos >= st->entries.size()) return ERROR_NO_MORE_FILES;
   Fill(F, st->entries[st->pos++]);
   return 0;
 }
 void __fastcall FindClose(TSearchRec & F)
 {
-  auto it = g_finds.find(F.FindHandle);
-  if (it != g_finds.end()) { delete it->second; g_finds.erase(it); }
+  FindState * st = nullptr;
+  {
+    std::lock_guard<std::mutex> lock(g_findsMtx);
+    auto it = g_finds.find(F.FindHandle);
+    if (it != g_finds.end()) { st = it->second; g_finds.erase(it); }
+  }
+  delete st;
   F.FindHandle = -1;
 }
 
@@ -350,25 +472,13 @@ HMODULE __fastcall GetModuleHandle(const wchar_t *) { return nullptr; }
 HMODULE __fastcall LoadLibrary(const wchar_t *) { return nullptr; }
 BOOL  __fastcall FreeLibrary(HMODULE) { return TRUE; }
 void * __fastcall GetProcAddress(HMODULE, const char *) { return nullptr; }
-void  __fastcall SetLastError(DWORD) {}
-BOOL  __fastcall FileTimeToSystemTime(const FILETIME *, SYSTEMTIME * st) { if (st) std::memset(st, 0, sizeof(*st)); return TRUE; }
-BOOL  __fastcall FileTimeToLocalFileTime(const FILETIME * ft, FILETIME * lft) { if (lft && ft) *lft = *ft; return TRUE; }
-BOOL  __fastcall LocalFileTimeToFileTime(const FILETIME * lft, FILETIME * ft) { if (ft && lft) *ft = *lft; return TRUE; }
-// SYSTEMTIME (y/m/d h:m:s, treated as UTC — local==UTC simplification, matching the passthrough
-// FileTimeToLocalFileTime) -> FILETIME (100ns ticks since 1601-01-01).
-BOOL  __fastcall SystemTimeToFileTime(const SYSTEMTIME * st, FILETIME * ft)
-{
-  if (!st || !ft) return FALSE;
-  struct tm tmv; std::memset(&tmv, 0, sizeof(tmv));
-  tmv.tm_year = st->wYear - 1900; tmv.tm_mon = st->wMonth - 1; tmv.tm_mday = st->wDay;
-  tmv.tm_hour = st->wHour; tmv.tm_min = st->wMinute; tmv.tm_sec = st->wSecond;
-  time_t secs = ::timegm(&tmv);
-  unsigned long long ticks = ((unsigned long long)secs + 11644473600ULL) * 10000000ULL
-                           + (unsigned long long)st->wMilliseconds * 10000ULL;
-  ft->dwLowDateTime = (DWORD)(ticks & 0xFFFFFFFF);
-  ft->dwHighDateTime = (DWORD)(ticks >> 32);
-  return TRUE;
-}
+// GetLastError() is errno here, so SetLastError must write it. As a no-op it broke every caller that
+// reports a condition this way: FileZilla's TLS layer returns "would block" as
+// SetLastError(WSAEWOULDBLOCK) + SOCKET_ERROR, the control socket then read a stale errno, took it
+// for a real failure and closed the connection - FTPS could never complete its handshake.
+void  __fastcall SetLastError(DWORD Error) { errno = static_cast<int>(Error); }
+// FileTimeToSystemTime / FileTimeToLocalFileTime / LocalFileTimeToFileTime / SystemTimeToFileTime:
+// see WinTime.cpp.
 int   __fastcall StrCmpLogicalW(const wchar_t * a, const wchar_t * b) { return UnicodeString(a).CompareIC(UnicodeString(b)); }
 void  __fastcall CoTaskMemFree(void *) {}
 
@@ -606,7 +716,6 @@ long  __fastcall SHGetFolderPath(HWND, int CSIdl, HANDLE, DWORD, wchar_t * Path)
   return 0; /*S_OK*/
 }
 BOOL  __fastcall GetProductInfo(DWORD, DWORD, DWORD, DWORD, DWORD *) { return FALSE; }
-DWORD __fastcall GetTimeZoneInformation(TIME_ZONE_INFORMATION *) { return TIME_ZONE_ID_UNKNOWN; }
 DWORD __fastcall GetModuleFileNameEx(HANDLE, HMODULE, wchar_t *, DWORD) { return 0; }
 BOOL  __fastcall EnumProcessModules(HANDLE, HMODULE *, DWORD, DWORD * Needed) { if (Needed) *Needed = 0; return FALSE; }
 BOOL  __fastcall IsWow64Process(HANDLE, BOOL * w) { if (w) *w = FALSE; return TRUE; }
@@ -615,7 +724,6 @@ long  __fastcall FindMimeFromData(void *, const wchar_t *, void *, DWORD, const 
 int   __fastcall LoadString(HINSTANCE, UINT, wchar_t *, int) { return 0; }
 
 DWORD __fastcall GetTempPath(DWORD, wchar_t * buf) { if (buf) buf[0] = 0; return 0; }
-BOOL  __fastcall SystemTimeToTzSpecificLocalTime(TIME_ZONE_INFORMATION *, SYSTEMTIME * in, SYSTEMTIME * out) { if (out && in) *out = *in; return TRUE; }
 BOOL  __fastcall GetCPInfoEx(UINT, DWORD, CPINFOEX * info) { if (info) info->MaxCharSize = 1; return TRUE; }
 std::FILE * __fastcall _wfopen(const wchar_t * Path, const wchar_t * Mode)
 { UnicodeString p(Path), m(Mode); std::string np, nm;
@@ -701,19 +809,32 @@ BOOL  __fastcall VerQueryValue(const void * block, const wchar_t * sub, void ** 
   }
   if (v) *v = nullptr; if (l) *l = 0; return FALSE;
 }
+// Delphi Random(Range): uniform in [0, Range). (Was a constant 0: the engine's "randomized" tunnel
+// port selection always started at the same port.)
 void  __fastcall Randomize() {}
-int   __fastcall Random(int Range) { return Range > 0 ? 0 : 0; }
+int   __fastcall Random(int Range)
+{
+  if (Range <= 0) return 0;
+  static thread_local std::mt19937 gen{std::random_device{}()};
+  return std::uniform_int_distribution<int>(0, Range - 1)(gen);
+}
 UnicodeString __fastcall StripHotkey(const UnicodeString & S)
 { UnicodeString r; for (int i = 1; i <= S.Length(); ++i) if (S[i] != L'&') r += UnicodeString(S[i], 1); return r; }
 
 #include <chrono>
+// Milliseconds on the monotonic clock (time since boot on macOS/Linux), as on Windows - NOT since
+// this process started. The engine's transfer speed limiter keys its per-second budget on
+// GetTickCount()/1000 and treats second 0 as "not started yet" (TFileOperationProgressType::
+// ClearTransfer sets FLastSecond = 0): counting from process start, a transfer in the program's
+// first second ran with an uninitialized budget, i.e. unthrottled.
 DWORD __fastcall GetTickCount()
-{ using namespace std::chrono; static auto t0 = steady_clock::now();
-  return (DWORD)duration_cast<milliseconds>(steady_clock::now() - t0).count(); }
+{ using namespace std::chrono;
+  // ...and 32 bits wide, wrapping like the Win32 one: the engine keeps tick values in `unsigned int`.
+  return (DWORD)(unsigned int)duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count(); }
 int   __fastcall CompareValue(int A, int B) { return (A < B) ? -1 : (A > B ? 1 : 0); }
 __int64 __fastcall CompareValue(__int64 A, __int64 B) { return (A < B) ? -1 : (A > B ? 1 : 0); }
 double __fastcall CompareValue(double A, double B) { return (A < B) ? -1 : (A > B ? 1 : 0); }
-int   random(int Range) { return Range > 0 ? 0 : 0; }
+int   random(int Range) { return Random(Range); }
 DWORD __fastcall SHGetFileInfo(const wchar_t *, DWORD, TSHFileInfoW *, UINT, UINT) { return 0; }
 
 void  __fastcall Sleep(DWORD ms) { struct timespec ts{ms/1000, (long)(ms%1000)*1000000L}; nanosleep(&ts, nullptr); }
@@ -726,6 +847,4 @@ long  __fastcall CoInitialize(void *) { return 0; }
 long  __fastcall CoInitializeEx(void *, DWORD) { return 0; }
 void  __fastcall CoUninitialize() {}
 
-BOOL __fastcall GetFileTime(HANDLE, FILETIME * c, FILETIME * a, FILETIME * w)
-{ if (c) *c = FILETIME{}; if (a) *a = FILETIME{}; if (w) *w = FILETIME{}; return TRUE; }
-BOOL __fastcall SetFileTime(HANDLE, const FILETIME *, const FILETIME *, const FILETIME *) { return TRUE; }
+// GetFileTime / SetFileTime: see WinTime.cpp.
