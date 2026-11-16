@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>FreeSCP — a native macOS & Linux port of WinSCP</title>
-<meta name="description" content="FreeSCP is a free, open-source SFTP/FTP/SCP/WebDAV/S3 file manager for macOS and Linux — a native port of WinSCP.">
+<meta name="description" content="FreeSCP is a free, open-source SFTP/FTP/FTPS/SCP/WebDAV/S3 file manager for macOS and Linux — a native port of WinSCP, with SSH tunnels, proxies, 2FA, resume, find and compare.">
 <meta name="theme-color" content="#070b14">
 <meta property="og:title" content="FreeSCP — WinSCP, natively on macOS & Linux">
 <meta property="og:description" content="The dual-pane SFTP/FTP/SCP/WebDAV/S3 file manager, running WinSCP's own engine natively on Apple Silicon, Intel Macs and Linux (x86-64, ARM64). 100% free, open source, no telemetry.">
@@ -308,7 +308,7 @@
   <div class="gridfx" aria-hidden="true"></div>
   <canvas id="streams" aria-hidden="true"></canvas>
   <div class="wrap">
-    <a class="badge reveal" href="https://github.com/oegea/FreeSCP/releases/latest"><b>v0.2</b> Intel Macs &amp; ARM Linux · WinSCP 6.7 engine &nbsp;→</a>
+    <a class="badge reveal" href="https://github.com/oegea/FreeSCP/releases/latest"><b>v0.3</b> SSH tunnels &amp; proxies · 2FA · transfer settings · find &amp; compare &nbsp;→</a>
     <h1 class="reveal" style="--d:.08s">WinSCP. <span class="grad">Natively</span> on Mac &amp; Linux.</h1>
     <p class="sub reveal" style="--d:.16s">The dual-pane file manager people have loved on Windows for 20 years —
       <b>SFTP, FTP, SCP, WebDAV and S3</b> — now running natively on macOS and Linux. Free and open source.</p>
@@ -376,7 +376,7 @@
     <div class="card reveal">
       <div class="ico g"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="10" rx="2.5"/><path d="M8 11V7.5a4 4 0 0 1 8 0V11"/></svg></div>
       <h3>Secure</h3>
-      <p>Public-key auth (your OpenSSH keys work), host-key verification, and a notarized, signed app.</p>
+      <p>Public-key auth (your OpenSSH keys work), two-factor login prompts, host-key and certificate verification, and a notarized, signed app.</p>
     </div>
 
     <div class="card wide reveal" style="--d:.08s">
@@ -389,8 +389,8 @@
     <div class="card half reveal">
       <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.8 3 2.8 15 0 18M12 3c-2.8 3-2.8 15 0 18"/></svg></div>
       <h3>Five protocols</h3>
-      <p>SFTP, SCP, FTP, WebDAV and S3, with TLS. Connect, browse, transfer and manage files.</p>
-      <div class="chips"><span>SFTP</span><span>SCP</span><span>FTP</span><span>WebDAV</span><span>S3</span><span>+TLS</span></div>
+      <p>SFTP, SCP, FTP and FTPS, WebDAV and S3. Connect, browse, transfer and manage files.</p>
+      <div class="chips"><span>SFTP</span><span>SCP</span><span>FTP</span><span>FTPS</span><span>WebDAV</span><span>S3</span></div>
     </div>
 
     <div class="card half reveal" style="--d:.08s">
@@ -398,6 +398,27 @@
       <h3>Drag &amp; drop</h3>
       <p>Between panels and to/from Finder. Bookmarks, masks, overwrite prompts, recursive chmod.</p>
       <div class="chips"><span>Finder</span><span>Bookmarks</span><span>Masks</span><span>chmod -R</span></div>
+    </div>
+
+    <div class="card reveal">
+      <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="12" r="2.5"/><circle cx="19" cy="12" r="2.5"/><path d="M7.5 12h9M12 5v2m0 10v2"/><rect x="9.5" y="9.5" width="5" height="5" rx="1.2"/></svg></div>
+      <h3>Reach any server</h3>
+      <p>Go through an SSH jump host, or a SOCKS or HTTP proxy. Two-factor and keyboard-interactive logins are asked as they come.</p>
+      <div class="chips"><span>SSH tunnel</span><span>SOCKS5</span><span>HTTP proxy</span><span>2FA</span></div>
+    </div>
+
+    <div class="card reveal" style="--d:.08s">
+      <div class="ico g"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h10M18 7h2M4 12h3M11 12h9M4 17h12M20 17h0"/><circle cx="16" cy="7" r="2"/><circle cx="9" cy="12" r="2"/><circle cx="18" cy="17" r="2"/></svg></div>
+      <h3>Transfer your way</h3>
+      <p>Text or binary mode, timestamps and permissions kept, file masks, a speed limit &mdash; and interrupted transfers resume where they stopped.</p>
+      <div class="chips"><span>Resume</span><span>Speed limit</span><span>Masks</span><span>Text mode</span></div>
+    </div>
+
+    <div class="card reveal" style="--d:.16s">
+      <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="10.5" cy="10.5" r="6"/><path d="m15 15 5 5M8 10.5h5M10.5 8v5"/></svg></div>
+      <h3>Find &amp; compare</h3>
+      <p>Search a server recursively, total up directory sizes, mark what differs between two directories, and diff a local file against its remote copy.</p>
+      <div class="chips"><span>Find files</span><span>Sizes</span><span>Compare</span><span>Diff</span></div>
     </div>
   </div>
 </div></section>
@@ -448,7 +469,7 @@
   <div class="center">
     <div class="eyebrow reveal">Download</div>
     <h2 class="reveal" style="--d:.06s">Pick your platform.</h2>
-    <p class="lead reveal" style="--d:.12s">Version 0.2 &mdash; the same app everywhere, built from the same source.</p>
+    <p class="lead reveal" style="--d:.12s">Version 0.3 &mdash; the same app everywhere, built from the same source.</p>
   </div>
   <div class="plats">
     <div class="plat reveal" data-os="mac">
@@ -508,7 +529,7 @@
     <details><summary>Does it collect any data?</summary><p>No. FreeSCP has no telemetry, analytics or crash reporting and does not check for updates on its own. The only network connections it makes are to the servers you tell it to connect to. Settings and cached host keys stay on your computer.</p></details>
     <details><summary>Which Macs are supported?</summary><p>Any Mac running macOS 12 Monterey or newer, Apple Silicon or Intel &mdash; it is a single universal app. It is signed with a Developer ID and notarized by Apple, so it opens without security warnings.</p></details>
     <details><summary>The AppImage does not start on my Linux.</summary><p>Make it executable first (<code>chmod +x FreeSCP-Linux-*.AppImage</code>). AppImages need FUSE 2; if your distro does not ship it, install <code>libfuse2</code> or run it with <code>--appimage-extract-and-run</code>. It needs glibc 2.35 or newer and an X11 or XWayland session.</p></details>
-    <details><summary>Which features of WinSCP are there?</summary><p>The Commander: dual panels, session tabs, directory tree, SFTP / SCP / FTP(S) / WebDAV / S3, public-key authentication, the transfer queue with parallel connections, remote editing, synchronized browsing, bookmarks, drag &amp; drop. Scripting, the Explorer-style interface and some advanced site settings are not there yet &mdash; see the <a href="https://github.com/oegea/FreeSCP/blob/main/docs/porting/ROADMAP.md">roadmap</a>.</p></details>
+    <details><summary>Which features of WinSCP are there?</summary><p>The Commander: dual panels, session tabs, directory tree, SFTP / SCP / FTP(S) / WebDAV / S3, public-key authentication, the transfer queue with parallel connections, remote editing, synchronized browsing and directory synchronization, bookmarks, drag &amp; drop &mdash; and since 0.3 SSH tunnels, proxies, two-factor logins, transfer settings with resume and speed limit, Find Files, directory sizes and file / directory comparison. Scripting, the Explorer-style interface, transfer presets and a few advanced site settings are not there yet &mdash; see the <a href="https://github.com/oegea/FreeSCP/blob/main/docs/porting/ROADMAP.md">roadmap</a>.</p></details>
     <details><summary>I found a bug or miss a feature.</summary><p>Please <a href="https://github.com/oegea/FreeSCP/issues">open an issue on GitHub</a> &mdash; with the protocol and server type if it is a connection problem. Pull requests are welcome too.</p></details>
   </div>
 </div></section>
