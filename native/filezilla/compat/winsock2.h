@@ -86,6 +86,7 @@ typedef struct addrinfo      ADDRINFOT;
 // Listening sockets are tracked explicitly (winmsg.cpp): SO_ACCEPTCONN cannot be queried on macOS
 // (ENOPROTOOPT), so the select loop never recognized one there and FD_ACCEPT was never posted.
 void fz_mark_listening(SOCKET s, bool on);
+void fz_mark_connect(SOCKET s);
 inline int  closesocket(SOCKET s) { fz_mark_listening(s, false); return ::close(s); }
 inline int  fz_listen(SOCKET s, int backlog) { int r = ::listen(s, backlog); if (r == 0) fz_mark_listening(s, true); return r; }
 #define listen fz_listen
@@ -120,6 +121,7 @@ inline int WSACancelAsyncRequest(HANDLE) { return 0; }
 #include <cstdlib>
 inline int fz_connect(SOCKET s, const struct sockaddr * a, socklen_t l)
 { if (getenv("FZ_TRACE")) { char ip[64]={0}; const void*pa = a->sa_family==AF_INET6? (const void*)&((sockaddr_in6*)a)->sin6_addr : (const void*)&((sockaddr_in*)a)->sin_addr; inet_ntop(a->sa_family, pa, ip, sizeof ip); fprintf(stderr, "[fz] connect sock=%d fam=%d len=%d ip=%s port=%d\n", s, a->sa_family, l, ip, ntohs(((sockaddr_in*)a)->sin_port)); }
+  fz_mark_connect(s);
   int r = ::connect(s, a, l); if (getenv("FZ_TRACE")) fprintf(stderr, "[fz] connect r=%d errno=%d(%s)\n", r, errno, strerror(errno)); return r; }
 #define connect fz_connect
 inline int fz_bind(SOCKET s, const struct sockaddr * a, socklen_t l)

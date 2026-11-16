@@ -46,6 +46,20 @@ struct SockReg { HWND hwnd; UINT msg; long events; DWORD owner; };   // owner: t
 std::map<SOCKET, SockReg> g_sockets;           // WSAAsyncSelect registrations
 std::map<SOCKET, long> g_posted;               // events already pending/posted per socket (latch)
 std::set<SOCKET> g_listening;                  // sockets that had listen() called (see fz_mark_listening)
+std::set<SOCKET> g_connectCalled;              // sockets that had connect() called (see fz_mark_connect)
+
+// A socket that was created and registered but is not yet connected, connecting or listening has
+// no events on Windows. Linux reports such a socket as writable AND readable (POLLOUT|POLLHUP), so
+// the passive-mode data socket - created before the PASV reply, connected after it - got a bogus
+// FD_CONNECT ("Data connection opened" before connecting), the one-shot latch then swallowed the
+// real one, the socket never became "connected" and every listing/transfer timed out. (BSD/macOS
+// report nothing for such a socket, which is why it only showed on Linux.)
+bool socketIdle(SOCKET s)   // g_mtx held
+{
+  if (g_listening.count(s) != 0 || g_connectCalled.count(s) != 0) return false;
+  sockaddr_storage ss; socklen_t l = sizeof ss;
+  return ::getpeername(s, (sockaddr *)&ss, &l) < 0 && errno == ENOTCONN;   // accepted sockets have a peer
+}
 
 // Timers (SetTimer/KillTimer). Fired from the select loop.
 struct FzTimer { HWND hwnd; DWORD owner; UINT_PTR id; UINT ms; std::chrono::steady_clock::time_point next; };
@@ -82,6 +96,7 @@ void selectLoop()
       for (auto & kv : g_sockets)
       {
         SOCKET s = kv.first; long ev = kv.second.events;
+        if (socketIdle(s)) continue;
         if (ev & (FD_READ | FD_ACCEPT | FD_CLOSE)) FD_SET(s, &rfds);
         if (ev & (FD_WRITE | FD_CONNECT)) FD_SET(s, &wfds);
         if (s > maxfd) maxfd = s;
@@ -322,7 +337,15 @@ LRESULT DefWindowProc(HWND, UINT, WPARAM, LPARAM) { return 0; }
 void fz_mark_listening(SOCKET s, bool on)
 {
   std::lock_guard<std::mutex> lk(g_mtx);
-  if (on) g_listening.insert(s); else g_listening.erase(s);
+  if (on) g_listening.insert(s); else { g_listening.erase(s); g_connectCalled.erase(s); }   // off = closed
+}
+
+void fz_mark_connect(SOCKET s)
+{
+  { std::lock_guard<std::mutex> lk(g_mtx);
+    g_connectCalled.insert(s);
+    auto it = g_posted.find(s); if (it != g_posted.end()) it->second = 0; }   // its events start now
+  wakeSelect();
 }
 
 int WSAAsyncSelect(SOCKET s, HWND hWnd, UINT msg, long lEvent)
