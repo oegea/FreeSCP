@@ -1056,6 +1056,12 @@ and its one-shot latch dropped the real one. Fixed in `filezilla/compat/winmsg.c
 watched only once it is connecting, connected or listening. The code involved predates this round,
 so 0.2.0 on Linux was very probably affected too.
 Result on the runner after the fix: 214/217, the three misses being a test-setup step that could
-not overwrite a server-owned file on a Linux host (fixed in the script; see the tag run for the
-final number). aarch64 runs the unit tests, the SFTP/SCP end-to-end test and the AppImage smoke
+not overwrite a server-owned file on a Linux host (fixed in the script). The `v0.3.0` tag build:
+**217/217** on Linux x86-64. aarch64 runs the unit tests, the SFTP/SCP end-to-end test and the AppImage smoke
 test only (the test-server images are x86-64).
+
+### Release v0.3.0 (2026-11-16)
+Same pipeline as v0.2.0. The signed + notarized universal app was tested with `e2e-ssh.sh`
+natively and under Rosetta (`E2E_RUN="arch -x86_64"`), with `E2E_QPA=native`: the staged bundle
+ships only the cocoa platform plugin, so the default offscreen GUI run aborts in Qt start-up.
+The MinIO test image is no longer downloadable; `servers.sh` falls back to `bitnamilegacy/minio`.
