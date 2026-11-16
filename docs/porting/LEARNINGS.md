@@ -480,3 +480,8 @@ timers created a fourth (time-out checked before "transfer ended" was processed)
 
 **n. Ask someone who did not write it.** The independent review found the `CloseHandle` and symlink
 defects by reading; neither had a failing test. Give the reviewer the diff, not the conclusions.
+
+**o. select() on a socket that is not connected yet differs by kernel.** Linux: writable + readable
+(POLLOUT|POLLHUP). BSD/macOS: nothing. Any Windows-event emulation must not watch a socket before
+`connect()`/`listen()`; FTP's passive data socket is created one round trip before it connects.
+Everything FTP passed on macOS and failed on Linux - run the protocol suites on both.

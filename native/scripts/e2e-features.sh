@@ -334,6 +334,7 @@ if want sync; then
     run $opts -- "sync|$L|$R|down|dry";    chk "$name: in sync afterwards (download direction)" "has 'SYNC 0 change'"
     sleep 61   # FTP listings have minute precision: make "newer" unambiguous
     echo v3-local-edited > "$L/newer-local.txt"
+    rm -f "$H/older-local.txt"   # (replaced, not rewritten: on a Linux host it belongs to the server's user)
     echo remote-edited-v2 > "$H/older-local.txt"; echo remote-only > "$H/remote-only.txt"; chmod 666 "$H"/*.txt 2>/dev/null
     sleep 2
     run $opts -- "sync|$L|$R|up|dry";      chk "$name: upload sync = the locally newer file only" "[ \"\$(changes)\" = 'Upload newer-local.txt;' ]"

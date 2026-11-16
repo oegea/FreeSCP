@@ -1046,3 +1046,16 @@ again on an AddressSanitizer build: all pass, no report.
 - A file explicitly selected but excluded by the Transfer Settings **file mask** is skipped
   silently and its queue row reads "done" (the engine reports success).
 - Linux: built and tested only by CI.
+
+### Linux (CI, 2026-11-16)
+The feature suite now also runs on the x86-64 Linux runner (`linux.yml`), which until 0.3.0 only
+exercised SFTP/SCP. First run: **FTP did not work on Linux at all** - every listing and transfer
+timed out in passive mode. Linux reports a created-but-unconnected socket as writable and readable
+(BSD/macOS report nothing), the `WSAAsyncSelect` emulation posted `FD_CONNECT` before `connect()`
+and its one-shot latch dropped the real one. Fixed in `filezilla/compat/winmsg.cpp`: a socket is
+watched only once it is connecting, connected or listening. The code involved predates this round,
+so 0.2.0 on Linux was very probably affected too.
+Result on the runner after the fix: 214/217, the three misses being a test-setup step that could
+not overwrite a server-owned file on a Linux host (fixed in the script; see the tag run for the
+final number). aarch64 runs the unit tests, the SFTP/SCP end-to-end test and the AppImage smoke
+test only (the test-server images are x86-64).
