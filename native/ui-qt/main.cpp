@@ -74,224 +74,32 @@
 #include <QFont>
 #include <QStyle>
 #include <algorithm>
+#include <map>
+#include <QEventLoop>
 #include <functional>
 #include <thread>
 #include <atomic>
 
 #include "enginebridge.h"
+#include "uicommon.h"
+#include "logindialog.h"
+#include "transferdialog.h"
+#include "finddialog.h"
+#include "diffview.h"
+#include "panelcompare.h"
 
 #ifndef FREESCP_VERSION
 #define FREESCP_VERSION "dev"
 #endif
-
-static QString u8(const std::string & s) { return QString::fromUtf8(s.c_str()); }
-static std::string s8(const QString & s) { return s.toUtf8().constData(); }
 
 static bool gShowHidden = true;        // WinSCP "Show hidden files" toggle (dotfiles)
 static bool gConfirmDelete = true;     // confirm before deleting
 static bool gConfirmOverwrite = true;  // confirm before overwriting (stored; enforcement TBD)
 static int  gParallelMax = 2;          // max concurrent connections for queue parallelism (1-4)
 static bool gAltColors = true;         // alternating row colors in panels
+static bool gCompareByTime = true;     // Compare Directories criteria (WinSCP defaults: time on, size off)
+static bool gCompareBySize = false;
 static std::atomic<bool> gTransferRunning{false};  // a background transfer batch is in flight
-
-// App-branded message box: shows the FreeSCP icon (like a native macOS NSAlert) instead of a generic
-// severity icon, so alerts never look empty/unbranded. Returns the clicked button.
-static QMessageBox::StandardButton appMessage(
-    QWidget * parent, const QString & title, const QString & text,
-    QMessageBox::StandardButtons buttons = QMessageBox::Ok,
-    QMessageBox::StandardButton def = QMessageBox::NoButton)
-{
-  QMessageBox box(parent);
-  box.setWindowTitle(title);
-  box.setText(text);
-  box.setStandardButtons(buttons);
-  if (def != QMessageBox::NoButton) box.setDefaultButton(def);
-  QPixmap p(":/winscp.png");
-  if (!p.isNull()) box.setIconPixmap(p.scaled(64, 64, Qt::KeepAspectRatio, Qt::SmoothTransformation));
-  return static_cast<QMessageBox::StandardButton>(box.exec());
-}
-
-//===========================================================================
-// Login dialog — faithful to WinSCP: a sites tree on the left, a "Session" form on the right
-// (File protocol, Host name + Port, User name, Password), Tools/Manage + Login/Close buttons.
-//===========================================================================
-struct LoginParams
-{
-  bool ok = false;
-  engine::Protocol protocol = engine::Protocol::Sftp;
-  QString host, user, pass;
-  int port = 22;
-  bool tls = false;
-  QString keyFile;   // SSH private key (optional); pass = its passphrase
-};
-
-static LoginParams showLoginDialog(QWidget * parent)
-{
-  LoginParams p;
-
-  QDialog dlg(parent);
-  dlg.setWindowTitle("Login");
-  dlg.resize(680, 420);
-
-  auto * outer = new QVBoxLayout(&dlg);
-  auto * top = new QHBoxLayout;
-  outer->addLayout(top, 1);
-
-  // Left: sites tree — "New Site" plus saved sessions (persisted in QSettings, the WinSCP
-  // Site Manager experience: pick a saved server instead of retyping).
-  auto * sites = new QTreeWidget;
-  sites->setHeaderLabel("");
-  sites->setMaximumWidth(220);
-  sites->setMinimumWidth(180);
-  auto * newSite = new QTreeWidgetItem(sites, QStringList("\xF0\x9F\x96\xA5  New Site"));
-  top->addWidget(sites);
-
-  QSettings settings;
-  auto reloadSites = [&] {
-    while (sites->topLevelItemCount() > 1) delete sites->takeTopLevelItem(1);
-    settings.beginGroup("sites");
-    for (const QString & name : settings.childGroups())
-    {
-      auto * it = new QTreeWidgetItem(sites, QStringList("\xF0\x9F\x8C\x90  " + name));
-      it->setData(0, Qt::UserRole, name);
-    }
-    settings.endGroup();
-  };
-  reloadSites();
-  sites->setCurrentItem(newSite);
-
-  // Right: Session group.
-  auto * session = new QGroupBox("Session");
-  auto * grid = new QGridLayout(session);
-  auto * proto = new QComboBox;
-  proto->addItem("SFTP"); proto->addItem("SCP"); proto->addItem("FTP");
-  proto->addItem("WebDAV"); proto->addItem("Amazon S3");
-  auto * host = new QLineEdit; host->setPlaceholderText("hostname or IP");
-  auto * port = new QSpinBox; port->setRange(1, 65535); port->setValue(22);
-  auto * user = new QLineEdit; user->setPlaceholderText("username");
-  auto * pass = new QLineEdit; pass->setEchoMode(QLineEdit::Password); pass->setPlaceholderText("password (or key passphrase)");
-
-  grid->addWidget(new QLabel("File protocol:"), 0, 0);
-  grid->addWidget(proto, 0, 1, 1, 3);
-  grid->addWidget(new QLabel("Host name:"), 1, 0);
-  grid->addWidget(host, 1, 1);
-  grid->addWidget(new QLabel("Port number:"), 1, 2);
-  grid->addWidget(port, 1, 3);
-  grid->addWidget(new QLabel("User name:"), 2, 0);
-  grid->addWidget(user, 2, 1);
-  grid->addWidget(new QLabel("Password:"), 2, 2);
-  grid->addWidget(pass, 2, 3);
-  auto * enc = new QComboBox; enc->addItem("No encryption"); enc->addItem("TLS/SSL");
-  auto * encLabel = new QLabel("Encryption:");
-  grid->addWidget(encLabel, 3, 0);
-  grid->addWidget(enc, 3, 1);
-  // Private key (SSH public-key auth): file picker; the Password field becomes its passphrase.
-  auto * keyEdit = new QLineEdit; keyEdit->setPlaceholderText("(optional) SSH private key");
-  auto * keyBtn = new QToolButton; keyBtn->setText("\xE2\x80\xA6");
-  auto * keyLabel = new QLabel("Private key:");
-  auto * keyRow = new QWidget; auto * keyLay = new QHBoxLayout(keyRow); keyLay->setContentsMargins(0, 0, 0, 0);
-  keyLay->addWidget(keyEdit, 1); keyLay->addWidget(keyBtn);
-  grid->addWidget(keyLabel, 3, 2);
-  grid->addWidget(keyRow, 3, 3);
-  QObject::connect(keyBtn, &QToolButton::clicked, [&]{
-    QString f = QFileDialog::getOpenFileName(&dlg, "Select SSH private key", QDir::homePath() + "/.ssh");
-    if (!f.isEmpty()) keyEdit->setText(f);
-  });
-  grid->setRowStretch(4, 1);
-  top->addWidget(session, 1);
-  // Encryption only applies to WebDAV/S3; private key only to SFTP/SCP. Toggle per protocol.
-  auto updateEnc = [&](int i) {
-    bool http = (i == 3 || i == 4), ssh = (i == 0 || i == 1);
-    encLabel->setVisible(http); enc->setVisible(http);
-    keyLabel->setVisible(ssh); keyRow->setVisible(ssh);
-  };
-  QObject::connect(proto, &QComboBox::currentIndexChanged, updateEnc);
-  updateEnc(proto->currentIndex());
-
-  // Test-friendly: map protocol -> the local Docker test server's port.
-  QObject::connect(proto, &QComboBox::currentIndexChanged, [&](int i) {
-    bool ftp = (i == 2);
-    int dp = (i == 3) ? 80 : (i == 4) ? 443 : ftp ? 21 : 22;   // WebDAV / S3 / FTP / SSH defaults
-    port->setValue(dp);
-    // FTP not supported yet — disable Login is handled below via the protocol check.
-  });
-
-  // Load a saved site into the form.
-  auto loadSite = [&](const QString & name) {
-    settings.beginGroup("sites/" + name);
-    proto->setCurrentIndex(settings.value("protocol", 0).toInt());
-    host->setText(settings.value("host").toString());
-    port->setValue(settings.value("port", 22).toInt());
-    user->setText(settings.value("user").toString());
-    pass->setText(settings.value("pass").toString());
-    keyEdit->setText(settings.value("keyFile").toString());
-    settings.endGroup();
-  };
-  QObject::connect(sites, &QTreeWidget::currentItemChanged, [&](QTreeWidgetItem * cur, QTreeWidgetItem *) {
-    if (cur) { QString n = cur->data(0, Qt::UserRole).toString(); if (!n.isEmpty()) loadSite(n); }
-  });
-  QObject::connect(sites, &QTreeWidget::itemDoubleClicked, [&](QTreeWidgetItem * it, int) {
-    if (it && !it->data(0, Qt::UserRole).toString().isEmpty()) dlg.accept();
-  });
-
-  // Bottom buttons: Tools / Save / Delete ... Login / Close (WinSCP layout).
-  auto * btnRow = new QHBoxLayout;
-  btnRow->addWidget(new QPushButton("Tools"));
-  auto * saveBtn = new QPushButton("Save");
-  auto * delBtn = new QPushButton("Delete");
-  btnRow->addWidget(saveBtn);
-  btnRow->addWidget(delBtn);
-  QObject::connect(saveBtn, &QPushButton::clicked, [&]{
-    bool okIn = false;
-    QString def = user->text() + "@" + host->text();
-    QString name = QInputDialog::getText(&dlg, "Save session", "Site name:", QLineEdit::Normal, def, &okIn);
-    if (!okIn || name.isEmpty()) return;
-    settings.beginGroup("sites/" + name);
-    settings.setValue("protocol", proto->currentIndex());
-    settings.setValue("host", host->text());
-    settings.setValue("port", port->value());
-    settings.setValue("user", user->text());
-    settings.setValue("pass", pass->text());   // local test tool; stores password
-    settings.setValue("keyFile", keyEdit->text());
-    settings.endGroup();
-    settings.sync();        // persist immediately (survives an abrupt close)
-    reloadSites();
-  });
-  QObject::connect(delBtn, &QPushButton::clicked, [&]{
-    auto * it = sites->currentItem();
-    if (!it) return;
-    QString n = it->data(0, Qt::UserRole).toString();
-    if (n.isEmpty()) return;
-    settings.remove("sites/" + n);
-    reloadSites();
-  });
-  btnRow->addStretch(1);
-  auto * loginBtn = new QPushButton("Login"); loginBtn->setDefault(true);
-  auto * closeBtn = new QPushButton("Close");
-  btnRow->addWidget(loginBtn);
-  btnRow->addWidget(closeBtn);
-  outer->addLayout(btnRow);
-
-  QObject::connect(loginBtn, &QPushButton::clicked, &dlg, &QDialog::accept);
-  QObject::connect(closeBtn, &QPushButton::clicked, &dlg, &QDialog::reject);
-
-  if (dlg.exec() != QDialog::Accepted) return p;
-
-  switch (proto->currentIndex())
-  {
-    case 1: p.protocol = engine::Protocol::Scp; break;
-    case 2: p.protocol = engine::Protocol::Ftp; break;   // FileZilla backend (Phase 8)
-    case 3: p.protocol = engine::Protocol::WebDav; break;
-    case 4: p.protocol = engine::Protocol::S3; break;
-    default: p.protocol = engine::Protocol::Sftp; break;
-  }
-  p.ok = true;
-  p.host = host->text(); p.port = port->value();
-  p.user = user->text(); p.pass = pass->text();
-  p.tls = (enc->currentIndex() == 1);
-  p.keyFile = keyEdit->text();
-  return p;
-}
 
 //===========================================================================
 // Properties dialog — WinSCP-style permissions grid (Owner/Group/Others x R/W/X) with a synced
@@ -380,6 +188,7 @@ public:
   std::function<void()> onSwitchPanel;              // Tab pressed -> focus the other panel
   std::function<void(FilePanel *, const QStringList &)> onDropFiles;  // files dropped from another panel
   std::function<void(FilePanel *, const QStringList &)> onDropExternal; // local files dropped from Finder
+  std::function<void(const QString &)> onListError;   // a remote directory could not be opened/read
   static FilePanel * s_dragSource;                  // panel a drag originated from
 
   // Mirror operations (used by synchronized browsing; navigate directly, no callbacks -> no loop).
@@ -525,8 +334,34 @@ public:
   // Size (bytes) of a listed entry by name, for the transfer queue; 0 if unknown/dir.
   qint64 sizeOf(const QString & name) const {
     std::string n = s8(name);
-    for (const auto & e : FEntries) if (!e.isDir && e.name == n) return (qint64)e.size;
+    for (const auto & e : FEntries) if (e.name == n) return e.isDir ? FDirSizes.value(name, 0) : (qint64)e.size;
     return 0;
+  }
+  // The current listing (for Compare Directories).
+  const std::vector<engine::DirEntry> & entries() const { return FEntries; }
+  // A calculated directory size ("Calculate Directory Sizes"): shown in the Size column until the
+  // panel moves to another directory. Ignored if the panel is no longer showing `forPath`.
+  void setDirSize(const QString & forPath, const QString & name, qint64 bytes) {
+    if (forPath != FPath) return;
+    FDirSizes.insert(name, bytes);
+    for (int r = 0; r < (int)FEntries.size(); ++r)
+      if (FEntries[r].isDir && !FEntries[r].isParent && u8(FEntries[r].name) == name && FModel->item(r, 1))
+        FModel->item(r, 1)->setText(u8(engine::formatSize(bytes)));
+    if (onStatusChanged) onStatusChanged();
+  }
+  bool hasDirSize(const QString & name) const { return FDirSizes.contains(name); }
+  // Replace the selection with exactly these entries; the first one becomes the current row.
+  void selectNames(const QStringList & names) {
+    QItemSelectionModel * sm = FView->selectionModel(); if (!sm) return;
+    sm->clearSelection();
+    int first = -1;
+    for (int r = 0; r < (int)FEntries.size(); ++r) {
+      if (FEntries[r].isParent || !names.contains(u8(FEntries[r].name))) continue;
+      sm->select(QItemSelection(FModel->index(r, 0), FModel->index(r, FModel->columnCount() - 1)), QItemSelectionModel::Select);
+      if (first < 0) first = r;
+    }
+    if (first >= 0) { sm->setCurrentIndex(FModel->index(first, 0), QItemSelectionModel::NoUpdate); FView->scrollTo(FModel->index(first, 0)); }
+    if (onStatusChanged) onStatusChanged();
   }
   // Entry metadata by name (nullptr if not in the current listing).
   const engine::DirEntry * entryNamed(const QString & name) const {
@@ -562,9 +397,35 @@ public:
       while (FHistory.size() > FHistIdx + 1) FHistory.removeLast();
       if (FHistory.isEmpty() || FHistory.last() != path) { FHistory.append(path); FHistIdx = FHistory.size() - 1; }
     }
-    FPath = path;
-    FPathEdit->setText(path);
-    FEntries = FRemote ? engine::listRemoteDir(s8(path)) : engine::listLocalDir(s8(path));
+    std::string listError;
+    std::vector<engine::DirEntry> entries = FRemote ? engine::listRemoteDir(s8(path), &listError) : engine::listLocalDir(s8(path));
+    if (FRemote && !listError.empty())
+    {
+      // WinSCP reports the error and stays where it was; it never shows an unreadable directory as
+      // an empty one. Go back to the directory the panel was showing (the session may already have
+      // changed into the unreadable one).
+      QString prev = FPath;
+      if (!FHistory.isEmpty() && FHistory.last() == path && !FNav)
+      { FHistory.removeLast(); FHistIdx = FHistory.size() - 1; }
+      if (!prev.isEmpty() && prev != path)
+      {
+        std::string again;
+        std::vector<engine::DirEntry> back = engine::listRemoteDir(s8(prev), &again);
+        if (again.empty()) entries = back; else { entries.clear(); }
+      }
+      else entries.clear();
+      FPathEdit->setText(prev);
+      if (onListError) onListError(u8(listError));
+      if (prev.isEmpty()) FPath = path;      // first listing of the session failed: nothing to go back to
+    }
+    else
+    {
+      FPath = path;
+      FPathEdit->setText(path);
+    }
+    if (FPath != FListedPath) FDirSizes.clear();   // calculated sizes belong to the directory they were made for
+    FListedPath = FPath;
+    FEntries = entries;
     if (!gShowHidden)
       FEntries.erase(std::remove_if(FEntries.begin(), FEntries.end(),
         [](const engine::DirEntry & e) { return !e.isParent && !e.name.empty() && e.name[0] == '.'; }),
@@ -586,7 +447,9 @@ public:
       int c = 0;
       switch (FSortCol)
       {
-        case 1: c = (a.size < b.size) ? -1 : (a.size > b.size) ? 1 : 0; break;   // Size
+        case 1: { qint64 sa = a.isDir ? FDirSizes.value(u8(a.name), 0) : (qint64)a.size,   // Size (calculated, for directories)
+                         sb = b.isDir ? FDirSizes.value(u8(b.name), 0) : (qint64)b.size;
+                  c = (sa < sb) ? -1 : (sa > sb) ? 1 : 0; break; }
         case 2: c = QString::compare(u8(a.modified), u8(b.modified)); break;     // Changed
         case 3: c = QString::compare(u8(a.rights), u8(b.rights)); break;         // Rights
         case 4: c = QString::compare(u8(a.owner), u8(b.owner)); break;           // Owner
@@ -612,7 +475,8 @@ public:
       auto * nameItem = new QStandardItem(u8(e.name));
       nameItem->setIcon(iconFor(e));               // native folder / file-type icon
       row << nameItem;
-      auto * sz = new QStandardItem(e.isDir ? QString() : u8(engine::formatSize(e.size)));
+      auto * sz = new QStandardItem(e.isDir ? (FDirSizes.contains(u8(e.name)) ? u8(engine::formatSize(FDirSizes.value(u8(e.name)))) : QString())
+                                            : u8(engine::formatSize(e.size)));
       sz->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
       row << sz;
       row << new QStandardItem(u8(e.modified));
@@ -678,6 +542,19 @@ public:
     if (onStatusChanged) onStatusChanged();
   }
   void setStatusLine(const QString & s) { FStatus->setText(s); }
+  // The listing as text (name, size column, selected mark) - for scripted UI checks.
+  QStringList dump() const {
+    QStringList out;
+    QItemSelectionModel * sm = FView->selectionModel();
+    for (int r = 0; r < (int)FEntries.size(); ++r) {
+      if (FEntries[r].isParent) continue;
+      out << QString("%1 %2%3 | %4 | %5").arg(sm && sm->isRowSelected(r, QModelIndex()) ? "*" : " ")
+               .arg(u8(FEntries[r].name), FEntries[r].isDir ? "/" : "")
+               .arg(FModel->item(r, 1) ? FModel->item(r, 1)->text() : QString())
+               .arg(u8(FEntries[r].modified));
+    }
+    return out;
+  }
   // Native icon for an entry: folder icon for dirs, "up" for "..", file-type icon (by extension) for
   // files. Cached per extension so listing stays fast.
   QIcon iconFor(const engine::DirEntry & e) const {
@@ -750,7 +627,7 @@ protected:
             QGuiApplication::setOverrideCursor(Qt::BusyCursor);
             for (const QString & f : selFiles) {
               std::string err;
-              if (engine::downloadFromRemote(engine::joinPath(s8(FPath), s8(f)), s8(tmp), &err))
+              if (engine::downloadFromRemote(engine::joinPath(s8(FPath), s8(f)), s8(tmp), &err, true))
                 urls << QUrl::fromLocalFile(tmp + "/" + f);
             }
             QGuiApplication::restoreOverrideCursor();
@@ -813,6 +690,8 @@ private:
   QStringList FHistory;
   int FHistIdx = -1;
   std::vector<engine::DirEntry> FEntries;
+  QHash<QString, qint64> FDirSizes;   // name -> calculated total size, for FListedPath
+  QString FListedPath;
 };
 FilePanel * FilePanel::s_dragSource = nullptr;
 
@@ -895,9 +774,14 @@ int main(int argc, char ** argv)
     gConfirmDelete = s.value("prefs/confirmDelete", true).toBool();
     gConfirmOverwrite = s.value("prefs/confirmOverwrite", true).toBool();
     gParallelMax = s.value("prefs/parallelMax", 2).toInt();
-    gAltColors = s.value("prefs/altColors", true).toBool(); }
+    gAltColors = s.value("prefs/altColors", true).toBool();
+    gCompareByTime = s.value("prefs/compareByTime", true).toBool();
+    gCompareBySize = s.value("prefs/compareBySize", false).toBool(); }
+  engine::setTransferSettings(loadTransferSettings());   // text/binary, timestamps, masks, resume, speed limit
 
   QMainWindow window;
+  // Scripted-UI commands (WINSCP_UITEST); each feature registers the ones that exercise it.
+  std::map<QString, std::function<void(const QStringList &)>> uiCmd;
   window.setWindowTitle("FreeSCP");
   window.resize(1100, 720);
   { QSettings s;
@@ -1052,7 +936,7 @@ int main(int argc, char ** argv)
     queueStatus(row, "active");
     std::string lp = s8(localPath), rd = s8(remoteDir);
     std::thread([&, row, lp, rd]{
-      std::string err; bool ok = engine::uploadToRemote(lp, rd, &err);
+      std::string err; bool ok = engine::uploadToRemote(lp, rd, &err, true);   // editor save: this exact file, as is
       QMetaObject::invokeMethod(&window, [&, row, ok, err]{
         queueStatus(row, ok ? "done" : ("failed: " + u8(err)));
         if (ok) { queueCell(row, 3, "100%"); window.statusBar()->showMessage("Uploaded " + queueModel->item(row, 1)->text()); if (right->isRemote()) right->refresh(); }
@@ -1246,6 +1130,15 @@ int main(int argc, char ** argv)
   };
   left->onDropExternal = importFiles; right->onDropExternal = importFiles;
 
+  // A remote directory that cannot be opened is an error the user sees (WinSCP does the same),
+  // not an empty panel.
+  auto listError = [&](const QString & msg) {
+    window.statusBar()->showMessage("Error listing directory");
+    log("Error listing directory: " + msg);
+    appMessage(&window, "Error", msg);
+  };
+  left->onListError = listError; right->onListError = listError;
+
   // Edit-and-watch: a remote file opened in an (external) editor is downloaded to temp and watched;
   // saving re-uploads it automatically — the classic WinSCP "edit remote in your editor" magic.
   auto * watcher = new QFileSystemWatcher(&window);
@@ -1261,8 +1154,14 @@ int main(int argc, char ** argv)
   // Host-key verification: show the engine's message (fingerprint) + Yes/No instead of auto-accepting.
   engine::setConfirmCallback([&](const std::string & msg) -> bool {
     if (qgetenv("QT_QPA_PLATFORM") == "offscreen") return true;   // headless tests: auto-accept
-    return appMessage(&window, "Host key verification", u8(msg),
+    return appMessage(&window, "Verify server identity", u8(msg),   // SSH host key or TLS certificate
                                 QMessageBox::Yes | QMessageBox::No, QMessageBox::No) == QMessageBox::Yes;
+  });
+
+  // Authentication prompts the stored credentials could not answer: a missing or rejected password,
+  // a key passphrase, keyboard-interactive / two-factor challenges, proxy credentials.
+  engine::setPromptCallback([&](const engine::PromptRequest & rq, std::vector<std::string> & answers) -> bool {
+    return showAuthPrompt(&window, rq, answers);
   });
 
   //--- session tabs -------------------------------------------------------
@@ -1311,37 +1210,49 @@ int main(int argc, char ** argv)
   QObject::connect(tabBar, &QTabBar::tabCloseRequested, [&](int i) { closeTab(i); });
 
   //--- operations ---------------------------------------------------------
-  auto doConnect = [&] {
-    if (busy()) return;
-    LoginParams lp = showLoginDialog(&window);
-    if (!lp.ok) return;
-    if (lp.host.trimmed().isEmpty()) { appMessage(&window, "Login", "Please enter a host name."); return; }
+  // After a successful connect (interactive or scripted): show the session in the remote panel.
+  static engine::ConnectOptions connOpts;   // the active session's options (Open Terminal, copy URL)
+  auto sessionOpened = [&](const engine::ConnectOptions & o, const engine::ConnectResult & r) {
+    right->setRemote(QString("%1@%2 \xE2\x80\x94 %3").arg(u8(o.user), u8(o.host), protocolName(o.protocol)));
+    remoteHome = u8(r.currentDir);
+    connOpts = o;
+    connHost = u8(o.host); connUser = u8(o.user); connPort = o.port;
+    connSsh = (o.protocol == engine::Protocol::Sftp || o.protocol == engine::Protocol::Scp);
+    right->navigate(u8(r.currentDir));
+    right->onActivated();
+    actDisconnect->setEnabled(true);
+    window.setWindowTitle(QString("%1@%2 \xE2\x80\x94 FreeSCP").arg(u8(o.user), u8(o.host)));
+    QString route = routeSummary(o);
+    log("Connected" + (route.isEmpty() ? QString() : " (" + route + ")") + ". Remote directory: " + u8(r.currentDir));
+    addSessionTab(QString("%1@%2").arg(u8(o.user), u8(o.host)));   // open a tab for this session
+  };
+  auto connectWith = [&](const engine::ConnectOptions & o) -> bool {
     window.statusBar()->showMessage("Connecting\xE2\x80\xA6");
-    log(QString("Connecting to %1:%2 \xE2\x80\xA6").arg(lp.host).arg(lp.port));
+    QString route = routeSummary(o);
+    log(QString("Connecting to %1:%2%3 \xE2\x80\xA6").arg(u8(o.host)).arg(o.port).arg(route.isEmpty() ? QString() : " via " + route));
     QApplication::processEvents();
-    engine::ConnectResult r = engine::connectSftp(s8(lp.host), lp.port, s8(lp.user), s8(lp.pass), lp.protocol, lp.tls, s8(lp.keyFile));
+    // Remember where the current tab is before another session takes over the panels (it used to
+    // come back at the directory it was opened in, not the one the user had navigated to).
+    if (curTab >= 0 && curTab < tabBar->count() && right->isRemote())
+      tabBar->setTabData(curTab, QStringList{ right->path(), left->path() });
+    engine::ConnectResult r = engine::connect(o);
     if (!r.ok)
     {
       log("FAILED: " + u8(r.error));
       logDock->show();
       appMessage(&window, "Login", u8(r.error));
       window.statusBar()->showMessage("Connection failed");
-      return;
+      return false;
     }
-    const char * pn = lp.protocol == engine::Protocol::Scp ? "SCP"
-                    : lp.protocol == engine::Protocol::WebDav ? "WebDAV"
-                    : lp.protocol == engine::Protocol::S3 ? "S3"
-                    : lp.protocol == engine::Protocol::Ftp ? "FTP" : "SFTP";
-    right->setRemote(QString("%1@%2 \xE2\x80\x94 %3").arg(lp.user).arg(lp.host).arg(pn));
-    remoteHome = u8(r.currentDir);
-    connHost = lp.host; connUser = lp.user; connPort = lp.port;
-    connSsh = (lp.protocol == engine::Protocol::Sftp || lp.protocol == engine::Protocol::Scp);
-    right->navigate(u8(r.currentDir));
-    right->onActivated();
-    actDisconnect->setEnabled(true);
-    window.setWindowTitle(QString("%1@%2 \xE2\x80\x94 FreeSCP").arg(lp.user).arg(lp.host));
-    log("Connected. Remote directory: " + u8(r.currentDir));
-    addSessionTab(QString("%1@%2").arg(lp.user).arg(lp.host));   // open a tab for this session
+    sessionOpened(o, r);
+    return true;
+  };
+  auto doConnect = [&] {
+    if (busy()) return;
+    LoginParams lp = showLoginDialog(&window);
+    if (!lp.ok) return;
+    if (lp.o.host.empty()) { appMessage(&window, "Login", "Please enter a host name."); return; }
+    connectWith(lp.o);
   };
   auto doDisconnect = [&] {
     if (busy()) return;
@@ -1359,7 +1270,11 @@ int main(int argc, char ** argv)
   auto doOpenTerminal = [&] {
     if (!engine::remoteConnected() || !connSsh)
     { window.statusBar()->showMessage("Open Terminal needs an active SFTP/SCP session"); return; }
-    QString sshCmd = QString("ssh %1@%2 -p %3").arg(connUser, connHost).arg(connPort);
+    // A tunnelled session: the target is only reachable through the jump host (ssh -J).
+    QString jump = (connOpts.tunnel && !connOpts.tunnelHost.empty())
+      ? QString("-J %1%2:%3 ").arg(connOpts.tunnelUser.empty() ? QString() : u8(connOpts.tunnelUser) + "@", u8(connOpts.tunnelHost)).arg(connOpts.tunnelPort)
+      : QString();
+    QString sshCmd = QString("ssh %1%2@%3 -p %4").arg(jump, connUser, connHost).arg(connPort);
 #ifdef Q_OS_MACOS
     QString script = QString("tell application \"Terminal\"\nactivate\ndo script \"%1\"\nend tell").arg(sshCmd);
     QProcess::startDetached("osascript", { "-e", script });
@@ -1372,6 +1287,20 @@ int main(int argc, char ** argv)
     window.statusBar()->showMessage("Opened terminal: " + sshCmd);
   };
 
+  // Transfer settings (WinSCP's Transfer Settings dialog): they apply to every transfer and
+  // synchronization from now on and are remembered.
+  auto applyTransferSettings = [&](const engine::TransferSettings & x) {
+    engine::setTransferSettings(x);
+    saveTransferSettings(x);
+    window.statusBar()->showMessage("Transfer settings: " + transferSummary(x));
+  };
+  auto editTransferSettings = [&](QWidget * parent) -> bool {
+    engine::TransferSettings x = engine::transferSettings();
+    if (!showTransferSettingsDialog(parent, x)) return false;
+    applyTransferSettings(x);
+    return true;
+  };
+
   // WinSCP-style Copy/Move dialog: shows the count + an editable target directory. Returns the target
   // (empty = cancelled). If the user changes the target, the dest panel is navigated there first so
   // the transfer + the post-transfer refresh both target it.
@@ -1381,13 +1310,24 @@ int main(int argc, char ** argv)
     lay->addWidget(new QLabel(QString("%1 %2 item(s) to:").arg(op).arg(count)));
     auto * edit = new QLineEdit(defTarget); edit->setMinimumWidth(380); edit->selectAll();
     lay->addWidget(edit);
+    // How the files will be transferred, and a way to change it right here (as in WinSCP).
+    auto * xferRow = new QHBoxLayout;
+    auto * xferLabel = new QLabel(transferSummary(engine::transferSettings()));
+    xferLabel->setStyleSheet("color: gray;"); xferLabel->setWordWrap(true);
+    auto * xferBtn = new QPushButton("Transfer settings\xE2\x80\xA6");
+    xferRow->addWidget(xferLabel, 1); xferRow->addWidget(xferBtn);
+    lay->addLayout(xferRow);
+    QObject::connect(xferBtn, &QPushButton::clicked, &d, [&] {
+      if (editTransferSettings(&d)) xferLabel->setText(transferSummary(engine::transferSettings()));
+    });
     auto * bb = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
     bb->button(QDialogButtonBox::Ok)->setText(op);
     lay->addWidget(bb);
     QObject::connect(bb, &QDialogButtonBox::accepted, &d, &QDialog::accept);
     QObject::connect(bb, &QDialogButtonBox::rejected, &d, &QDialog::reject);
     edit->setFocus();
-    return (d.exec() == QDialog::Accepted) ? edit->text() : QString();
+    if (!qEnvironmentVariableIsEmpty("WINSCP_COPY_TARGET")) edit->setText(qEnvironmentVariable("WINSCP_COPY_TARGET"));   // scripted runs
+    return (execDialog(d, "copy") == QDialog::Accepted) ? edit->text() : QString();
   };
   auto doCopy = [&] {
     FilePanel * dst = (active == left) ? right : left;
@@ -1398,7 +1338,13 @@ int main(int argc, char ** argv)
     if (busy()) return;
     QString target = showCopyDialog("Copy", files.size(), dst->path());
     if (target.isEmpty()) return;
-    if (target != dst->path()) dst->navigate(target);
+    if (target != dst->path())
+    {
+      dst->navigate(target);
+      // the typed directory could not be opened (the error was shown): do NOT transfer into
+      // whatever directory the panel fell back to
+      if (dst->isRemote() && dst->path() != target) { window.statusBar()->showMessage("Copy cancelled: cannot open " + target); return; }
+    }
     startTransfer(active, dst, files, false);
   };
   auto doMove = [&] {
@@ -1410,7 +1356,13 @@ int main(int argc, char ** argv)
     if (busy()) return;
     QString target = showCopyDialog("Move", files.size(), dst->path());
     if (target.isEmpty()) return;
-    if (target != dst->path()) dst->navigate(target);
+    if (target != dst->path())
+    {
+      dst->navigate(target);
+      // the typed directory could not be opened (the error was shown): do NOT transfer into
+      // whatever directory the panel fell back to
+      if (dst->isRemote() && dst->path() != target) { window.statusBar()->showMessage("Move cancelled: cannot open " + target); return; }
+    }
     startTransfer(active, dst, files, true);
   };
   auto doMkdir = [&] {
@@ -1451,7 +1403,7 @@ int main(int argc, char ** argv)
     if (active->isRemote()) {
       QString tmp = QDir::tempPath() + "/winscp-new/" + name; QDir().mkpath(QDir::tempPath() + "/winscp-new");
       { QFile f(tmp); f.open(QIODevice::WriteOnly); f.close(); }
-      ok = engine::uploadToRemote(s8(tmp), s8(active->path()), &err);
+      ok = engine::uploadToRemote(s8(tmp), s8(active->path()), &err, true);
     } else {
       QFile f(active->path() + "/" + name); ok = f.open(QIODevice::WriteOnly); if (ok) f.close(); else err = "cannot create";
     }
@@ -1541,7 +1493,7 @@ int main(int argc, char ** argv)
       std::string err;
       window.statusBar()->showMessage("Opening " + f + "\xE2\x80\xA6");
       QApplication::processEvents();
-      if (!engine::downloadFromRemote(engine::joinPath(s8(active->path()), s8(f)), s8(tmp), &err))
+      if (!engine::downloadFromRemote(engine::joinPath(s8(active->path()), s8(f)), s8(tmp), &err, true))
       { appMessage(&window, "Open", "Could not download: " + u8(err)); return; }
       localPath = tmp + "/" + f;
       // watch the temp copy: any save (this app's editor or an external one) re-uploads it
@@ -1566,7 +1518,7 @@ int main(int argc, char ** argv)
     {
       QString tmp = QDir::tempPath() + "/winscp-edit"; QDir().mkpath(tmp);
       std::string err;
-      if (!engine::downloadFromRemote(engine::joinPath(s8(remoteDir), s8(f)), s8(tmp), &err))
+      if (!engine::downloadFromRemote(engine::joinPath(s8(remoteDir), s8(f)), s8(tmp), &err, true))
       { appMessage(&window, "Edit", "Could not download: " + u8(err)); return; }
       localPath = tmp + "/" + f;
     }
@@ -1642,6 +1594,136 @@ int main(int argc, char ** argv)
     lp->refresh(); rp->refresh();
   };
 
+  //--- Find Files --------------------------------------------------------------
+  auto doFind = [&](const QString & autoMask) {
+    FilePanel * panel = active;
+    FindContext ctx;
+    ctx.remote = panel->isRemote();
+    ctx.startDir = panel->path();
+    ctx.acquire = [&]() -> bool { if (busy()) return false; gTransferRunning = true; return true; };
+    ctx.release = [&] { gTransferRunning = false; };
+    ctx.focus = [&, panel](const QString & dir, const QString & name) {
+      panel->navigate(dir);
+      panel->selectNames(QStringList(name));
+      panel->view()->setFocus();
+    };
+    showFindDialog(&window, ctx, autoMask);
+  };
+
+  //--- Calculate Directory Sizes ---------------------------------------------
+  // The selected directories (or every directory of the panel when none is selected); the totals
+  // appear in the Size column. Runs in the background; the queue's Cancel button stops it.
+  auto doCalcSizes = [&] {
+    FilePanel * panel = active;
+    QStringList dirs;
+    for (const QString & n : panel->selectedItems()) { const engine::DirEntry * e = panel->entryNamed(n); if (e && e->isDir) dirs << n; }
+    if (dirs.isEmpty())
+      for (const engine::DirEntry & e : panel->entries()) if (e.isDir && !e.isParent) dirs << u8(e.name);
+    if (dirs.isEmpty()) { window.statusBar()->showMessage("No directories here"); return; }
+    if (busy()) return;
+    gTransferRunning = true;
+    btnCancel->setEnabled(true);
+    auto cancel = std::make_shared<std::atomic<bool>>(false);
+    *currentCancel = cancel;
+    const bool remote = panel->isRemote();
+    const QString path = panel->path();
+    window.statusBar()->showMessage(QString("Calculating the size of %1 director%2\xE2\x80\xA6").arg(dirs.size()).arg(dirs.size() == 1 ? "y" : "ies"));
+    std::thread([&, panel, dirs, remote, path, cancel] {
+      qint64 total = 0; int files = 0, done = 0; std::string lastErr;
+      for (const QString & name : dirs)
+      {
+        if (cancel->load()) break;
+        engine::SizeResult r; std::string err;
+        auto cancelled = [cancel]() { return cancel->load(); };
+        bool ok = remote ? engine::remoteCalculateSize(s8(name), r, cancelled, &err)
+                         : engine::localCalculateSize(engine::joinPath(s8(path), s8(name)), r, cancelled, &err);
+        if (cancel->load()) break;
+        if (!ok && !err.empty()) lastErr = err;
+        total += r.bytes; files += r.files; ++done;
+        const qint64 bytes = r.bytes; const int n = done, of = (int)dirs.size();
+        QMetaObject::invokeMethod(&window, [&, panel, path, name, bytes, n, of] {
+          panel->setDirSize(path, name, bytes);
+          window.statusBar()->showMessage(QString("Calculating sizes\xE2\x80\xA6 %1/%2").arg(n).arg(of));
+        }, Qt::QueuedConnection);
+      }
+      const bool wasCancelled = cancel->load();
+      QMetaObject::invokeMethod(&window, [&, total, files, done, wasCancelled, lastErr] {
+        gTransferRunning = false;
+        btnCancel->setEnabled(false);
+        window.statusBar()->showMessage(QString("%1 director%2: %3 in %4 file(s)%5")
+          .arg(done).arg(done == 1 ? "y" : "ies").arg(u8(engine::formatSize(total))).arg(files).arg(wasCancelled ? " (cancelled)" : ""));
+        if (!lastErr.empty()) appMessage(&window, "Calculate Directory Sizes", "Some directories could not be read:\n" + u8(lastErr));
+      }, Qt::QueuedConnection);
+    }).detach();
+  };
+
+  //--- Compare Directories ------------------------------------------------------
+  // Marks, in both panels, the files that are missing or (by the chosen criteria) different on
+  // the other side - WinSCP's Commands > Compare Directories.
+  auto doCompareDirs = [&] {
+    CompareCriteria c; c.byTime = gCompareByTime; c.bySize = gCompareBySize;
+    CompareResult r = compareDirectories(left->entries(), right->entries(), c);
+    QStringList l, rr;
+    for (const std::string & n : r.left) l << u8(n);
+    for (const std::string & n : r.right) rr << u8(n);
+    left->selectNames(l); right->selectNames(rr);
+    const QString how = c.byTime && c.bySize ? "time and size" : c.byTime ? "time" : c.bySize ? "size" : "existence only";
+    if (l.isEmpty() && rr.isEmpty())
+    {
+      window.statusBar()->showMessage("Compare directories: no differences (by " + how + ")");
+      appMessage(&window, "Compare Directories", "No differences found (compared by " + how + ").");
+    }
+    else
+      window.statusBar()->showMessage(QString("Compare directories (by %1): %2 file(s) marked on the left, %3 on the right")
+                                        .arg(how).arg(l.size()).arg(rr.size()));
+  };
+
+  //--- Compare Files (side by side) --------------------------------------------
+  // The selected file against the file of the same name in the other panel; or, when the other
+  // panel has no such file, against the single file selected there.
+  static int compareSeq = 0;
+  auto doCompareFiles = [&]() -> QString {
+    FilePanel * other = (active == left) ? right : left;
+    QStringList sel = active->selectedFiles();
+    if (sel.size() != 1) { QString m = "Select one file to compare."; window.statusBar()->showMessage(m); return m; }
+    QString mine = sel.first(), theirs;
+    const engine::DirEntry * same = other->entryNamed(mine);
+    if (same != nullptr && !same->isDir) theirs = mine;
+    else if (other->selectedFiles().size() == 1) theirs = other->selectedFiles().first();
+    else
+    {
+      QString m = QString("\"%1\" has no counterpart in the other panel. Open the directory that holds the other copy, "
+                          "or select the file to compare it with there.").arg(mine);
+      appMessage(&window, "Compare Files", m);
+      return m;
+    }
+    if ((active->isRemote() || other->isRemote()) && busy()) return QString();
+    // the file of the LEFT panel goes on the left
+    FilePanel * lpn = left, * rpn = right;
+    const QString lname = (active == left) ? mine : theirs, rname = (active == left) ? theirs : mine;
+    auto materialize = [&](FilePanel * pn, const QString & name, const char * sideTag, DiffSide & side) -> bool {
+      side.title = QString("%1 \xE2\x80\x94 %2 (%3)").arg(name, pn->path(), pn->isRemote() ? "remote" : "local");
+      if (!pn->isRemote()) { side.path = pn->path() + (pn->path().endsWith('/') ? "" : "/") + name; return true; }
+      const QString tmp = QString("%1/freescp-compare/%2-%3-%4").arg(QDir::tempPath()).arg(QCoreApplication::applicationPid()).arg(++compareSeq).arg(sideTag);
+      QDir().mkpath(tmp);
+      window.statusBar()->showMessage("Downloading " + name + " to compare\xE2\x80\xA6");
+      QApplication::processEvents();
+      // downloadFromRemote looks the file up in the session's current listing = this panel's
+      std::string err;
+      if (!engine::downloadFromRemote(engine::joinPath(s8(pn->path()), s8(name)), s8(tmp), &err, true))
+      { appMessage(&window, "Compare Files", "Could not download " + name + ":\n" + u8(err)); return false; }
+      side.path = tmp + "/" + name;
+      return true;
+    };
+    DiffSide ls, rs;
+    if (!materialize(lpn, lname, "l", ls) || !materialize(rpn, rname, "r", rs)) return QString();
+    QString result = showFileComparison(&window, ls, rs);
+    window.statusBar()->showMessage(result);
+    for (const DiffSide * sd : { &ls, &rs })       // remove the temporary copies
+      if (sd->path.startsWith(QDir::tempPath() + "/freescp-compare/")) QDir(QFileInfo(sd->path).absolutePath()).removeRecursively();
+    return result;
+  };
+
   // Right-click context menu on each panel (WinSCP-style).
   auto installContextMenu = [&](FilePanel * panel) {
     panel->view()->setContextMenuPolicy(Qt::CustomContextMenu);
@@ -1654,6 +1736,9 @@ int main(int argc, char ** argv)
       menu.addSeparator();
       menu.addAction("Create Directory (F7)", doMkdir);
       if (active->isRemote()) menu.addAction("Properties (F9)", doProps);
+      menu.addSeparator();
+      menu.addAction("Compare Files", [&]{ doCompareFiles(); });
+      menu.addAction("Calculate Directory Sizes", doCalcSizes);
       menu.exec(panel->view()->viewport()->mapToGlobal(pos));
     });
   };
@@ -1729,6 +1814,7 @@ int main(int argc, char ** argv)
     d.exec();
   };
 
+  QAction * actPrefs = nullptr;
   // Menu bar (WinSCP layout; actions wired to the same ops as the toolbar/F-keys).
   {
     auto * mLocal = window.menuBar()->addMenu("&Local");
@@ -1746,6 +1832,9 @@ int main(int argc, char ** argv)
     mFiles->addAction("&Select files\xE2\x80\xA6\tCtrl++", [&]{ doSelectMask(true); });
     mFiles->addAction("&Unselect files\xE2\x80\xA6\tCtrl+-", [&]{ doSelectMask(false); });
     mFiles->addAction("Copy &path to clipboard\tCtrl+Shift+C", doCopyPath);
+    mFiles->addSeparator();
+    mFiles->addAction("Co&mpare Files\tCtrl+Shift+D", [&]{ doCompareFiles(); });
+    mFiles->addAction("Calculate Directory Si&zes\tShift+Alt+Enter", doCalcSizes);
     auto * mSession = window.menuBar()->addMenu("&Session");
     mSession->addAction("&Login\xE2\x80\xA6", doConnect);
     mSession->addAction("&Disconnect", doDisconnect);
@@ -1763,8 +1852,9 @@ int main(int argc, char ** argv)
     actHidden->setShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_H));
     QObject::connect(actHidden, &QAction::toggled, [&](bool on){ gShowHidden = on; left->refresh(); right->refresh();
       QSettings().setValue("prefs/showHidden", on); });
+    mOptions->addAction("&Transfer settings\xE2\x80\xA6", [&]{ editTransferSettings(&window); });
     mOptions->addSeparator();
-    mOptions->addAction("&Preferences\xE2\x80\xA6", [&]{
+    actPrefs = mOptions->addAction("&Preferences\xE2\x80\xA6", [&]{
       QDialog d(&window); d.setWindowTitle("Preferences"); d.resize(520, 360);
       auto * outer = new QVBoxLayout(&d);
       auto * tabs = new QTabWidget; outer->addWidget(tabs, 1);
@@ -1781,34 +1871,50 @@ int main(int argc, char ** argv)
       auto * trTab = new QWidget; auto * trForm = new QFormLayout(trTab);
       auto * spinPar = new QSpinBox; spinPar->setRange(1, 4); spinPar->setValue(gParallelMax);
       trForm->addRow("Maximum parallel transfers:", spinPar);
-      auto * cmbMode = new QComboBox; cmbMode->addItems({ "Binary", "Text", "Automatic" }); cmbMode->setCurrentIndex(0);
-      trForm->addRow("Default transfer mode:", cmbMode);
+      auto * xferSummary = new QLabel(transferSummary(engine::transferSettings())); xferSummary->setWordWrap(true);
+      auto * xferEdit = new QPushButton("Transfer settings\xE2\x80\xA6");
+      trForm->addRow("Transfer settings:", xferSummary);
+      trForm->addRow("", xferEdit);
+      QObject::connect(xferEdit, &QPushButton::clicked, &d, [&, xferSummary] {
+        if (editTransferSettings(&d)) xferSummary->setText(transferSummary(engine::transferSettings()));
+      });
       tabs->addTab(trTab, "Transfer");
 
       // --- Panels ---
       auto * pnTab = new QWidget; auto * pnLay = new QVBoxLayout(pnTab);
       auto * cbAlt = new QCheckBox("Alternating row colors"); cbAlt->setChecked(gAltColors);
-      pnLay->addWidget(cbAlt); pnLay->addStretch(1);
+      auto * cmpBox = new QGroupBox("Compare directories");
+      auto * cmpLay = new QVBoxLayout(cmpBox);
+      auto * cbCmpTime = new QCheckBox("Compare by &time (mark the newer file)"); cbCmpTime->setChecked(gCompareByTime);
+      auto * cbCmpSize = new QCheckBox("Compare by &size (mark files whose sizes differ)"); cbCmpSize->setChecked(gCompareBySize);
+      auto * cmpHint = new QLabel("Files that exist in one panel only are always marked.");
+      cmpHint->setStyleSheet("color: gray;");
+      cmpLay->addWidget(cbCmpTime); cmpLay->addWidget(cbCmpSize); cmpLay->addWidget(cmpHint);
+      pnLay->addWidget(cbAlt); pnLay->addWidget(cmpBox); pnLay->addStretch(1);
       tabs->addTab(pnTab, "Panels");
 
       auto * bb = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
       outer->addWidget(bb);
       QObject::connect(bb, &QDialogButtonBox::accepted, &d, &QDialog::accept);
       QObject::connect(bb, &QDialogButtonBox::rejected, &d, &QDialog::reject);
-      if (d.exec() != QDialog::Accepted) return;
+      if (execDialog(d, "preferences") != QDialog::Accepted) return;
       gShowHidden = cbHidden->isChecked(); gConfirmDelete = cbDel->isChecked();
       gConfirmOverwrite = cbOvr->isChecked(); gParallelMax = spinPar->value(); gAltColors = cbAlt->isChecked();
+      gCompareByTime = cbCmpTime->isChecked(); gCompareBySize = cbCmpSize->isChecked();
       actHidden->setChecked(gShowHidden);
       QSettings s;
       s.setValue("prefs/showHidden", gShowHidden); s.setValue("prefs/confirmDelete", gConfirmDelete);
       s.setValue("prefs/confirmOverwrite", gConfirmOverwrite); s.setValue("prefs/parallelMax", gParallelMax);
       s.setValue("prefs/altColors", gAltColors);
+      s.setValue("prefs/compareByTime", gCompareByTime); s.setValue("prefs/compareBySize", gCompareBySize);
       left->view()->setAlternatingRowColors(gAltColors); right->view()->setAlternatingRowColors(gAltColors);
       left->refresh(); right->refresh();
     });
     auto * mCommands = window.menuBar()->addMenu("&Commands");
     mCommands->addAction("Open &Terminal\tCtrl+T", doOpenTerminal);
     mCommands->addAction("&Synchronize\xE2\x80\xA6\tCtrl+S", doSync);
+    mCommands->addAction("&Compare Directories\tShift+F2", doCompareDirs);
+    mCommands->addAction("&Find Files\xE2\x80\xA6\tCtrl+Alt+F", [&]{ doFind(QString()); });
     { auto * a = new QAction(&window); a->setShortcut(Qt::CTRL | Qt::Key_S);
       QObject::connect(a, &QAction::triggered, doSync); window.addAction(a); }
     auto * mRemote = window.menuBar()->addMenu("&Remote");
@@ -1912,6 +2018,11 @@ int main(int argc, char ** argv)
   shortcut(Qt::CTRL | Qt::SHIFT | Qt::Key_C, doCopyPath);                  // copy path/URL
   shortcut(Qt::Key_Insert, [&]{ active->toggleSelectAndAdvance(); });      // Norton select + advance
   shortcut(Qt::Key_F1, showAbout);
+  shortcut(Qt::CTRL | Qt::ALT | Qt::Key_F, [&]{ doFind(QString()); });        // find files
+  shortcut(Qt::SHIFT | Qt::Key_F2, doCompareDirs);                           // compare directories
+  shortcut(Qt::CTRL | Qt::SHIFT | Qt::Key_D, [&]{ doCompareFiles(); });       // compare files (diff)
+  shortcut(Qt::SHIFT | Qt::ALT | Qt::Key_Return, doCalcSizes);               // calculate directory sizes
+  shortcut(Qt::SHIFT | Qt::ALT | Qt::Key_Enter, doCalcSizes);
 
   left->setActive(true);
   left->navigate(u8(engine::homeDir()));
@@ -1928,18 +2039,42 @@ int main(int argc, char ** argv)
   window.statusBar()->showMessage(QString::fromUtf8(engine::banner().c_str()));
   window.show();
 
-  // Dev affordance: WINSCP_SHOT=path renders the main window to a PNG and quits (UI verification).
-  // WINSCP_AUTOCONNECT=host:port:user:pass:proto connects first (proto: sftp/scp/dav/s3).
-  if (!qEnvironmentVariableIsEmpty("WINSCP_SHOT"))
-    QMetaObject::invokeMethod(&window, [&]{
+  // Dev affordances (scripted runs).
+  auto optionsFromEnv = [&](engine::ConnectOptions & o) {
+    QStringList p = qEnvironmentVariable("WINSCP_AUTOCONNECT").split(':');
+    o.host = s8(p.value(0)); o.port = p.value(1).toInt(); o.user = s8(p.value(2)); o.password = s8(p.value(3));
+    QString pr = p.value(4);
+    o.protocol = pr=="scp"?engine::Protocol::Scp : pr=="dav"?engine::Protocol::WebDav
+               : pr=="s3"?engine::Protocol::S3 : pr=="ftp"?engine::Protocol::Ftp : engine::Protocol::Sftp;
+    o.keyFile = s8(p.value(5));
+    QStringList t = qEnvironmentVariable("WINSCP_AC_TUNNEL").split(':', Qt::SkipEmptyParts);
+    if (t.size() >= 3) { o.tunnel = true; o.tunnelHost = s8(t[0]); o.tunnelPort = t[1].toInt(); o.tunnelUser = s8(t[2]);
+                         o.tunnelPassword = s8(t.value(3)); o.tunnelKeyFile = s8(t.value(4)); }
+    QStringList x = qEnvironmentVariable("WINSCP_AC_PROXY").split(':', Qt::SkipEmptyParts);
+    if (x.size() >= 3) { o.proxyMethod = x[0]=="socks4" ? 1 : x[0]=="socks5" ? 2 : 3; o.proxyHost = s8(x[1]); o.proxyPort = x[2].toInt();
+                         o.proxyUser = s8(x.value(3)); o.proxyPassword = s8(x.value(4)); }
+    if (!qEnvironmentVariableIsEmpty("WINSCP_AC_TLS")) { o.tls = true; o.ftpExplicitTls = qEnvironmentVariable("WINSCP_AC_TLS") != "implicit"; }
+    if (qEnvironmentVariable("WINSCP_AC_PASSIVE") == "0") o.ftpPassive = false;
+    if (qEnvironmentVariable("WINSCP_AC_CRLF") == "1") o.serverCrLf = true;
+    if (!qEnvironmentVariableIsEmpty("WINSCP_AC_UTF8")) o.utf8Names = qEnvironmentVariable("WINSCP_AC_UTF8") == "on" ? 1 : 2;
+  };
+  auto autoConnectFromEnv = [&] {
+      // WINSCP_AUTOCONNECT=host:port:user:pass:proto[:keyfile]; optional WINSCP_AC_TUNNEL=host:port:user:pass[:keyfile]
+      // and WINSCP_AC_PROXY=socks4|socks5|http:host:port[:user:pass]. WINSCP_AUTOCONNECT_SITE=<name>
+      // connects with a saved site instead (exercises the Login dialog's stored settings).
       QString ac = qEnvironmentVariable("WINSCP_AUTOCONNECT");
-      if (!ac.isEmpty()) {
-        QStringList p = ac.split(':');
-        engine::Protocol pr = p[4]=="scp"?engine::Protocol::Scp : p[4]=="dav"?engine::Protocol::WebDav
-                            : p[4]=="s3"?engine::Protocol::S3 : p[4]=="ftp"?engine::Protocol::Ftp : engine::Protocol::Sftp;
-        auto r = engine::connectSftp(s8(p[0]), p[1].toInt(), s8(p[2]), s8(p[3]), pr, false, p.size() > 5 ? s8(p[5]) : std::string());
-        if (r.ok) { right->setRemote(QString("%1@%2").arg(p[2]).arg(p[0])); remoteHome = u8(r.currentDir); right->navigate(u8(r.currentDir));
-          addSessionTab(QString("%1@%2").arg(p[2]).arg(p[0]));
+      QString acSite = qEnvironmentVariable("WINSCP_AUTOCONNECT_SITE");
+      if (!ac.isEmpty() || !acSite.isEmpty()) {
+        engine::ConnectOptions o;
+        bool have = true;
+        if (!acSite.isEmpty()) {
+          have = loadSite(acSite, o);
+          if (!have) { window.statusBar()->showMessage("Connect failed: no saved site named " + acSite);
+                       fprintf(stderr, "[autoconnect] no saved site named %s\n", acSite.toUtf8().constData()); }
+        } else optionsFromEnv(o);
+        engine::ConnectResult r;
+        if (have) r = engine::connect(o);
+        if (have && r.ok) { sessionOpened(o, r);
           if (!qEnvironmentVariable("WINSCP_DEMO").isEmpty()) {   // marketing screenshot: generic dirs
             left->navigate("/tmp/freescp-demo");
             right->navigate("/config/demo");
@@ -1951,21 +2086,132 @@ int main(int argc, char ** argv)
             startTransfer(right, left, xf.split(','), false);
           }
         }
-        else   // make a failed auto-connect visible in the render (verifies the error text the user would see)
-          window.statusBar()->showMessage("Connect failed: " + QString::fromUtf8(r.error.c_str()));
+        else if (have)   // make a failed auto-connect visible in the render (verifies the error text the user would see)
+        { window.statusBar()->showMessage("Connect failed: " + QString::fromUtf8(r.error.c_str()));
+          fprintf(stderr, "[autoconnect] failed: %s\n", r.error.c_str()); }
       }
+  };
+
+  // WINSCP_UITEST="cmd;cmd;..." drives the UI without a human, after the optional auto-connect.
+  // Commands are registered in uiCmd by the features they exercise; the generic ones are below.
+  // Arguments are separated by '|'. Each command runs to completion before the next starts.
+  uiCmd["wait"] = [&](const QStringList & a) { QEventLoop l; QTimer::singleShot(a.value(0).toInt(), &l, &QEventLoop::quit); l.exec(); };
+  uiCmd["waitidle"] = [&](const QStringList &) {   // until the background transfer batch has finished
+    QEventLoop l; QTimer tm; QObject::connect(&tm, &QTimer::timeout, [&]{ if (!gTransferRunning.load()) l.quit(); });
+    tm.start(50); l.exec();
+    QEventLoop l2; QTimer::singleShot(150, &l2, &QEventLoop::quit); l2.exec();   // let the queued completion handlers run
+  };
+  uiCmd["shot"] = [&](const QStringList & a) { window.grab().save(a.value(0)); };
+  uiCmd["login"] = [&](const QStringList &) { doConnect(); };
+  // connect|host:port:user:pass:proto : open ANOTHER session (a new tab);  tab|<index> : switch;  closetab|<index>
+  uiCmd["connect"] = [&](const QStringList & a) {
+    QStringList p = a.value(0).split(':');
+    engine::ConnectOptions o;
+    o.host = s8(p.value(0)); o.port = p.value(1).toInt(); o.user = s8(p.value(2)); o.password = s8(p.value(3));
+    QString pr = p.value(4);
+    o.protocol = pr=="scp"?engine::Protocol::Scp : pr=="dav"?engine::Protocol::WebDav
+               : pr=="s3"?engine::Protocol::S3 : pr=="ftp"?engine::Protocol::Ftp : engine::Protocol::Sftp;
+    connectWith(o);
+  };
+  uiCmd["tab"] = [&](const QStringList & a) { tabBar->setCurrentIndex(a.value(0).toInt()); };
+  uiCmd["closetab"] = [&](const QStringList & a) { closeTab(a.value(0).toInt()); };
+  uiCmd["tabs"] = [&](const QStringList &) {
+    fprintf(stdout, "[tabs] count=%d current=%d engine-active=%d\n", tabBar->count(), tabBar->currentIndex(), engine::activeSession()); fflush(stdout);
+  };
+  uiCmd["find"] = [&](const QStringList & a) {          // find|left|*.txt
+    (a.value(0) == "right" ? right : left)->onActivated(); doFind(a.value(1, "*"));
+  };
+  uiCmd["dirsizes"] = [&](const QStringList & a) { (a.value(0) == "right" ? right : left)->onActivated(); doCalcSizes(); };
+  uiCmd["comparedirs"] = [&](const QStringList & a) {   // comparedirs[|time|size]
+    if (a.size() >= 1 && !a.value(0).isEmpty()) { gCompareByTime = a.contains("time"); gCompareBySize = a.contains("size"); }
+    doCompareDirs();
+  };
+  uiCmd["comparefiles"] = [&](const QStringList & a) {  // comparefiles|left  (uses that panel's selection)
+    (a.value(0) == "right" ? right : left)->onActivated();
+    QString r = doCompareFiles();
+    fprintf(stdout, "[compare] %s\n", r.toUtf8().constData()); fflush(stdout);
+  };
+  uiCmd["prefs"] = [&](const QStringList &) { if (actPrefs) actPrefs->trigger(); };
+  uiCmd["xfersettings"] = [&](const QStringList &) { editTransferSettings(&window); };   // the dialog (render / accept)
+  uiCmd["printxfer"] = [&](const QStringList &) {
+    fprintf(stdout, "[xfer] %s\n", transferSummary(engine::transferSettings()).toUtf8().constData()); fflush(stdout);
+  };
+  uiCmd["setxfer"] = [&](const QStringList & a) {   // setxfer|mode=text|speed=300|... (persisted, like the dialog)
+    engine::TransferSettings x = engine::transferSettings();
+    for (const QString & kv : a) {
+      const QString k = kv.section('=', 0, 0), v = kv.section('=', 1);
+      if (k == "mode") x.mode = v == "text" ? 1 : v == "auto" ? 2 : 0;
+      else if (k == "textmask") x.textMask = s8(v);
+      else if (k == "time") x.preserveTime = v != "0";
+      else if (k == "rights") { x.setRights = !v.isEmpty(); if (!v.isEmpty()) x.rightsOctal = s8(v); }
+      else if (k == "case") x.fileNameCase = v == "upper" ? 1 : v == "lower" ? 2 : 0;
+      else if (k == "resume") x.resume = v == "on" ? 0 : v == "off" ? 2 : 1;
+      else if (k == "threshold") x.resumeThresholdKB = v.toLongLong();
+      else if (k == "speed") x.speedLimitKB = v.toInt();
+      else if (k == "mask") x.fileMask = s8(QString(v).replace('^', '|'));
+      else if (k == "newer") x.newerOnly = v != "0";
+      else if (k == "hidden") x.excludeHidden = v == "exclude";
+      else if (k == "defaults") x = engine::TransferSettings();
+    }
+    QString err;
+    if (!validateTransferSettings(x, &err)) { fprintf(stderr, "[uitest] invalid transfer settings: %s\n", err.toUtf8().constData()); return; }
+    applyTransferSettings(x);
+  };
+  // xfer|right|left : transfer the source panel's selection to the other panel (no dialog)
+  uiCmd["xfer"] = [&](const QStringList & a) {
+    FilePanel * from = (a.value(0) == "right" ? right : left), * to = (from == right ? left : right);
+    startTransfer(from, to, from->selectedItems(), false);
+  };
+  uiCmd["copy"] = [&](const QStringList & a) { (a.value(0) == "right" ? right : left)->onActivated(); doCopy(); };   // F5 with its dialog
+  // The Login dialog pre-filled from the WINSCP_AUTOCONNECT / WINSCP_AC_* variables; connects if accepted.
+  uiCmd["loginpreset"] = [&](const QStringList &) {
+    engine::ConnectOptions o; optionsFromEnv(o);
+    LoginParams lp = showLoginDialog(&window, &o);
+    if (lp.ok) connectWith(lp.o);
+  };
+  uiCmd["nav"] = [&](const QStringList & a) { (a.value(0) == "right" ? right : left)->navigate(a.value(1)); };
+  uiCmd["activate"] = [&](const QStringList & a) { (a.value(0) == "right" ? right : left)->onActivated(); };
+  uiCmd["select"] = [&](const QStringList & a) {   // select|left|*.txt  (replaces the selection)
+    FilePanel * pn = (a.value(0) == "right" ? right : left);
+    pn->view()->clearSelection(); pn->selectByMask(a.value(1, "*"), true);
+  };
+  uiCmd["print"] = [&](const QStringList & a) {    // print|left : the panel's listing, for assertions
+    FilePanel * pn = (a.value(0) == "right" ? right : left);
+    fprintf(stdout, "[panel %s] %s\n", a.value(0).toUtf8().constData(), pn->path().toUtf8().constData());
+    for (const QString & line : pn->dump()) fprintf(stdout, "  %s\n", line.toUtf8().constData());
+    fflush(stdout);
+  };
+  const QStringList uiTest = qEnvironmentVariable("WINSCP_UITEST").split(';', Qt::SkipEmptyParts);
+  if (!uiTest.isEmpty())
+    QMetaObject::invokeMethod(&window, [&, uiTest]{
+      autoConnectFromEnv();
+      for (const QString & step : uiTest)
+      {
+        QStringList parts = step.split('|');
+        const QString name = parts.takeFirst().trimmed();
+        if (name == "quit") break;
+        auto it = uiCmd.find(name);
+        if (it == uiCmd.end()) { fprintf(stderr, "[uitest] unknown command: %s\n", name.toUtf8().constData()); continue; }
+        fprintf(stderr, "[uitest] %s\n", step.toUtf8().constData());
+        it->second(parts);
+        QApplication::processEvents();
+      }
+      app.quit();
+    }, Qt::QueuedConnection);
+  // WINSCP_SHOT=path renders the main window to a PNG and quits (UI verification).
+  else if (!qEnvironmentVariableIsEmpty("WINSCP_SHOT"))
+    QMetaObject::invokeMethod(&window, [&]{
+      autoConnectFromEnv();
       // Grab after a delay so background transfers (detached worker) complete first.
       QTimer::singleShot(qEnvironmentVariableIsEmpty("WINSCP_AUTOXFER") ? 100 : 3000, [&]{
         window.grab().save(qEnvironmentVariable("WINSCP_SHOT"));
         app.quit();
       });
-      return;
     }, Qt::QueuedConnection);
 
   // First launch: say once that the app is free / open source / telemetry-free and how to support it.
   // Never in headless or scripted runs (offscreen platform, render hooks, smoke tests).
-  const bool scripted = qgetenv("QT_QPA_PLATFORM") == "offscreen" || !qEnvironmentVariableIsEmpty("WINSCP_SHOT")
-                        || !qEnvironmentVariableIsEmpty("WINSCP_NO_AUTOLOGIN");
+  const bool scripted = uiScripted() || !qEnvironmentVariableIsEmpty("WINSCP_NO_AUTOLOGIN");
   const bool welcomeDue = !qEnvironmentVariableIsEmpty("WINSCP_WELCOME_SHOT")
                           || (!scripted && !QSettings().value("ui/welcomeShown", false).toBool());
 
@@ -1977,12 +2223,15 @@ int main(int argc, char ** argv)
       if (!qEnvironmentVariableIsEmpty("WINSCP_WELCOME_SHOT")) { app.quit(); return; }
       QSettings().setValue("ui/welcomeShown", true);
     }
-    if (qEnvironmentVariableIsEmpty("WINSCP_NO_AUTOLOGIN")) doConnect();
+    if (qEnvironmentVariableIsEmpty("WINSCP_NO_AUTOLOGIN") && qEnvironmentVariableIsEmpty("WINSCP_UITEST")) doConnect();
   }, Qt::QueuedConnection);
 
   int rc = app.exec();
   // Close sessions while the engine is alive (see engine::shutdown). If a transfer is still running
   // on the worker thread, skip all destructors rather than pull the engine from under it.
+  // A background job (transfer, size calculation, search) still running holds references to the
+  // window: leave without running destructors rather than let it touch freed objects.
+  if (gTransferRunning.load()) { fflush(nullptr); std::_Exit(rc); }
   if (!engine::shutdown(3000)) { fflush(nullptr); std::_Exit(rc); }
   return rc;
 }

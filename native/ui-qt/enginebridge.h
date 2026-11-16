@@ -27,6 +27,9 @@ struct DirEntry
   bool isDir = false;
   bool isParent = false;  // the ".." entry
   std::string modified;   // formatted timestamp (empty for "..")
+  std::int64_t mtimeSecs = 0;   // modification time in whole seconds (local time, comparable between
+                                // local and remote listings); 0 = unknown
+  bool mtimeHasSeconds = true;  // false when the listing only gave minute (or coarser) precision
   std::string rights;     // remote: unix rights string (e.g. "rwxr-xr-x"); empty for local
   std::string owner;      // remote: owner[/group]; empty for local
 };
@@ -72,6 +75,50 @@ struct ConnectResult
 // File-transfer protocol for a remote session.
 enum class Protocol { Sftp = 0, Scp = 1, WebDav = 2, S3 = 3, Ftp = 4 };
 
+// Everything the Login dialog can configure for one connection.
+struct ConnectOptions
+{
+  std::string host; int port = 22;
+  std::string user, password;
+  Protocol protocol = Protocol::Sftp;
+  bool tls = false;               // WebDAV/S3: HTTPS. FTP: TLS (see ftpExplicitTls)
+  bool ftpExplicitTls = true;     // FTP + tls: explicit (AUTH TLS, port 21) vs implicit (port 990)
+  bool ftpPassive = true;         // FTP passive mode
+  bool serverCrLf = false;        // the server's text files use CR/LF line endings (Windows servers);
+                                  // only matters for text-mode transfers over SFTP/SCP
+  int utf8Names = 0;              // UTF-8 encoding for file names: 0 = auto-detect, 1 = on, 2 = off.
+                                  // (SCP on a server whose shell locale is not UTF-8, or an FTP server
+                                  // that does not announce UTF8, needs "on" for non-ASCII names.)
+  std::string keyFile;            // SSH private key; `password` is then its passphrase
+  // SSH tunnel (jump host): the session is opened through a local port forwarded by this SSH server.
+  bool tunnel = false;
+  std::string tunnelHost; int tunnelPort = 22;
+  std::string tunnelUser, tunnelPassword, tunnelKeyFile;   // tunnelPassword = key passphrase if a key is set
+  // Proxy. method: 0 = none, 1 = SOCKS4, 2 = SOCKS5, 3 = HTTP (CONNECT).
+  int proxyMethod = 0;
+  std::string proxyHost; int proxyPort = 0;
+  std::string proxyUser, proxyPassword;
+};
+
+// An authentication prompt the server (or the tunnel's server) asks during connect:
+// password, key passphrase, keyboard-interactive / 2FA challenges, proxy credentials.
+struct PromptRequest
+{
+  int kind = 0;                         // engine TPromptKind (informational)
+  bool forTunnel = false;               // asked by the SSH tunnel (jump host), not the target server
+  std::string name;                     // dialog caption (e.g. "Server prompt - user@host")
+  std::string instructions;             // server-supplied text, may be empty
+  std::vector<std::string> prompts;     // one label per field
+  std::vector<bool> echo;               // per field: false = hide typing (password-style)
+};
+// Asked on the thread that called connect() (the UI thread). Fill `answers` (one per prompt) and
+// return true, or return false to cancel the login. If no callback is set, every field is answered
+// with the session password (headless tools).
+void setPromptCallback(const std::function<bool(const PromptRequest &, std::vector<std::string> & answers)> & cb);
+
+// Open a remote session (blocking) and make it the active one (a new tab).
+ConnectResult connect(const ConnectOptions & options);
+
 // Open a remote session (blocking). One session at a time; a new connect replaces the old.
 // `protocol` selects SFTP (default) or SCP — both run over the same SSH transport.
 ConnectResult connectSftp(const std::string & host, int port,
@@ -95,15 +142,46 @@ void setProgressSink(const std::function<bool(const TransferProgress &)> & cb);
 // Host-key (Yes/No) confirmation callback; returns true to accept. Unset -> auto-accept.
 void setConfirmCallback(const std::function<bool(const std::string &)> & cb);
 // List the remote directory (empty path = current/home). Sorted dirs-first; includes "..".
-std::vector<DirEntry> listRemoteDir(const std::string & utf8Path);
+// On failure (cannot change to / read the directory) returns what could be read - usually nothing -
+// and sets `error` to the engine's message; the session stays in its previous directory.
+std::vector<DirEntry> listRemoteDir(const std::string & utf8Path, std::string * error = nullptr);
+
+//--- transfer settings (WinSCP "Transfer Settings": TCopyParamType) ---
+// Apply to every upload, download and synchronization started after they are set.
+struct TransferSettings
+{
+  int mode = 0;                    // 0 = binary, 1 = text (convert line endings), 2 = automatic: text for
+                                   //     files matching textMask, binary for the rest
+  std::string textMask;            // "*.txt; *.html; ..." - empty = the engine's default list
+  bool preserveTime = true;        // keep the source file's modification time
+  bool setRights = false;          // upload: set these permissions on uploaded files...
+  std::string rightsOctal = "644"; //   (directories also get x where r is set)
+  int fileNameCase = 0;            // 0 = no change, 1 = UPPER CASE, 2 = lower case
+  int resume = 1;                  // transfer to a temporary ".filepart" and resume an interrupted transfer:
+                                   //   0 = all files, 1 = files above resumeThresholdKB, 2 = never
+  std::int64_t resumeThresholdKB = 100;
+  int speedLimitKB = 0;            // KB/s, 0 = unlimited
+  std::string fileMask;            // include/exclude mask ("*.jpg; *.png | *.tmp"), empty = everything
+  bool newerOnly = false;          // transfer only files newer than the target
+  bool excludeHidden = false;      // skip hidden (dot) files
+};
+void setTransferSettings(const TransferSettings & settings);
+TransferSettings transferSettings();
+// The engine's default text-file mask (shown when the user has not set one).
+std::string defaultTextMask();
+// Is `mask` a valid file mask? On failure `error` gets the reason.
+bool validateFileMask(const std::string & mask, std::string * error = nullptr);
 
 // Transfer a single file over the live SFTP session (TTerminal CopyToRemote/CopyToLocal).
 // localPath/remotePath are full paths; the target is a directory. Returns true on success;
 // on failure `error` (if non-null) gets a human-readable message.
+// `plain` = an internal transfer of exactly this file (edit / open / compare / drag-out / new file):
+// binary, no file mask, no renaming, no speed limit, no .filepart - the user's Transfer Settings
+// are for the transfers they start, and e.g. a mask of "*.jpg" must not stop F4 from opening a .txt.
 bool uploadToRemote(const std::string & localPathUtf8, const std::string & remoteDirUtf8,
-                    std::string * error = nullptr);
+                    std::string * error = nullptr, bool plain = false);
 bool downloadFromRemote(const std::string & remotePathUtf8, const std::string & localDirUtf8,
-                        std::string * error = nullptr);
+                        std::string * error = nullptr, bool plain = false);
 
 // Remote file operations on the live SFTP session (TTerminal). `name` is the entry name in the
 // current remote directory (rename/delete look it up in the live listing). Return true on success.
@@ -116,6 +194,36 @@ bool remoteRename(const std::string & oldNameUtf8, const std::string & newNameUt
 std::string remoteFileOctal(const std::string & nameUtf8);
 // Set remote permissions from an octal string. Returns true on success.
 bool remoteChmod(const std::string & nameUtf8, const std::string & octalUtf8, bool recursive = false, std::string * error = nullptr);
+
+//--- find files / directory sizes ---
+struct FoundFile
+{
+  std::string path;        // full path
+  std::string dir;         // directory it is in
+  std::string name;
+  std::int64_t size = 0;
+  bool isDir = false;
+  std::string modified;    // formatted timestamp
+};
+// Recursive search below `dir` for entries matching `mask` (WinSCP file mask: "*.txt", "*.log; *.tmp",
+// "*.jpg | thumb*", "*>1M", ...). `onFound` is called for every match, `onDirectory` when a directory
+// is entered; either may return true to stop. Returns false with `error` set if the search failed
+// (a stopped search is not a failure). Blocking; call from a worker thread.
+bool remoteFind(const std::string & dir, const std::string & mask,
+                const std::function<bool(const FoundFile &)> & onFound,
+                const std::function<bool(const std::string &)> & onDirectory, std::string * error = nullptr);
+bool localFind(const std::string & dir, const std::string & mask,
+               const std::function<bool(const FoundFile &)> & onFound,
+               const std::function<bool(const std::string &)> & onDirectory, std::string * error = nullptr);
+
+struct SizeResult { std::int64_t bytes = 0; int files = 0; int dirs = 0; };
+// Total size of one entry of the CURRENT remote directory (a directory is summed recursively).
+// `cancelled` (optional) is polled; returning true stops the calculation (the result is then partial
+// and the function returns false with an empty error).
+bool remoteCalculateSize(const std::string & name, SizeResult & result,
+                         const std::function<bool()> & cancelled = nullptr, std::string * error = nullptr);
+bool localCalculateSize(const std::string & path, SizeResult & result,
+                        const std::function<bool()> & cancelled = nullptr, std::string * error = nullptr);
 
 void disconnectSftp();   // closes + removes the active session (tab)
 

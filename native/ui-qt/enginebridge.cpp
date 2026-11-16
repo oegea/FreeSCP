@@ -15,6 +15,7 @@
 #include "Interface.h"
 #include "RemoteFiles.h"
 #include "Exceptions.h"
+#include "TextsCore.h"        // TUNNEL_INSTRUCTION2 (recognizing prompts asked by the tunnel)
 #include <algorithm>
 #include <cstdio>
 #include <ctime>
@@ -24,7 +25,10 @@
 #include <memory>
 #include <mutex>
 #include <chrono>
+#include <cmath>
 #include <thread>
+#include <unistd.h>
+#include <sys/stat.h>
 
 void __fastcall PuttyInitialize();   // one-time PuTTY init (sk_init + appname)
 void __fastcall NeonInitialize();    // ne_sock_init (WebDAV/HTTP)
@@ -70,8 +74,10 @@ public:
   virtual UnicodeString TemporaryDir(bool = false) { return UnicodeString(L"/tmp/"); }
 };
 
-// Last successful connect params, so we can open additional (parallel) connections to the same server.
-struct ConnParams { std::string host; int port = 0; std::string user, password; engine::Protocol protocol = engine::Protocol::Sftp; bool tls = false; bool valid = false; };
+// Last successful connect options, so we can open additional (parallel) connections to the same server.
+// `interactive`: the login needed answers only the user can give (2FA / keyboard-interactive codes) -
+// such a session is not silently reconnected for parallel transfers.
+struct ConnParams { engine::ConnectOptions o; bool valid = false; bool interactive = false; };
 
 // One open session = one tab. The active session's members are reached via the g_terminal/g_sessionData/
 // g_password/g_lastParams macros below, so the ~70 existing call sites are unchanged. When no session
@@ -82,6 +88,8 @@ struct Sess {
   UnicodeString password;
   ConnParams params;
   std::string label;
+  std::vector<std::string> tempKeys;   // converted private keys, removed once the session is open
+  int autoAnswers = 0;                 // prompts answered without a user (headless), per connect
 };
 std::vector<std::unique_ptr<Sess>> g_sess;
 int g_active = -1;
@@ -100,13 +108,20 @@ void DropActiveSession() {
 
 bool g_engineInited = false;
 std::function<bool(const engine::TransferProgress &)> g_progressCb;
-std::string g_lastTransferError;   // set by OnQueryUser on a qtError so transfers can report it
+std::function<bool()> g_opCancel;   // polled from the progress event of a running size calculation
+// Set by OnQueryUser / OnShowExtendedException so an operation can report the engine's message.
+// Per thread: the engine calls back on the thread running the operation, and parallel transfers
+// run several at once (one shared string was both a data race and a way to blame the wrong file).
+thread_local std::string g_lastTransferError;
 // Confirmation callback (host-key verification). Returns true to accept. If unset, auto-accept.
 // Connect runs on the caller (UI) thread, so the GUI can show a modal dialog from here.
 std::function<bool(const std::string &)> g_confirmCb;
 // True only while connectSftp runs (the UI thread). g_confirmCb shows a modal dialog, so it must
 // NEVER be called from a transfer worker thread (Qt GUI off the main thread = crash/deadlock).
 bool g_connecting = false;
+// Authentication prompts (password, passphrase, keyboard-interactive / 2FA). Same threading rule
+// as g_confirmCb: only ever called while g_connecting.
+std::function<bool(const engine::PromptRequest &, std::vector<std::string> &)> g_promptCb;
 
 // Serializes ALL engine access. The engine + single TTerminal are not thread-safe; the GUI runs
 // transfers on a worker thread, so every public entry point takes this (recursive: some call each
@@ -128,14 +143,181 @@ void EnsureEngineInited()
     UnicodeString IniPath = IncludeTrailingBackslash(GetShellFolderPath(CSIDL_APPDATA)) + IniName;
     UnicodeString LegacyPath = ChangeFileExt(ParamStr(0), L".ini");   // where earlier builds may have put it
     std::error_code ec;
-    if (!FileExists(IniPath) && FileExists(LegacyPath))
+    // WINSCP_INI=<path>: a private engine INI (test runs: keeps the host keys / certificates of
+    // throw-away test servers out of the user's real cache, and makes "first connection" repeatable).
+    const char * iniOverride = getenv("WINSCP_INI");
+    if (iniOverride != nullptr && *iniOverride != 0) IniPath = FromU8(iniOverride);
+    else if (!FileExists(IniPath) && FileExists(LegacyPath))
       std::filesystem::copy_file(ToU8(LegacyPath), ToU8(IniPath), ec);
     Configuration->SetExplicitIniFileStorageName(IniPath);
   }
   Configuration->Default();
+  // CoreInitialize normally creates this; TSessionData::CreateTunnelData reads
+  // StoredSessions->DefaultSettings, so an SSH tunnel dereferenced NULL without it.
+  if (StoredSessions == nullptr) StoredSessions = new TStoredSessionList();
   PuttyInitialize();
   NeonInitialize();    // ne_sock_init; needed for WebDAV (no-op cost otherwise)
   g_engineInited = true;
+}
+
+// Flatten an engine exception (incl. ExtException MoreMessages chain) to a UTF-8 string.
+std::string ExceptionToU8(Exception & E)
+{
+  UnicodeString msg = E.Message;
+  ExtException * Ext = dynamic_cast<ExtException *>(&E);
+  if ((Ext != nullptr) && (Ext->MoreMessages != nullptr))
+    for (int i = 0; i < Ext->MoreMessages->Count; i++)
+      msg += UnicodeString(L"\n") + Ext->MoreMessages->Strings[i];
+  return std::string(UTF8String(msg).c_str());
+}
+
+// TDateTime (days, local time) -> whole seconds; both panels' timestamps go through this, so they
+// compare directly.
+std::int64_t SecondsOf(const TDateTime & dt)
+{
+  return (std::int64_t)std::llround(dt.Val() * 86400.0);
+}
+
+void RemoveTempKeys(std::vector<std::string> & temps)
+{
+  for (const std::string & t : temps) ::remove(t.c_str());   // never leave a converted key on disk
+  temps.clear();
+}
+
+// PuTTY's authentication only reads .ppk private keys; OpenSSH / ssh.com keys are converted to a
+// temporary .ppk (private to the user, removed after the connect). Returns the file to hand to the
+// engine; `passphrase` is cleared when the converted copy needs none. Throws on a bad passphrase.
+UnicodeString PrepareKey(const std::string & keyFile, UnicodeString & passphrase, std::vector<std::string> & temps)
+{
+  UnicodeString kf = FromU8(keyFile);
+  TKeyType kt = KeyType(kf);
+  if (kt == ktOpenSSHPEM || kt == ktOpenSSHNew || kt == ktSSHCom)
+  {
+    TPrivateKey * pk = LoadKey(kt, kf, passphrase);
+    char tmpl[] = "/tmp/.freescp-key-XXXXXX";
+    int fd = mkstemp(tmpl);                    // created 0600
+    if (fd >= 0) close(fd);
+    temps.push_back(tmpl);
+    try { SaveKey(ktSSH2, FromU8(tmpl), UnicodeString(), pk); }
+    catch (...) { FreeKey(pk); throw; }
+    FreeKey(pk);
+    ::chmod(tmpl, 0600);
+    passphrase = UnicodeString();
+    return FromU8(tmpl);
+  }
+  return kf;
+}
+
+// Session settings shared by the primary connection and the parallel-transfer connections.
+void ConfigureSessionData(TSessionData * d, const engine::ConnectOptions & o, std::vector<std::string> & temps)
+{
+  using engine::Protocol;
+  d->Default();
+  d->HostName = FromU8(o.host);
+  d->PortNumber = o.port;
+  d->UserName = FromU8(o.user);
+  switch (o.protocol)
+  {
+    case Protocol::Scp:    d->FSProtocol = fsSCPonly; break;
+    case Protocol::WebDav: d->FSProtocol = fsWebDAV;
+                           d->Ftps = o.tls ? ftpsImplicit : ftpsNone; break;
+    case Protocol::S3:     d->FSProtocol = fsS3;
+                           d->Ftps = o.tls ? ftpsImplicit : ftpsNone;
+                           d->S3UrlStyle = s3usPath; d->S3DefaultRegion = L"us-east-1"; break;
+    case Protocol::Ftp:    d->FSProtocol = fsFTP;
+                           d->Ftps = !o.tls ? ftpsNone : (o.ftpExplicitTls ? ftpsExplicitTls : ftpsImplicit);
+                           d->FtpPasvMode = o.ftpPassive; break;
+    default:               d->FSProtocol = fsSFTPonly; break;
+  }
+  const bool ssh = (o.protocol == Protocol::Sftp || o.protocol == Protocol::Scp);
+  if (ssh && !o.keyFile.empty())   // public-key auth: the password field is the key passphrase
+  {
+    UnicodeString passphrase = FromU8(o.password);
+    d->PublicKeyFile = PrepareKey(o.keyFile, passphrase, temps);
+    d->Passphrase = passphrase;
+  }
+  else
+  {
+    d->Password = FromU8(o.password);
+  }
+  if (o.tunnel && !o.tunnelHost.empty())
+  {
+    d->Tunnel = true;
+    d->TunnelHostName = FromU8(o.tunnelHost);
+    d->TunnelPortNumber = o.tunnelPort;
+    d->TunnelUserName = FromU8(o.tunnelUser);
+    if (!o.tunnelKeyFile.empty())
+    {
+      UnicodeString passphrase = FromU8(o.tunnelPassword);
+      d->TunnelPublicKeyFile = PrepareKey(o.tunnelKeyFile, passphrase, temps);
+      d->TunnelPassphrase = passphrase;
+    }
+    else
+    {
+      d->TunnelPassword = FromU8(o.tunnelPassword);
+    }
+  }
+  if (o.proxyMethod != 0 && !o.proxyHost.empty())
+  {
+    d->ProxyMethod = (o.proxyMethod == 1) ? pmSocks4 : (o.proxyMethod == 2) ? pmSocks5 : pmHTTP;
+    d->ProxyHost = FromU8(o.proxyHost);
+    d->ProxyPort = o.proxyPort;
+    d->ProxyUsername = FromU8(o.proxyUser);
+    d->ProxyPassword = FromU8(o.proxyPassword);
+  }
+  if (o.serverCrLf) d->EOLType = eolCRLF;
+  if (o.utf8Names == 1) d->NotUtf = asOff;        // "UTF-8 encoding for filenames: On"
+  else if (o.utf8Names == 2) d->NotUtf = asOn;    // Off
+  d->FingerprintScan = false;
+  // Always read fresh listings: with the cache on, a panel refresh after an upload/op could show a
+  // stale directory (the uploaded file appeared missing). The GUI re-lists on every navigate anyway.
+  d->CacheDirectories = false;
+  d->CacheDirectoryChanges = false;
+}
+
+//--- transfer settings -> TCopyParamType ---
+std::mutex g_xferMtx;
+engine::TransferSettings g_xfer;
+
+// File names are transferred as they are. The engine's default replaces the characters Windows
+// forbids in local names (? * : " < > |) by %XX on download and decodes %XX on upload; none of
+// that applies to a Unix file system ("what?.txt" arrived as "what%3F.txt", and a local "a%20b"
+// would have been uploaded as "a b").
+void UnixFileNames(TCopyParamType & cp)
+{
+  cp.InvalidCharsReplacement = NoReplacement;
+}
+
+void FillCopyParam(TCopyParamType & cp)
+{
+  engine::TransferSettings x;
+  { std::lock_guard<std::mutex> lk(g_xferMtx); x = g_xfer; }
+  cp.Default();
+  UnixFileNames(cp);
+  cp.TransferMode = (x.mode == 1) ? tmAscii : (x.mode == 2) ? tmAutomatic : tmBinary;
+  if (!x.textMask.empty()) cp.AsciiFileMask.Masks = FromU8(x.textMask);
+  cp.PreserveTime = x.preserveTime;
+  cp.PreserveRights = x.setRights;
+  if (x.setRights)
+  {
+    try { cp.Rights.Octal = FromU8(x.rightsOctal); } catch (...) { cp.PreserveRights = false; }
+  }
+  cp.FileNameCase = (x.fileNameCase == 1) ? ncUpperCase : (x.fileNameCase == 2) ? ncLowerCase : ncNoChange;
+  cp.ResumeSupport = (x.resume == 0) ? rsOn : (x.resume == 2) ? rsOff : rsSmart;
+  cp.ResumeThreshold = (x.resumeThresholdKB > 0 ? x.resumeThresholdKB : 0) * 1024;
+  cp.CPSLimit = (x.speedLimitKB > 0) ? static_cast<unsigned long>(x.speedLimitKB) * 1024UL : 0;
+  if (!x.fileMask.empty())
+  {
+    try { cp.IncludeFileMask.Masks = FromU8(x.fileMask); } catch (...) { cp.IncludeFileMask.Masks = UnicodeString(); }
+  }
+  cp.NewerOnly = x.newerOnly;
+  cp.ExcludeHiddenFiles = x.excludeHidden;
+}
+
+// Is this prompt asked by the session's SSH tunnel (TTunnelUI prefixes its instructions)?
+bool IsTunnelPrompt(TSessionData * d, const UnicodeString & Instructions)
+{
+  return d->Tunnel && (Instructions.Pos(FMTLOAD(TUNNEL_INSTRUCTION2, (d->TunnelHostName))) == 1);
 }
 
 } // namespace
@@ -248,6 +430,7 @@ std::vector<DirEntry> listLocalDir(const std::string & utf8Path)
       e.isDir = (rec.Attr & faDirectory) != 0;
       e.size = rec.Size;
       e.modified = ToU8(rec.TimeStamp.DateTimeString());
+      e.mtimeSecs = SecondsOf(rec.TimeStamp);
       result.push_back(e);
     }
     while (FindNext(rec) == 0);
@@ -262,22 +445,26 @@ std::vector<DirEntry> listLocalDir(const std::string & utf8Path)
   return result;
 }
 
-//--- remote SFTP session ---------------------------------------------------
-ConnectResult connectSftp(const std::string & host, int port,
-                          const std::string & user, const std::string & password,
-                          Protocol protocol, bool tls, const std::string & keyFile)
+//--- remote session -----------------------------------------------------------
+ConnectResult connect(const ConnectOptions & o)
 {
-  LogLine("connectSftp(" + user + "@" + host + ":" + std::to_string(port) + " proto=" + std::to_string((int)protocol) + " key=" + (keyFile.empty() ? "no" : "yes") + ") ...");
+  LogLine("connect(" + o.user + "@" + o.host + ":" + std::to_string(o.port) + " proto=" + std::to_string((int)o.protocol) +
+          " key=" + (o.keyFile.empty() ? "no" : "yes") + (o.tunnel ? " tunnel=" + o.tunnelUser + "@" + o.tunnelHost + ":" + std::to_string(o.tunnelPort) : std::string()) +
+          (o.proxyMethod ? " proxy=" + std::to_string(o.proxyMethod) + ":" + o.proxyHost + ":" + std::to_string(o.proxyPort) : std::string()) + ") ...");
   ENGINE_LOCK;
   ConnectResult r;
-  if (host.empty()) { r.error = "Host name is empty."; LogLine("  connect: empty host"); return r; }   // engine produces a garbage message for an empty host
+  if (o.host.empty()) { r.error = "Host name is empty."; LogLine("  connect: empty host"); return r; }   // engine produces a garbage message for an empty host
+  if (o.tunnel && o.tunnelHost.empty()) { r.error = "SSH tunnel host name is empty."; return r; }
+  if (o.proxyMethod != 0 && o.proxyHost.empty()) { r.error = "Proxy host name is empty."; return r; }
   try
   {
     EnsureEngineInited();
     // Open a NEW session (tab). Each connect adds a tab; closing is via disconnectSftp/closeSession.
     g_sess.push_back(std::unique_ptr<Sess>(new Sess()));
     g_active = (int)g_sess.size() - 1;
-    AS().label = user + "@" + host;
+    Sess * self = g_sess[g_active].get();   // stable: sessions are held by unique_ptr
+    self->label = o.user + "@" + o.host;
+    self->params.o = o;
     // Optional full SSH/SFTP protocol log (heavy — every packet). Off by default; set
     // WINSCP_SESSIONLOG=1 to capture /tmp/winscp-session.log for diagnosing protocol issues.
     if (getenv("WINSCP_SESSIONLOG"))
@@ -287,55 +474,54 @@ ConnectResult connectSftp(const std::string & host, int port,
       Configuration->Logging = true;
       LogLine("protocol log -> /tmp/winscp-session.log");
     }
-    g_password = FromU8(password);
+    g_password = FromU8(o.password);
 
     g_sessionData.reset(new TSessionData(L""));
-    g_sessionData->Default();
-    g_sessionData->HostName = FromU8(host);
-    g_sessionData->PortNumber = port;
-    g_sessionData->UserName = FromU8(user);
-    g_sessionData->Password = g_password;
-    switch (protocol)
-    {
-      case Protocol::Scp:    g_sessionData->FSProtocol = fsSCPonly; break;
-      case Protocol::WebDav: g_sessionData->FSProtocol = fsWebDAV;
-                             g_sessionData->Ftps = tls ? ftpsImplicit : ftpsNone; break;
-      case Protocol::S3:     g_sessionData->FSProtocol = fsS3;
-                             g_sessionData->Ftps = tls ? ftpsImplicit : ftpsNone;
-                             g_sessionData->S3UrlStyle = s3usPath; g_sessionData->S3DefaultRegion = L"us-east-1"; break;
-      case Protocol::Ftp:    g_sessionData->FSProtocol = fsFTP;
-                             g_sessionData->Ftps = tls ? ftpsImplicit : ftpsNone; break;
-      default:               g_sessionData->FSProtocol = fsSFTPonly; break;
-    }
-    if (!keyFile.empty())   // public-key auth: the password field is the key passphrase
-    {
-      UnicodeString kf = FromU8(keyFile);
-      TKeyType kt = KeyType(kf);
-      // PuTTY's auth only uses .ppk private keys; convert OpenSSH/SSHCom keys to a temp .ppk first.
-      if (kt == ktOpenSSHPEM || kt == ktOpenSSHNew || kt == ktSSHCom)
-      {
-        TPrivateKey * pk = LoadKey(kt, kf, g_password);   // throws on bad passphrase
-        UnicodeString ppk = FromU8("/tmp/.winscp-tmpkey.ppk");
-        SaveKey(ktSSH2, ppk, UnicodeString(), pk);        // unencrypted temp ppk
-        FreeKey(pk);
-        g_sessionData->PublicKeyFile = ppk;               // no passphrase needed for the temp
-      }
-      else
-      {
-        g_sessionData->PublicKeyFile = kf;
-        g_sessionData->Passphrase = g_password;           // .ppk: password field = its passphrase
-      }
-    }
-    g_sessionData->FingerprintScan = false;
-    // Always read fresh listings: with the cache on, a panel refresh after an upload/op could show a
-    // stale directory (the uploaded file appeared missing). The GUI re-lists on every navigate anyway.
-    g_sessionData->CacheDirectories = false;
-    g_sessionData->CacheDirectoryChanges = false;
+    ConfigureSessionData(g_sessionData.get(), o, self->tempKeys);
 
     g_terminal.reset(new TTerminal(g_sessionData.get(), Configuration));
     g_terminal->OnPromptUser =
-      [](TTerminal *, TPromptKind, UnicodeString, UnicodeString, TStrings *, TStrings * Results, bool & Result, void *)
-      { if (Results != nullptr) for (int i = 0; i < Results->Count; i++) Results->Strings[i] = g_password; Result = true; };
+      [self](TTerminal *, TPromptKind Kind, UnicodeString Name, UnicodeString Instructions, TStrings * Prompts, TStrings * Results, bool & Result, void *)
+      {
+        if (Results == nullptr) { Result = true; return; }
+        const bool forTunnel = IsTunnelPrompt(self->data.get(), Instructions);
+        LogLine("  OnPromptUser kind=" + std::to_string((int)Kind) + " prompts=" + std::to_string(Results->Count) + (forTunnel ? " (tunnel)" : ""));
+        if (g_promptCb && g_connecting)   // ask the user (connect runs on the UI thread)
+        {
+          PromptRequest rq;
+          rq.kind = (int)Kind; rq.forTunnel = forTunnel;
+          rq.name = ToU8(Name); rq.instructions = ToU8(Instructions);
+          for (int i = 0; i < Results->Count; i++)
+          {
+            const bool has = (Prompts != nullptr) && (i < Prompts->Count);
+            rq.prompts.push_back(has ? ToU8(Prompts->Strings[i]) : std::string());
+            rq.echo.push_back(has && ((reinterpret_cast<intptr_t>(Prompts->Objects[i]) & pupEcho) != 0));
+          }
+          std::vector<std::string> answers(rq.prompts.size());
+          Result = g_promptCb(rq, answers);
+          if (!Result) return;
+          answers.resize(rq.prompts.size());
+          for (int i = 0; i < Results->Count; i++) Results->Strings[i] = FromU8(answers[i]);
+          // Remember a typed password / passphrase for the parallel-transfer connections. Anything
+          // else (one-time codes, challenge answers) cannot be replayed.
+          ConnectOptions & po = self->params.o;
+          if ((Kind == pkPassword || Kind == pkPassphrase) && Results->Count == 1)
+          {
+            if (forTunnel) po.tunnelPassword = answers[0];
+            else { po.password = answers[0]; self->password = FromU8(answers[0]); }
+          }
+          else self->params.interactive = true;
+        }
+        else   // headless / off the UI thread: the stored password is the only thing we can offer
+        {
+          // ...and only a few times, and never to a proxy: a server that keeps rejecting it would
+          // otherwise be re-answered forever (an HTTP proxy with wrong credentials looped at full speed).
+          if (Kind == pkProxyAuth || ++self->autoAnswers > 3) { Result = false; return; }
+          UnicodeString pw = forTunnel ? FromU8(self->params.o.tunnelPassword) : self->password;
+          for (int i = 0; i < Results->Count; i++) Results->Strings[i] = pw;
+          Result = true;
+        }
+      };
     g_terminal->OnQueryUser =
       [](TObject *, const UnicodeString & Query, TStrings *, unsigned int Answers, const TQueryParams *, unsigned int & Answer, TQueryType Type, void *)
       {
@@ -356,6 +542,7 @@ ConnectResult connectSftp(const std::string & host, int port,
     g_terminal->OnProgress =
       [](TFileOperationProgressType & P)
       {
+        if (g_opCancel && g_opCancel()) P.SetCancel(csCancel);
         if (g_progressCb)
         {
           TransferProgress tp;
@@ -367,29 +554,66 @@ ConnectResult connectSftp(const std::string & host, int port,
         }
       };
 
-    g_connecting = true;            // host-key prompt may fire inside Open() (UI thread)
+    // Command failures that are not fatal to the session (cannot change to / read a directory,
+    // rename refused, ...) are REPORTED here by the engine, not thrown. With no handler they were
+    // lost: the operation "succeeded" and e.g. an unreadable directory showed up as an empty one.
+    g_terminal->OnShowExtendedException =
+      [](TTerminal *, Exception * E, void *)
+      {
+        if (E == nullptr) return;
+        g_lastTransferError = ExceptionToU8(*E);
+        LogLine("  engine error: " + g_lastTransferError);
+      };
+
+    g_connecting = true;            // host-key / authentication prompts may fire inside Open() (UI thread)
     try { g_terminal->Open(); } catch (...) { g_connecting = false; throw; }
     g_connecting = false;
-    if (!g_sessionData->PublicKeyFile.IsEmpty() && g_sessionData->PublicKeyFile == FromU8("/tmp/.winscp-tmpkey.ppk"))
-      ::remove("/tmp/.winscp-tmpkey.ppk");   // don't leave the unencrypted converted key on disk
+    RemoveTempKeys(self->tempKeys);
     r.ok = true;
     r.currentDir = ToU8(g_terminal->CurrentDirectory);
-    g_lastParams = ConnParams{ host, port, user, password, protocol, tls, true };  // for parallel connections
+    self->params.valid = true;      // for parallel connections
     LogLine("  connect: OK, cwd='" + r.currentDir + "'");
   }
   catch (Exception & E)
   {
     g_connecting = false;
-    UnicodeString msg = E.Message;
-    ExtException * Ext = dynamic_cast<ExtException *>(&E);
-    if ((Ext != nullptr) && (Ext->MoreMessages != nullptr))
-      for (int i = 0; i < Ext->MoreMessages->Count; i++) msg += UnicodeString(L"\n") + Ext->MoreMessages->Strings[i];
-    r.error = ToU8(msg);
+    r.error = ExceptionToU8(E);
+    if (g_active >= 0 && g_active < (int)g_sess.size()) RemoveTempKeys(g_sess[g_active]->tempKeys);
     DropActiveSession();   // remove the failed tab
     LogLine("  connect: FAILED: " + r.error);
   }
-  catch (...) { g_connecting = false; r.error = "unknown error"; DropActiveSession(); LogLine("  connect: unknown exception"); }
+  catch (...)
+  {
+    g_connecting = false; r.error = "unknown error";
+    if (g_active >= 0 && g_active < (int)g_sess.size()) RemoveTempKeys(g_sess[g_active]->tempKeys);
+    DropActiveSession(); LogLine("  connect: unknown exception");
+  }
   return r;
+}
+
+ConnectResult connectSftp(const std::string & host, int port,
+                          const std::string & user, const std::string & password,
+                          Protocol protocol, bool tls, const std::string & keyFile)
+{
+  ConnectOptions o;
+  o.host = host; o.port = port; o.user = user; o.password = password;
+  o.protocol = protocol; o.tls = tls; o.ftpExplicitTls = false; o.keyFile = keyFile;
+  return connect(o);
+}
+
+void setPromptCallback(const std::function<bool(const PromptRequest &, std::vector<std::string> &)> & cb) { g_promptCb = cb; }
+void setTransferSettings(const TransferSettings & settings) { std::lock_guard<std::mutex> lk(g_xferMtx); g_xfer = settings; }
+TransferSettings transferSettings() { std::lock_guard<std::mutex> lk(g_xferMtx); return g_xfer; }
+std::string defaultTextMask()
+{
+  TCopyParamType cp; cp.Default();
+  return ToU8(cp.AsciiFileMask.Masks);
+}
+bool validateFileMask(const std::string & mask, std::string * error)
+{
+  try { TFileMasks m; m.Masks = FromU8(mask); return true; }
+  catch (Exception & E) { if (error) *error = ExceptionToU8(E); return false; }
+  catch (...) { if (error) *error = "invalid mask"; return false; }
 }
 
 void setProgressSink(const std::function<bool(const TransferProgress &)> & cb) { g_progressCb = cb; }
@@ -398,11 +622,13 @@ void setConfirmCallback(const std::function<bool(const std::string &)> & cb) { g
 bool remoteConnected() { ENGINE_LOCK; return g_terminal && g_terminal->Active; }
 std::string remoteCurrentDir() { ENGINE_LOCK; return remoteConnected() ? ToU8(g_terminal->CurrentDirectory) : std::string(); }
 
-std::vector<DirEntry> listRemoteDir(const std::string & utf8Path)
+std::vector<DirEntry> listRemoteDir(const std::string & utf8Path, std::string * error)
 {
   ENGINE_LOCK;
   std::vector<DirEntry> result;
-  if (!remoteConnected()) return result;
+  if (error) error->clear();
+  if (!remoteConnected()) { if (error) *error = "not connected"; return result; }
+  g_lastTransferError.clear();
   try
   {
     if (!utf8Path.empty() && (FromU8(utf8Path) != g_terminal->CurrentDirectory))
@@ -424,6 +650,11 @@ std::vector<DirEntry> listRemoteDir(const std::string & utf8Path)
         e.isParent = (n == UnicodeString(L".."));
         e.size = F->Size;
         e.modified = e.isParent ? std::string() : ToU8(F->ModificationStr);
+        if (!e.isParent && F->ModificationFmt != mfNone)
+        {
+          e.mtimeSecs = SecondsOf(F->Modification);
+          e.mtimeHasSeconds = (F->ModificationFmt == mfFull);
+        }
         if (!e.isParent)
         {
           e.rights = ToU8(F->RightsStr);   // e.g. "rwxr-xr-x"
@@ -434,7 +665,10 @@ std::vector<DirEntry> listRemoteDir(const std::string & utf8Path)
         result.push_back(e);
       }
   }
-  catch (...) { /* leave partial/empty */ }
+  // An unreadable directory used to come back as a silently empty listing.
+  catch (Exception & E) { if (error) *error = g_lastTransferError.empty() ? ExceptionToU8(E) : g_lastTransferError; }
+  catch (...) { if (error) *error = g_lastTransferError.empty() ? "unknown error" : g_lastTransferError; }
+  if (error && error->empty() && !g_lastTransferError.empty()) *error = g_lastTransferError;
 
   std::sort(result.begin(), result.end(),
             [](const DirEntry & a, const DirEntry & b) {
@@ -455,16 +689,6 @@ TRemoteFile * FindInListing(const UnicodeString & name)
       if (Files->Files[i]->FileName == name) return Files->Files[i];
   return nullptr;
 }
-// Flatten an engine exception (incl. ExtException MoreMessages chain) to a UTF-8 string.
-std::string ExceptionToU8(Exception & E)
-{
-  UnicodeString msg = E.Message;
-  ExtException * Ext = dynamic_cast<ExtException *>(&E);
-  if ((Ext != nullptr) && (Ext->MoreMessages != nullptr))
-    for (int i = 0; i < Ext->MoreMessages->Count; i++)
-      msg += UnicodeString(L"\n") + Ext->MoreMessages->Strings[i];
-  return std::string(UTF8String(msg).c_str());
-}
 } // namespace
 
 //=== parallel-connection pool (experimental; for queue parallelism) ========
@@ -475,13 +699,15 @@ struct ParConn
   std::unique_ptr<TTerminal> term;
   std::recursive_mutex mtx;            // serializes THIS connection only (parallelism across conns)
   std::function<bool(const engine::TransferProgress &)> sink;
+  std::vector<std::string> tempKeys;
 };
 std::vector<std::unique_ptr<ParConn>> g_pool;
 std::mutex g_poolMtx;
 }
 
 // FTP's single-connection state machine doesn't run reliably in parallel instances; gate it out.
-bool parallelSupported() { return g_lastParams.valid && g_lastParams.protocol != engine::Protocol::Ftp; }
+// A login that needed one-time codes cannot be repeated without asking the user again; stay serial.
+bool parallelSupported() { return g_lastParams.valid && g_lastParams.o.protocol != engine::Protocol::Ftp && !g_lastParams.interactive; }
 
 int openParallelConnection(std::string * error)
 {
@@ -492,33 +718,22 @@ int openParallelConnection(std::string * error)
     EnsureEngineInited();
     auto c = std::make_unique<ParConn>();
     c->data.reset(new TSessionData(L""));
-    c->data->Default();
-    c->data->HostName = FromU8(g_lastParams.host);
-    c->data->PortNumber = g_lastParams.port;
-    c->data->UserName = FromU8(g_lastParams.user);
-    c->data->Password = FromU8(g_lastParams.password);
-    switch (g_lastParams.protocol)
-    {
-      case engine::Protocol::Scp:    c->data->FSProtocol = fsSCPonly; break;
-      case engine::Protocol::WebDav: c->data->FSProtocol = fsWebDAV; c->data->Ftps = g_lastParams.tls ? ftpsImplicit : ftpsNone; break;
-      case engine::Protocol::S3:     c->data->FSProtocol = fsS3; c->data->Ftps = g_lastParams.tls ? ftpsImplicit : ftpsNone;
-                                     c->data->S3UrlStyle = s3usPath; c->data->S3DefaultRegion = L"us-east-1"; break;
-      case engine::Protocol::Ftp:    c->data->FSProtocol = fsFTP; c->data->Ftps = g_lastParams.tls ? ftpsImplicit : ftpsNone; break;
-      default:                       c->data->FSProtocol = fsSFTPonly; break;
-    }
-    c->data->FingerprintScan = false;
-    c->data->CacheDirectories = false; c->data->CacheDirectoryChanges = false;
-    UnicodeString pw = FromU8(g_lastParams.password);
+    const engine::ConnectOptions po = g_lastParams.o;   // includes a password typed at the login prompt
+    ConfigureSessionData(c->data.get(), po, c->tempKeys);
     ParConn * cp = c.get();
     c->term.reset(new TTerminal(c->data.get(), Configuration));
-    c->term->OnPromptUser = [pw](TTerminal *, TPromptKind, UnicodeString, UnicodeString, TStrings *, TStrings * Results, bool & Result, void *)
-      { if (Results) for (int i = 0; i < Results->Count; i++) Results->Strings[i] = pw; Result = true; };
+    c->term->OnPromptUser = [po, cp](TTerminal *, TPromptKind, UnicodeString, UnicodeString Instructions, TStrings *, TStrings * Results, bool & Result, void *)
+      { UnicodeString pw = FromU8(IsTunnelPrompt(cp->data.get(), Instructions) ? po.tunnelPassword : po.password);
+        if (Results) for (int i = 0; i < Results->Count; i++) Results->Strings[i] = pw; Result = true; };
     c->term->OnQueryUser = [](TObject *, const UnicodeString & Query, TStrings *, unsigned int Answers, const TQueryParams *, unsigned int & Answer, TQueryType Type, void *)
       { if (Type == qtError) { if (Answers & qaYes) Answer = qaYes; else { g_lastTransferError = ToU8(Query); Answer = (Answers & qaSkip) ? qaSkip : ((Answers & qaAbort) ? qaAbort : Answers); } }
         else Answer = (Answers & qaYes) ? qaYes : ((Answers & qaOK) ? qaOK : Answers); };
     c->term->OnProgress = [cp](TFileOperationProgressType & P)
       { if (cp->sink) { engine::TransferProgress tp; tp.file = ToU8(P.FileName); tp.transferred = P.TransferredSize; tp.total = P.TransferSize; tp.cps = (std::int64_t)P.CPS(); if (cp->sink(tp)) P.SetCancel(csCancel); } };
-    c->term->Open();
+    c->term->OnShowExtendedException = [](TTerminal *, Exception * E, void *)
+      { if (E != nullptr) { g_lastTransferError = ExceptionToU8(*E); LogLine("  engine error (parallel): " + g_lastTransferError); } };
+    try { c->term->Open(); } catch (...) { RemoveTempKeys(c->tempKeys); throw; }
+    RemoveTempKeys(c->tempKeys);
     g_pool.push_back(std::move(c));
     return (int)g_pool.size();   // handle = 1-based index
   }
@@ -541,7 +756,7 @@ bool uploadVia(int handle, const std::string & localPathUtf8, const std::string 
   {
     std::unique_ptr<TStrings> files(new TStringList());
     files->Add(FromU8(localPathUtf8));
-    TCopyParamType cp; cp.Default();
+    TCopyParamType cp; FillCopyParam(cp);
     g_lastTransferError.clear();
     bool res = c->term->CopyToRemote(files.get(), UnixIncludeTrailingBackslash(FromU8(remoteDirUtf8)), &cp, cpNoConfirmation, nullptr);
     if (!g_lastTransferError.empty()) { if (error) *error = g_lastTransferError; return false; }
@@ -572,7 +787,7 @@ bool downloadVia(int handle, const std::string & remotePathUtf8, const std::stri
     // A directory's FullFileName ends in '/'; the transfer code derives the local name with
     // UnixExtractFileName(), which is then empty - the folder's contents landed directly in the target.
     files->AddObject(UnixExcludeTrailingBackslash(rf->FullFileName), rf);
-    TCopyParamType cp; cp.Default();
+    TCopyParamType cp; FillCopyParam(cp);
     g_lastTransferError.clear();
     bool res = c->term->CopyToLocal(files.get(), IncludeTrailingBackslash(FromU8(localDirUtf8)), &cp, cpNoConfirmation, nullptr);
     if (!g_lastTransferError.empty()) { if (error) *error = g_lastTransferError; return false; }
@@ -609,8 +824,17 @@ bool shutdown(int timeoutMs)
   return true;
 }
 
+namespace {
+void FillPlainCopyParam(TCopyParamType & cp)
+{
+  cp.Default();
+  UnixFileNames(cp);
+  cp.ResumeSupport = rsOff;      // a temporary copy needs no .filepart
+}
+}
+
 bool uploadToRemote(const std::string & localPathUtf8, const std::string & remoteDirUtf8,
-                    std::string * error)
+                    std::string * error, bool plain)
 {
   LogLine("uploadToRemote('" + localPathUtf8 + "' -> '" + remoteDirUtf8 + "') ...");
   ENGINE_LOCK;
@@ -620,7 +844,7 @@ bool uploadToRemote(const std::string & localPathUtf8, const std::string & remot
   {
     std::unique_ptr<TStrings> files(new TStringList());
     files->Add(FromU8(localPathUtf8));
-    TCopyParamType cp; cp.Default();
+    TCopyParamType cp; if (plain) FillPlainCopyParam(cp); else FillCopyParam(cp);
     UnicodeString target = UnixIncludeTrailingBackslash(FromU8(remoteDirUtf8));
     LogLine("  upload: CopyToRemote ...");
     bool res = g_terminal->CopyToRemote(files.get(), target, &cp, cpNoConfirmation, nullptr);
@@ -634,7 +858,7 @@ bool uploadToRemote(const std::string & localPathUtf8, const std::string & remot
 }
 
 bool downloadFromRemote(const std::string & remotePathUtf8, const std::string & localDirUtf8,
-                        std::string * error)
+                        std::string * error, bool plain)
 {
   LogLine("downloadFromRemote('" + remotePathUtf8 + "' -> '" + localDirUtf8 + "') ...");
   ENGINE_LOCK;
@@ -651,7 +875,7 @@ bool downloadFromRemote(const std::string & remotePathUtf8, const std::string & 
     // A directory's FullFileName ends in '/'; the transfer code derives the local name with
     // UnixExtractFileName(), which is then empty - the folder's contents landed directly in the target.
     files->AddObject(UnixExcludeTrailingBackslash(rf->FullFileName), rf);
-    TCopyParamType cp; cp.Default();
+    TCopyParamType cp; if (plain) FillPlainCopyParam(cp); else FillCopyParam(cp);
     UnicodeString target = IncludeTrailingBackslash(FromU8(localDirUtf8));
     g_lastTransferError.clear();
     LogLine("  download: CopyToLocal ...");
@@ -766,12 +990,16 @@ std::vector<SyncItem> synchronizeCollect(const std::string & localDir, const std
     TTerminal::TSynchronizeMode m = (mode == 1) ? TTerminal::smLocal : (mode == 2) ? TTerminal::smBoth : TTerminal::smRemote;
     int params = TTerminal::spNoConfirmation | TTerminal::spSubDirs;
     if (del && mode != 2) params |= TTerminal::spDelete;
-    TCopyParamType cp; cp.Default();
+    TCopyParamType cp; FillCopyParam(cp);
     g_checklist = g_terminal->SynchronizeCollect(FromU8(localDir), FromU8(remoteDir), m, &cp, params, nullptr, nullptr);
     if (g_checklist != nullptr)
       for (int i = 0; i < g_checklist->Count; i++)
       {
         const TSynchronizeChecklist::TItem * it = g_checklist->Item[i];
+        // The checklist also carries what the engine noticed but will NOT do with these options
+        // (e.g. files that exist only on the target when "delete" is off): unchecked items.
+        // SynchronizeApply skips them, so they are not changes to show.
+        if (!it->Checked) continue;
         SyncItem si;
         switch (it->Action)
         {
@@ -798,7 +1026,7 @@ bool synchronizeApply(std::string * error)
   if (g_checklist == nullptr) { if (error) *error = "nothing to synchronize"; return false; }
   try
   {
-    TCopyParamType cp; cp.Default();
+    TCopyParamType cp; FillCopyParam(cp);
     g_terminal->SynchronizeApply(g_checklist, &cp, TTerminal::spNoConfirmation | TTerminal::spSubDirs,
                                  nullptr, nullptr, nullptr, nullptr, nullptr);
     return true;
@@ -808,6 +1036,174 @@ bool synchronizeApply(std::string * error)
 }
 
 void synchronizeRelease() { delete g_checklist; g_checklist = nullptr; }
+
+//=== find files / directory sizes ===========================================
+bool remoteFind(const std::string & dir, const std::string & mask,
+                const std::function<bool(const FoundFile &)> & onFound,
+                const std::function<bool(const std::string &)> & onDirectory, std::string * error)
+{
+  ENGINE_LOCK;
+  if (!remoteConnected()) { if (error) *error = "not connected"; return false; }
+  g_lastTransferError.clear();
+  try
+  {
+    TFileMasks masks;
+    masks.Masks = FromU8(mask.empty() ? std::string("*") : mask);   // throws on a malformed mask
+    UnicodeString start = FromU8(dir.empty() ? std::string("/") : dir);
+    g_terminal->FilesFind(start, masks,
+      [&](TTerminal *, const UnicodeString FileName, const TRemoteFile * File, bool & Cancel)
+      {
+        FoundFile f;
+        f.path = ToU8(UnixExcludeTrailingBackslash(FileName));
+        f.dir = ToU8(UnixExcludeTrailingBackslash(UnixExtractFilePath(FromU8(f.path))));
+        if (f.dir.empty()) f.dir = "/";
+        f.name = ToU8(UnixExtractFileName(FromU8(f.path)));
+        if (File != nullptr)
+        {
+          f.isDir = File->IsDirectory;
+          f.size = File->IsDirectory ? 0 : File->Size;
+          f.modified = ToU8(File->ModificationStr);
+        }
+        if (onFound && onFound(f)) Cancel = true;
+      },
+      [&](TTerminal *, const UnicodeString Directory, bool & Cancel)
+      {
+        if (onDirectory && onDirectory(ToU8(Directory))) Cancel = true;
+      });
+    // a directory that cannot be read is reported through OnShowExtendedException and skipped
+    if (!g_lastTransferError.empty() && error) *error = g_lastTransferError;
+    return true;
+  }
+  catch (Exception & E) { if (error) *error = g_lastTransferError.empty() ? ExceptionToU8(E) : g_lastTransferError; return false; }
+  catch (...) { if (error) *error = "unknown error"; return false; }
+}
+
+bool localFind(const std::string & dir, const std::string & mask,
+               const std::function<bool(const FoundFile &)> & onFound,
+               const std::function<bool(const std::string &)> & onDirectory, std::string * error)
+{
+  namespace fs = std::filesystem;
+  try
+  {
+    // No engine session involved, but TFileMasks (the same mask language as the remote search) is engine code.
+    { ENGINE_LOCK; EnsureEngineInited(); }
+    TFileMasks masks;
+    masks.Masks = FromU8(mask.empty() ? std::string("*") : mask);
+    masks.NoImplicitMatchWithDirExcludeMask = true;
+    masks.AllDirsAreImplicitlyIncluded = true;
+    std::error_code ec;
+    if (!fs::is_directory(dir, ec)) { if (error) *error = "Directory '" + dir + "' does not exist."; return false; }
+    std::vector<std::string> pending{ dir };
+    while (!pending.empty())
+    {
+      std::string cur = pending.back(); pending.pop_back();
+      if (onDirectory && onDirectory(cur)) return true;
+      std::vector<fs::directory_entry> entries;
+      for (fs::directory_iterator it(cur, fs::directory_options::skip_permission_denied, ec), end; !ec && it != end; it.increment(ec))
+        entries.push_back(*it);
+      std::sort(entries.begin(), entries.end(), [](const fs::directory_entry & a, const fs::directory_entry & b) { return a.path() < b.path(); });
+      for (const fs::directory_entry & e : entries)
+      {
+        std::error_code e2;
+        const bool isLink = e.is_symlink(e2);
+        const bool isDir = e.is_directory(e2);
+        FoundFile f;
+        f.path = e.path().string();
+        f.dir = cur;
+        f.name = e.path().filename().string();
+        f.isDir = isDir;
+        f.size = (!isDir && e.is_regular_file(e2)) ? static_cast<std::int64_t>(e.file_size(e2)) : 0;
+        TFileMasks::TParams params;
+        params.Size = f.size;
+        struct stat st;
+        if (::stat(f.path.c_str(), &st) == 0)
+        {
+          struct tm lt; time_t t = st.st_mtime; localtime_r(&t, &lt);
+          TDateTime when = EncodeDate(lt.tm_year + 1900, lt.tm_mon + 1, lt.tm_mday) + EncodeTime(lt.tm_hour, lt.tm_min, lt.tm_sec, 0);
+          params.Modification = when;
+          f.modified = ToU8(when.DateTimeString());
+        }
+        // Same rule as the engine's remote search (TTerminal::FileFind): a directory that is only
+        // "implicitly" included (so that its contents get searched) is not itself a result, and a
+        // directory the mask excludes is not descended into. Paths here use '/', i.e. the mask
+        // code's "remote" flavour.
+        bool implicitMatch = false;
+        if (masks.Matches(FromU8(f.path), false, isDir, &params, false, implicitMatch))
+        {
+          if (!implicitMatch && onFound && onFound(f)) return true;
+          if (isDir && !isLink) pending.push_back(f.path);    // do not follow directory symlinks (cycles)
+        }
+      }
+    }
+    return true;
+  }
+  catch (Exception & E) { if (error) *error = ExceptionToU8(E); return false; }
+  catch (...) { if (error) *error = "unknown error"; return false; }
+}
+
+bool remoteCalculateSize(const std::string & name, SizeResult & result,
+                         const std::function<bool()> & cancelled, std::string * error)
+{
+  ENGINE_LOCK;
+  result = SizeResult();
+  if (!remoteConnected()) { if (error) *error = "not connected"; return false; }
+  g_lastTransferError.clear();
+  try
+  {
+    TRemoteFile * rf = FindInListing(FromU8(name));
+    if (rf == nullptr) { if (error) *error = "file not in current listing"; return false; }
+    std::unique_ptr<TStrings> files(new TStringList());
+    files->AddObject(UnixExcludeTrailingBackslash(rf->FullFileName), rf);
+    TCalculateSizeStats stats;
+    TCalculateSizeParams params;
+    params.Stats = &stats;
+    __int64 size = 0;
+    g_opCancel = cancelled;
+    bool ok;
+    try { ok = g_terminal->CalculateFilesSize(files.get(), size, params); }
+    catch (...) { g_opCancel = nullptr; throw; }
+    g_opCancel = nullptr;
+    result.bytes = size; result.files = stats.Files; result.dirs = stats.Directories;
+    if (cancelled && cancelled()) return false;
+    if (!ok && error) *error = g_lastTransferError.empty() ? std::string("Could not read every directory.") : g_lastTransferError;
+    return ok;
+  }
+  catch (Exception & E)
+  {
+    if (cancelled && cancelled()) return false;
+    if (error) *error = g_lastTransferError.empty() ? ExceptionToU8(E) : g_lastTransferError;
+    return false;
+  }
+  catch (...) { if (error && !(cancelled && cancelled())) *error = "unknown error"; return false; }
+}
+
+bool localCalculateSize(const std::string & path, SizeResult & result,
+                        const std::function<bool()> & cancelled, std::string * error)
+{
+  namespace fs = std::filesystem;
+  result = SizeResult();
+  std::error_code ec;
+  fs::file_status st = fs::symlink_status(path, ec);
+  if (ec) { if (error) *error = ec.message(); return false; }
+  if (!fs::is_directory(st))
+  {
+    result.files = 1;
+    if (fs::is_regular_file(st)) result.bytes = static_cast<std::int64_t>(fs::file_size(path, ec));
+    return true;
+  }
+  result.dirs = 1;
+  int n = 0;
+  for (fs::recursive_directory_iterator it(path, fs::directory_options::skip_permission_denied, ec), end; !ec && it != end; it.increment(ec))
+  {
+    if (cancelled && (++n % 256 == 0) && cancelled()) return false;
+    std::error_code e2;
+    if (it->is_symlink(e2)) { ++result.files; continue; }          // count the link, not its target
+    if (it->is_directory(e2)) ++result.dirs;
+    else { ++result.files; if (it->is_regular_file(e2)) result.bytes += static_cast<std::int64_t>(it->file_size(e2)); }
+  }
+  if (ec) { if (error) *error = ec.message(); return false; }
+  return true;
+}
 
 void disconnectSftp()   // closes + removes the ACTIVE session (tab)
 {

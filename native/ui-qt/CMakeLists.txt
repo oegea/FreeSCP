@@ -30,8 +30,8 @@ find_package(OpenSSL REQUIRED)
 set(WINSCP_ICNS ${CMAKE_CURRENT_SOURCE_DIR}/winscp.icns)
 set(CMAKE_AUTORCC ON)
 # Single source of truth for the app version (shown in About + baked into the bundle).
-set(FREESCP_VERSION "0.2.0")
-add_executable(winscp-qt MACOSX_BUNDLE main.cpp resources.qrc ${WINSCP_ICNS})
+set(FREESCP_VERSION "0.3.0")
+add_executable(winscp-qt MACOSX_BUNDLE main.cpp logindialog.cpp transferdialog.cpp finddialog.cpp diffview.cpp resources.qrc ${WINSCP_ICNS})
 target_compile_definitions(winscp-qt PRIVATE FREESCP_VERSION="${FREESCP_VERSION}")
 if(APPLE)
   set_source_files_properties(${WINSCP_ICNS} PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
@@ -56,3 +56,30 @@ target_link_libraries(winscp-qt PRIVATE
   neon expat libs3                        # Phase 4: WebDAV + S3 deps, on-demand
   winscpfilezilla                         # Phase 8: FTP backend
   OpenSSL::SSL OpenSSL::Crypto)
+
+# Command-line driver for the engine bridge (no Qt): the end-to-end feature tests
+# (native/scripts/e2e-features.sh) use it to exercise connection options, authentication prompts,
+# transfer settings, find and size calculation through the same API the GUI calls.
+add_executable(freescp-bridge-cli tests/bridgecli.cpp)
+foreach(lib winscpcore winscp_harness puttycore puttyplatform)
+  if(APPLE)
+    target_link_options(freescp-bridge-cli PRIVATE -Wl,-force_load,$<TARGET_FILE:${lib}>)
+  else()
+    target_link_options(freescp-bridge-cli PRIVATE "SHELL:-Wl,--whole-archive $<TARGET_FILE:${lib}> -Wl,--no-whole-archive")
+  endif()
+endforeach()
+target_link_libraries(freescp-bridge-cli PRIVATE
+  enginebridge
+  winscpcore winscp_harness puttycore puttyplatform rtlcompat
+  neon expat libs3 winscpfilezilla
+  OpenSSL::SSL OpenSSL::Crypto)
+
+# Pure UI logic (no Qt, no engine): text comparison and Compare Directories, with unit tests.
+add_library(uilogic STATIC textdiff.cpp)
+target_include_directories(uilogic PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+set_target_properties(uilogic PROPERTIES AUTOMOC OFF)
+add_executable(test_uilogic tests/logic_test.cpp)
+target_link_libraries(test_uilogic PRIVATE uilogic)
+set_target_properties(test_uilogic PROPERTIES AUTOMOC OFF)
+add_test(NAME uilogic COMMAND test_uilogic)
+target_link_libraries(winscp-qt PRIVATE uilogic)
