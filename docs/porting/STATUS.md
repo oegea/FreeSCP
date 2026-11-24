@@ -1092,3 +1092,27 @@ Preferences > Environment switches it off; Help > Check for Updates asks on dema
 - Released as **v0.3.1** (2026-11-17): Linux tag build 224/224 on `e2e-features.sh`.
 - Test hook: `WINSCP_UPDATE_URL` (any URL, including `file://`). Scripted/offscreen runs never make
   the request unless it is set.
+
+## 0.3.2: AppImage catalog (2026-11-24)
+
+appimage.github.io opened a pull request by itself to list FreeSCP (AppImage/appimage.github.io#12101)
+and its automatic test failed on 0.3.1. The test starts the AppImage under Xvfb, takes a screenshot of
+the first window, reads it with OCR and fails on error words. The first window is the welcome dialog,
+and "the one **exception** is a check for a newer version" matched `exception`. The app itself ran fine.
+
+- Welcome dialog reworded (same meaning, `native/ui-qt/main.cpp`). Checked by rendering the dialog
+  (`WINSCP_WELCOME_SHOT`) and running the catalog's own OCR step and word lists on it: no match.
+  Keep that list in mind for any text on the first window (`code/check-screenshot.sh` in their repo:
+  exception, fatal, glibc, "not installed", "could not load", "failed to start", ...).
+- Desktop entry in the AppImage (`package-linux.sh`): one main category (`Network;FileTransfer;`),
+  a `Comment`, and `X-AppImage-Payload-License=GPL-3.0`; the catalog reads the last two.
+- Left as they are, all warnings only in that test: `Linux` in the asset name (renaming breaks the
+  `releases/latest/download/...` links), no AppStream file (an invalid one would be an error, a
+  missing one is not), bundled libraries on the AppImage exclude list (`libstdc++`, `libX11`,
+  `libfontconfig`, ... - excluding them needs testing on several distributions), no update information.
+- Released as **v0.3.2** (2026-11-24), same pipeline: Linux tag build 224/224 on `e2e-features.sh`;
+  signed + notarized macOS app `e2e-ssh.sh` ALL OK natively and under Rosetta (`E2E_QPA=native`; for
+  the Rosetta run the harness of a developer build is arm64 only, so it was started through a
+  wrapper that runs it with `arch -arm64`).
+- Website: version strings, and the headline now leads with the project's own name ("FreeSCP. The
+  WinSCP engine, natively on Mac & Linux.") instead of "WinSCP." alone.
