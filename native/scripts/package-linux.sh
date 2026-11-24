@@ -83,10 +83,12 @@ cat > "$APPDIR/FreeSCP.desktop" <<'EOF'
 [Desktop Entry]
 Type=Application
 Name=FreeSCP
+Comment=SFTP, FTP, SCP, WebDAV and S3 file manager - a native port of WinSCP
 Exec=winscp-qt
 Icon=freescp
-Categories=Network;FileTransfer;Utility;
+Categories=Network;FileTransfer;
 Terminal=false
+X-AppImage-Payload-License=GPL-3.0
 EOF
 
 cat > "$APPDIR/AppRun" <<'EOF'

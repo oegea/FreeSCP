@@ -1767,9 +1767,9 @@ int main(int argc, char ** argv)
       "<tr><td><b>Free&nbsp;forever</b></td><td>Every feature, for everyone. There is nothing to unlock.</td></tr>"
       "<tr><td><b>Open&nbsp;source</b></td><td>GPLv3 &mdash; the code is at "
       "<a href='https://github.com/oegea/FreeSCP'>github.com/oegea/FreeSCP</a>.</td></tr>"
-      "<tr><td><b>No&nbsp;telemetry</b></td><td>No tracking, no usage data, no account. FreeSCP talks to "
-      "the servers you connect to; the one exception is a check for a newer version (it sends nothing "
-      "about you, and Preferences can turn it off).</td></tr>"
+      "<tr><td><b>No&nbsp;telemetry</b></td><td>No tracking, no usage data, no account. FreeSCP only talks "
+      "to the servers you connect to, plus a check for a newer version (it sends nothing about you, and "
+      "Preferences can turn it off).</td></tr>"
       "</table>"
       "<p style='margin:10px 2px 0'>FreeSCP is built in spare time. If it is useful to you and you would "
       "like to help its development, you can buy me a coffee &mdash; entirely optional.</p>");
