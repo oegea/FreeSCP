@@ -18,6 +18,8 @@
 #            selection, sorting, recent directories, bookmarks, and the Properties / Add Link /
 #            Duplicate / Move To / Server Information dialogs, reconnect, Keep Remote Directory
 #            up to Date
+#   editor   the internal editor: encodings, byte-order marks and line endings survive a save,
+#            binary files are refused, find / replace / go to line / reload, remote files
 #
 # Usage:  native/scripts/e2e/servers.sh up <data-dir>
 #         native/scripts/e2e-features.sh <build-dir> <data-dir> [section ...]     (default: all)
@@ -29,12 +31,12 @@
 set -uo pipefail
 
 BUILD="$(cd "${1:?build dir}" && pwd)"; DATA="$(cd "${2:?data dir (servers.sh up)}" && pwd)"; shift 2
-SECTIONS="${*:-conn auth tunnel proxy ftps xfer resume find sync gui ops panels}"
+SECTIONS="${*:-conn auth tunnel proxy ftps xfer resume find sync gui ops panels editor}"
 . "$DATA/env.sh"
 C="$BUILD/ui-qt/freescp-bridge-cli"
 if [ -x "$BUILD/ui-qt/winscp-qt.app/Contents/MacOS/winscp-qt" ]; then APP="$BUILD/ui-qt/winscp-qt.app/Contents/MacOS/winscp-qt"
 else APP="$BUILD/ui-qt/winscp-qt"; fi
-W=/tmp/freescp-e2e; rm -rf "$W"; mkdir -p "$W/dl" "$W/shots"
+W="${E2E_WORK:-/tmp/freescp-e2e}"; rm -rf "$W"; mkdir -p "$W/dl" "$W/shots"     # E2E_WORK: another work directory
 # E2E_RUN="arch -x86_64" runs both binaries through a launcher (the universal macOS build under
 # Rosetta); E2E_CLI / E2E_APP name other binaries than the build tree's.
 C="${E2E_CLI:-$C}"; APP="${E2E_APP:-$APP}"
@@ -898,6 +900,71 @@ if want panels; then
   rm -rf "$HP"
   unset QT_QPA_PLATFORM WINSCP_NO_AUTOLOGIN
   echo "  (screenshots: $SH)"
+fi
+
+#==============================================================================================
+if want editor; then
+  SH="$W/shots"; GO="$W/gui.out"; mkdir -p "$SH"
+  export QT_QPA_PLATFORM=offscreen WINSCP_NO_AUTOLOGIN=1
+  AC="WINSCP_AUTOCONNECT=127.0.0.1:2223:winscp:winscp123:sftp"
+  gui() { tmo 120 env "$@" "$APP" > "$GO" 2>&1; RC=$?; cp "$GO" "$OUT"; }
+  ghas() { grep -aq -- "$1" "$GO"; }
+  gcount() { grep -ac -- "$1" "$GO"; }
+  echo "== editor (offscreen)"
+  ED="$W/ed"; rm -rf "$ED"; mkdir -p "$ED"
+  printf 'se\xf1or\r\nl\xednea dos\r\ncon\ttab y nbsp\xa0aqu\xed\r\n' > "$ED/latin.txt"
+  printf '\xef\xbb\xbfbom line\nsegunda \xc3\xb1\n' > "$ED/bom.txt"
+  printf 'plain\nutf8 \xc3\xb1 \xe6\xb5\x8b nbsp\xc2\xa0x\n' > "$ED/utf8.txt"
+  printf '\xff\xfeh\x00i\x00\r\x00\n\x00' > "$ED/u16.txt"
+  printf 'no final newline' > "$ED/nonl.txt"; : > "$ED/empty.txt"; printf 'banana\n' > "$ED/banana.txt"
+  head -c 3000 /dev/urandom > "$ED/bin.dat"; printf 'ab\x00cd' > "$ED/nul.txt"
+  for f in latin bom utf8 u16 nonl empty; do cp "$ED/$f.txt" "$ED/$f.orig"; done; cp "$ED/bin.dat" "$ED/bin.orig"
+  printf 'added\r\nline' > "$ED/exp-crlf"; printf 'added\nline' > "$ED/exp-lf"; printf 'a\x00d\x00d\x00e\x00d\x00\r\x00\n\x00l\x00i\x00n\x00e\x00' > "$ED/exp-u16"
+  edrun() { gui WINSCP_UITEST="nav|left|$ED;select|left|$1;edit|left;editinfo;editappend|added\\nline;editsave;editclose"; }
+  edsame() { gui WINSCP_UITEST="nav|left|$ED;select|left|$1;edit|left;editsave;editclose"; }
+  for f in latin bom utf8 u16 nonl empty; do edsame $f.txt; cmp -s "$ED/$f.orig" "$ED/$f.txt" || break; done
+  chk "editor: open + save changes nothing, whatever the encoding and line endings ($f)" "ghas 'saved=1' && cmp -s $ED/empty.orig $ED/empty.txt && cmp -s $ED/latin.orig $ED/latin.txt && cmp -s $ED/u16.orig $ED/u16.txt && [ $f = empty ]"
+  edrun latin.txt
+  chk "editor: ISO-8859-1 with CR/LF, a tab and a no-break space: recognised, the rest of the file untouched" \
+      "ghas 'encoding=ISO-8859-1 eol=CR/LF lines=4 modified=0' && ghas 'saved=1' && cat $ED/latin.orig $ED/exp-crlf | cmp -s - $ED/latin.txt"
+  edrun bom.txt
+  chk "editor: UTF-8 with a byte-order mark keeps it" "ghas 'encoding=UTF-8 with BOM eol=LF' && cat $ED/bom.orig $ED/exp-lf | cmp -s - $ED/bom.txt"
+  edrun utf8.txt
+  chk "editor: UTF-8 (non-ASCII, no-break space)" "ghas 'encoding=UTF-8 eol=LF lines=3' && cat $ED/utf8.orig $ED/exp-lf | cmp -s - $ED/utf8.txt"
+  edrun u16.txt
+  chk "editor: UTF-16 LE with CR/LF" "ghas 'encoding=UTF-16 LE eol=CR/LF' && cat $ED/u16.orig $ED/exp-u16 | cmp -s - $ED/u16.txt"
+  edrun nonl.txt
+  chk "editor: a file without a final newline does not get one" "cat $ED/nonl.orig $ED/exp-lf | cmp -s - $ED/nonl.txt"
+  gui WINSCP_UITEST="nav|left|$ED;select|left|bin.dat;edit|left;editinfo;select|left|nul.txt;edit|left;editinfo"
+  chk "editor: binary files are not opened (saving would damage them)" "[ \$(gcount 'does not look like a text file') = 2 ] && [ \$(gcount '^\\[editor\\] none') = 2 ] && cmp -s $ED/bin.orig $ED/bin.dat"
+  gui WINSCP_UITEST="nav|left|$ED;select|left|utf8.txt;edit|left;editfind|UTF8;editfind|UTF8|case;editfind|e2e-absent;editgoto|3;editinfo;editgoto|999;editinfo"
+  chk "editor: find (case-insensitive / case-sensitive / absent), go to line" \
+      "ghas 'found=1 .* line=2 column=5' && [ \$(gcount 'found=0') = 2 ] && ghas '^\\[editor\\] encoding.* line=3 column=1' && ghas ' line=4 column=1'"
+  gui WINSCP_UITEST="nav|left|$ED;select|left|banana.txt;edit|left;editreplace|a|aa;editreplace|B|X|case;editreplace|b|X;editsave;editclose"
+  chk "editor: replace all (also when the replacement contains what is searched)" "ghas 'replaced=3' && ghas 'replaced=0' && ghas 'replaced=1' && [ \"\$(cat $ED/banana.txt)\" = Xaanaanaa ]"
+  cp "$ED/latin.orig" "$ED/latin.txt"
+  gui WINSCP_UITEST="nav|left|$ED;select|left|latin.txt;edit|left;editappend|测;editsave;editinfo;editclose"
+  chk "editor: text an ISO-8859-1 file cannot hold: asks, then saves as UTF-8 (nothing is replaced by '?')" \
+      "ghas 'Save it as UTF-8 instead' && ghas 'encoding=UTF-8 eol=CR/LF' && grep -q \"\$(printf 'se\303\261or')\" $ED/latin.txt && grep -q '测' $ED/latin.txt"
+  cp "$ED/utf8.orig" "$ED/utf8.txt"
+  gui WINSCP_UITEST="nav|left|$ED;select|left|utf8.txt;edit|left;editappend|unsaved;editinfo;editreload;editinfo;editclose"
+  chk "editor: reload discards the changes after asking" "ghas 'modified=1' && ghas 'Discard the changes' && ghas 'reloaded=1' && ghas 'lines=3 modified=0' && cmp -s $ED/utf8.orig $ED/utf8.txt"
+  gui WINSCP_UITEST="nav|left|$ED;select|left|utf8.txt;edit|left;editappend|kept;editclose"
+  chk "editor: closing a modified file asks and saves" "ghas 'was modified. Save the changes' && cat $ED/utf8.orig | tr -d '\\000' | cat - <(printf kept) | cmp -s - $ED/utf8.txt"
+  HE="$DATA/sshhome/e2e-ed"; rm -rf "$HE"; mkdir -p "$HE/a" "$HE/b"; chmod -R 777 "$HE"
+  printf 'remote\r\nfile \xf1\r\n' > "$HE/r.txt"; cp "$HE/r.txt" "$ED/r.orig"; echo in-a > "$HE/a/same.txt"; echo in-b > "$HE/b/same.txt"; chmod 666 "$HE"/r.txt "$HE"/*/same.txt
+  gui $AC WINSCP_UITEST="nav|right|/config/e2e-ed;select|right|r.txt;edit|right;editinfo;editappend|added\\nline;editsave;wait|2500;editclose"
+  chk "editor: a remote file is downloaded, edited and uploaded on save, in its own encoding and line endings" \
+      "ghas 'encoding=ISO-8859-1 eol=CR/LF' && ghas 'saved=1' && cat $ED/r.orig $ED/exp-crlf | cmp -s - $HE/r.txt"
+  gui $AC WINSCP_UITEST="nav|right|/config/e2e-ed/a;select|right|same.txt;edit|right;nav|right|/config/e2e-ed/b;select|right|same.txt;edit|right;editappend|B;editsave;wait|2500;editclose;editappend|A;editsave;wait|2500;editclose"
+  chk "editor: two remote files of the same name from different directories are kept apart" "[ \"\$(tr -d '\\n' < $HE/a/same.txt)\" = in-aA ] && [ \"\$(tr -d '\\n' < $HE/b/same.txt)\" = in-bB ]"
+  printf 'changed on the server\n' > "$ED/srv.txt"
+  gui $AC WINSCP_UITEST="nav|right|/config/e2e-ed;select|right|r.txt;edit|right;nav|right|/config;editreload;editinfo;editclose"
+  chk "editor: reload of a remote file reads it from its own directory, wherever the panel is now" "ghas 'reloaded=1' && ghas 'lines=4 modified=0'"
+  gui WINSCP_UITEST="nav|left|$ED;select|left|utf8.txt;edit|left;editshot|$SH/editor.png;editclose"
+  chk "editor window renders (with the find / replace bar)" "[ -s $SH/editor.png ]"
+  rm -rf "$HE"
+  unset QT_QPA_PLATFORM WINSCP_NO_AUTOLOGIN
 fi
 
 echo

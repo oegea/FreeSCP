@@ -192,6 +192,30 @@ const QHash<QString, Draw> & table()
     { "plus",    [](P & p) { p.setPen(pen(kGreenDark, 2.2)); p.drawLine(QPointF(3.4, 8), QPointF(12.6, 8)); p.drawLine(QPointF(8, 3.4), QPointF(8, 12.6)); } },
     { "stop",    [](P & p) { p.setPen(pen(kRedDark, 1.0)); p.setBrush(kRed); p.drawRoundedRect(QRectF(3.4, 3.4, 9.2, 9.2), 1.2, 1.2); } },
     { "clear",   [](P & p) { lines(p, 2, 9, { 4, 7.4, 10.8 }, kGray, 1.5); p.setPen(pen(kGreenDark, 1.9)); p.drawPolyline(poly({ { 9.6, 9.4 }, { 11.6, 11.6 }, { 14.6, 6.8 } })); } },
+    { "save",    [](P & p) {
+        p.setPen(pen(kBlueDark, 1.0)); p.setBrush(kBlue);
+        p.drawPolygon(poly({ { 1.6, 1.6 }, { 11.6, 1.6 }, { 14.4, 4.4 }, { 14.4, 14.4 }, { 1.6, 14.4 } }));
+        p.setPen(Qt::NoPen); p.setBrush(kPaper); p.drawRect(QRectF(4, 1.9, 6.6, 4.2)); p.drawRect(QRectF(3.6, 8.6, 8.8, 5.4));
+        p.setBrush(kBlueDark); p.drawRect(QRectF(8.2, 2.5, 1.6, 3)); } },
+    { "cut",     [](P & p) {
+        p.setPen(pen(kGray, 1.4)); p.drawLine(QPointF(4.4, 1.6), QPointF(10.4, 10.2)); p.drawLine(QPointF(11.6, 1.6), QPointF(5.6, 10.2));
+        p.setPen(pen(kRedDark, 1.5)); p.setBrush(Qt::NoBrush); p.drawEllipse(QPointF(4.4, 12), 2.2, 2.2); p.drawEllipse(QPointF(11.6, 12), 2.2, 2.2); } },
+    { "paste",   [](P & p) {
+        p.setPen(pen(kYellowDark, 1.0)); p.setBrush(kYellow.darker(108)); p.drawRoundedRect(QRectF(1.6, 2.6, 10.6, 12), 1, 1);
+        p.setPen(pen(kGray, 1.0)); p.setBrush(kGrayLight); p.drawRect(QRectF(4.6, 1.2, 4.6, 2.8));
+        page(p, 6.6, 6.2, 8, 8.6); } },
+    { "undo",    [](P & p) { arcArrow(p, 8.4, 9.2, 5, 0, 170, kBlue); } },
+    { "redo",    [](P & p) { arcArrow(p, 7.6, 9.2, 5, 180, -170, kBlue); } },
+    { "replace", [](P & p) {
+        p.setPen(pen(kGray, 1.0)); p.setBrush(kPaper); p.drawRect(QRectF(1.2, 1.6, 6, 5.4)); p.drawRect(QRectF(8.8, 9, 6, 5.4));
+        lines(p, 2.6, 5.8, { 4.3 }, kRedDark, 1.6); lines(p, 10.2, 13.4, { 11.7 }, kGreenDark, 1.6);
+        arrow(p, 9.4, 3.2, 12.4, 8, kBlue, 1.5, 3.2); } },
+    { "goto",    [](P & p) { lines(p, 6.6, 14, { 3.4, 12.6 }, kGray, 1.3); lines(p, 6.6, 14, { 8 }, kBlueDark, 1.9); arrow(p, 1, 8, 6, 8, kGreen, 2.0, 3.6); } },
+    { "wrap",    [](P & p) {
+        lines(p, 2, 14, { 3.2 }, kGray, 1.4); lines(p, 2, 7.4, { 12.8 }, kGray, 1.4);
+        p.setPen(pen(kBlue, 1.6)); p.setBrush(Qt::NoBrush);
+        QPainterPath w; w.moveTo(2, 8); w.lineTo(11.4, 8); w.cubicTo(14.6, 8, 14.6, 12.8, 11.4, 12.8); w.lineTo(10.4, 12.8); p.drawPath(w);
+        p.setPen(Qt::NoPen); p.setBrush(kBlue); p.drawPolygon(poly({ { 8.2, 12.8 }, { 11, 10.8 }, { 11, 14.8 } })); } },
     { "open",    [](P & p) { page(p, 2, 1.2, 9.5, 13.6); arrow(p, 7, 12, 14.6, 4.4, kBlue, 2.0, 4.2); } },
   };
   return t;

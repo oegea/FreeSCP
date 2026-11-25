@@ -12,6 +12,7 @@
 #include "../panelcompare.h"
 #include "../panellogic.h"
 #include "../keeplogic.h"
+#include "../editorlogic.h"
 
 using textdiff::Row;
 
@@ -213,10 +214,70 @@ static void testKeepLogic()
   std::printf("keep up to date logic: ok\n");
 }
 
+
+// The internal editor: what kind of file a buffer is, so that saving gives the same kind back.
+static void testEditorLogic()
+{
+  using namespace editorlogic;
+  // --- UTF-8 validity ---
+  assert(validUtf8("") && validUtf8("plain ascii") && validUtf8("\xC3\xB1") && validUtf8("\xE6\xB5\x8B") && validUtf8("\xF0\x9F\x98\x80"));
+  assert(!validUtf8("\xF1"));                    // a Latin-1 n-tilde
+  assert(!validUtf8("\xC3"));                    // truncated
+  assert(!validUtf8("\xC3\x28"));                // bad continuation
+  assert(!validUtf8("\x80"));                    // stray continuation
+  assert(!validUtf8("\xC0\xAF"));                // overlong "/"
+  assert(!validUtf8("\xE0\x80\xAF"));            // overlong
+  assert(!validUtf8("\xED\xA0\x80"));            // a surrogate
+  assert(!validUtf8("\xF4\x90\x80\x80"));        // above U+10FFFF
+  assert(!validUtf8("\xF8\x88\x80\x80\x80"));    // five-byte form
+  assert(validUtf8("a\xC2\xA0" "b"));            // no-break space
+
+  // --- kinds ---
+  { FileKind k = detect(""); assert(!k.binary && k.encoding == Encoding::Utf8 && k.eol == Eol::Lf && k.bomSize == 0); }
+  { FileKind k = detect("one\ntwo\n"); assert(!k.binary && k.encoding == Encoding::Utf8 && k.eol == Eol::Lf); }
+  { FileKind k = detect("one\r\ntwo\r\n"); assert(k.encoding == Encoding::Utf8 && k.eol == Eol::CrLf); }
+  { FileKind k = detect("one\rtwo\rthree"); assert(k.eol == Eol::Cr); }
+  { FileKind k = detect("a\r\nb\r\nc\nd"); assert(k.eol == Eol::CrLf); }           // mixed: the majority
+  { FileKind k = detect("a\r\nb\nc\nd"); assert(k.eol == Eol::Lf); }
+  { FileKind k = detect("a\nb\r\n"); assert(k.eol == Eol::Lf); }                    // a tie: LF
+  { FileKind k = detect("se\xC3\xB1or\n"); assert(k.encoding == Encoding::Utf8); }
+  { FileKind k = detect("se\xF1or\r\n"); assert(!k.binary && k.encoding == Encoding::Latin1 && k.eol == Eol::CrLf); }
+  { FileKind k = detect("\xEF\xBB\xBFhello\n"); assert(k.encoding == Encoding::Utf8Bom && k.bomSize == 3 && !k.binary); }
+  { FileKind k = detect("\xEF\xBB\xBF"); assert(k.encoding == Encoding::Utf8Bom && !k.binary); }
+  { FileKind k = detect("\xEF\xBB\xBF\xF1"); assert(k.binary); }                    // a UTF-8 mark on something that is not UTF-8
+  { FileKind k = detect(std::string("\xFF\xFEh\0i\0\r\0\n\0", 10)); assert(k.encoding == Encoding::Utf16LE && k.bomSize == 2 && !k.binary && k.eol == Eol::CrLf); }
+  { FileKind k = detect(std::string("\xFE\xFF\0h\0i\0\n", 8)); assert(k.encoding == Encoding::Utf16BE && !k.binary && k.eol == Eol::Lf); }
+  { FileKind k = detect(std::string("\xFF\xFEh\0i", 5)); assert(k.binary); }       // odd length
+  { FileKind k = detect(std::string("ab\0cd", 5)); assert(k.binary); }             // a NUL
+  { FileKind k = detect(std::string("\x7F" "ELF\x02\x01\x01\0\0\0", 10)); assert(k.binary); }
+  { std::string png = "\x89PNG\r\n\x1A\n"; png += std::string("\0\0\0\rIHDR", 8); assert(detect(png).binary); }
+  { std::string ctl(100, 'a'); for (int i = 0; i < 10; ++i) ctl[static_cast<size_t>(i * 7)] = '\x01'; assert(detect(ctl).binary); }       // 10 % control characters
+  { std::string ok(100, 'a'); ok[5] = '\x01'; ok[50] = '\x1B'; ok[60] = '\t'; ok[70] = '\f'; assert(!detect(ok).binary); }       // the odd one is fine
+  { FileKind k = detect("tab\there\x1B[0m\n"); assert(!k.binary); }               // escape sequences of a log file
+
+  // --- line endings ---
+  assert(withEol("a\nb\n", Eol::Lf) == "a\nb\n");
+  assert(withEol("a\nb\n", Eol::CrLf) == "a\r\nb\r\n");
+  assert(withEol("a\nb", Eol::Cr) == "a\rb");
+  assert(withEol("", Eol::CrLf) == "");
+  assert(toLf("a\r\nb\rc\nd") == "a\nb\nc\nd");
+  assert(toLf("\r\n\r\n") == "\n\n" && toLf("\r") == "\n" && toLf("") == "");
+  for (Eol e : { Eol::Lf, Eol::CrLf, Eol::Cr })
+    for (const char * t : { "", "x", "a\nb", "a\n\nb\n", "\n", "end\n" })
+    {
+      const std::string file = withEol(t, e);
+      assert(toLf(file) == t);                                   // open, save: the same bytes
+      if (std::string(t).find('\n') != std::string::npos) assert(detect(file).eol == e);
+    }
+  assert(std::string(encodingName(Encoding::Latin1)) == "ISO-8859-1" && std::string(eolName(Eol::CrLf)) == "CR/LF");
+  std::printf("editor logic: ok\n");
+}
+
 int main()
 {
   testPanelLogic();
   testKeepLogic();
+  testEditorLogic();
   if (versionTests() != 0) return 1;
   //--- splitLines ---
   {

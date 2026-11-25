@@ -63,6 +63,7 @@
 #include <QTimer>
 #include <QSettings>
 #include <QPainter>
+#include <QPointer>
 #include "updatecheck.h"
 #include <QProgressDialog>
 #include <QDesktopServices>
@@ -94,6 +95,7 @@
 #include "propsdialog.h"
 #include "localops.h"
 #include "keepuptodate.h"
+#include "editor.h"
 
 #ifndef FREESCP_VERSION
 #define FREESCP_VERSION "dev"
@@ -105,66 +107,6 @@ static int  gParallelMax = 2;          // max concurrent connections for queue p
 static bool gAltColors = true;         // alternating row colors in panels
 static bool gCompareByTime = true;     // Compare Directories criteria (WinSCP defaults: time on, size off)
 static bool gCompareBySize = false;
-
-//===========================================================================
-// Internal text editor (the classic WinSCP notepad): edit + save, line/col, Find, word-wrap,
-// Save & Close, and an unsaved-changes prompt on close. onSave returns true on success.
-//===========================================================================
-class EditorWindow : public QMainWindow
-{
-public:
-  QPlainTextEdit * te;
-  std::function<bool()> onSave;
-
-  EditorWindow(QWidget * parent, const QString & title, const QString & text) : QMainWindow(parent), FBase(title)
-  {
-    setAttribute(Qt::WA_DeleteOnClose);
-    te = new QPlainTextEdit; te->setPlainText(text);
-    te->setLineWrapMode(QPlainTextEdit::NoWrap);
-    te->setFont(QFont("Menlo", 12));
-    te->setTabStopDistance(4 * te->fontMetrics().horizontalAdvance(' '));
-    setCentralWidget(te);
-    auto * tb = addToolBar("Edit"); tb->setMovable(false);
-    auto * aSave = tb->addAction("\xF0\x9F\x92\xBE Save"); aSave->setShortcut(QKeySequence::Save);
-    connect(aSave, &QAction::triggered, this, [this]{ doSave(); });
-    auto * aSaveClose = tb->addAction("Save && Close");
-    connect(aSaveClose, &QAction::triggered, this, [this]{ if (doSave()) close(); });
-    tb->addSeparator();
-    auto * aFind = tb->addAction("\xF0\x9F\x94\x8D Find"); aFind->setShortcut(QKeySequence::Find);
-    connect(aFind, &QAction::triggered, this, [this]{ findText(); });
-    auto * aWrap = tb->addAction("Wrap"); aWrap->setCheckable(true);
-    connect(aWrap, &QAction::toggled, this, [this](bool w){ te->setLineWrapMode(w ? QPlainTextEdit::WidgetWidth : QPlainTextEdit::NoWrap); });
-    statusBar();
-    connect(te, &QPlainTextEdit::cursorPositionChanged, this, [this]{ updateStatus(); });
-    connect(te->document(), &QTextDocument::modificationChanged, this, [this](bool){ updateTitle(); });
-    updateTitle(); updateStatus();
-    resize(760, 580);
-  }
-  bool doSave() { if (onSave && onSave()) { te->document()->setModified(false); updateTitle(); return true; } return false; }
-
-protected:
-  void closeEvent(QCloseEvent * e) override
-  {
-    if (te->document()->isModified())
-    {
-      auto r = appMessage(this, "Editor", "Save changes before closing?",
-                          QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel, QMessageBox::Save);
-      if (r == QMessageBox::Cancel) { e->ignore(); return; }
-      if (r == QMessageBox::Save && !doSave()) { e->ignore(); return; }
-    }
-    e->accept();
-  }
-
-private:
-  QString FBase, FLastFind;
-  void updateTitle() { setWindowTitle((te->document()->isModified() ? "* " : "") + FBase); }
-  void updateStatus() { auto c = te->textCursor(); statusBar()->showMessage(QString("Ln %1, Col %2").arg(c.blockNumber() + 1).arg(c.columnNumber() + 1)); }
-  void findText()
-  {
-    bool ok; QString q = QInputDialog::getText(this, "Find", "Find:", QLineEdit::Normal, FLastFind, &ok);
-    if (ok && !q.isEmpty()) { FLastFind = q; if (!te->find(q)) { te->moveCursor(QTextCursor::Start); if (!te->find(q)) statusBar()->showMessage("Not found: " + q); } }
-  }
-};
 
 //===========================================================================
 
@@ -1145,8 +1087,9 @@ int main(int argc, char ** argv)
     QDesktopServices::openUrl(QUrl::fromLocalFile(localPath));
     window.statusBar()->showMessage(active->isRemote() ? ("Opened " + f + " (auto-uploads on save)") : ("Opened " + f));
   };
-  // Internal editor (F4): download a remote file to temp, edit in a built-in text editor; Save writes
-  // it back (re-uploads for remote). Local files are edited in place.
+  // Internal editor (F4): download a remote file to temp, edit it in the built-in text editor; Save
+  // writes it back (and uploads it for a remote file). The file's encoding and line endings are kept.
+  static QList<QPointer<EditorWindow>> editors;      // open editor windows (the scripted checks address the last one)
   auto doEdit = [&] {
     if (active->isRemote() && busy()) return;
     QStringList sel = active->selectedFiles();
@@ -1157,7 +1100,10 @@ int main(int argc, char ** argv)
     QString localPath;
     if (remote)
     {
-      QString tmp = QDir::tempPath() + "/winscp-edit"; QDir().mkpath(tmp);
+      // one directory per editor: two files of the same name from different directories must not share a copy
+      static int editSeq = 0;
+      QString tmp = QString("%1/winscp-edit/%2-%3").arg(QDir::tempPath()).arg(QCoreApplication::applicationPid()).arg(++editSeq);
+      QDir().mkpath(tmp);
       std::string err;
       if (!engine::downloadFromRemote(engine::joinPath(s8(remoteDir), s8(f)), s8(tmp), &err, true))
       { appMessage(&window, "Edit", "Could not download: " + u8(err)); return; }
@@ -1166,19 +1112,38 @@ int main(int argc, char ** argv)
     else localPath = active->path() + "/" + f;
 
     QFile file(localPath);
-    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) { appMessage(&window, "Edit", "Cannot open file"); return; }
-    QString text = QString::fromUtf8(file.readAll()); file.close();
+    if (!file.open(QIODevice::ReadOnly)) { appMessage(&window, "Edit", "Cannot open the file:\n" + file.errorString()); return; }
+    if (file.size() > 64 * 1024 * 1024) { appMessage(&window, "Edit", "The file is too large for the internal editor (over 64 MB). Open it with F3 instead."); return; }
+    const QByteArray bytes = file.readAll(); file.close();
 
-    auto * ed = new EditorWindow(&window, f + (remote ? "  \xE2\x80\x94  " + remoteDir + " (remote)" : ""), text);
-    auto * te = ed->te;
-    ed->onSave = [te, localPath, remote, remoteDir, f, &window, &left, enqueueUpload]() -> bool {
-      QFile out(localPath);
-      if (!out.open(QIODevice::WriteOnly | QIODevice::Text)) { appMessage(&window, "Save", "Cannot write file"); return false; }
-      out.write(te->toPlainText().toUtf8()); out.close();
+    QString refusal;
+    auto * ed = EditorWindow::create(&window, f + (remote ? "  \xE2\x80\x94  " + remoteDir + " (remote)" : "  \xE2\x80\x94  " + active->path()), bytes, &refusal);
+    if (ed == nullptr) { appMessage(&window, "Edit", f + "\n\n" + refusal); return; }
+    ed->onSave = [localPath, remote, remoteDir, f, &window, &left, &right, enqueueUpload](const QByteArray & out) -> bool {
+      QFile o(localPath);
+      if (!o.open(QIODevice::WriteOnly | QIODevice::Truncate) || o.write(out) != out.size())
+      { appMessage(&window, "Save", "Cannot write the file:\n" + o.errorString()); return false; }
+      o.close();
       if (remote) enqueueUpload(localPath, remoteDir, "Edit-upload");   // shows in the transfer queue
-      else { window.statusBar()->showMessage("Saved " + f); left->refresh(); }
+      else { window.statusBar()->showMessage("Saved " + f); for (FilePanel * p : { left, right }) if (!p->isRemote()) p->refresh(); }
       return true;
     };
+    ed->onReload = [localPath, remote, remoteDir, f, &busy](QByteArray & out, QString * error) -> bool {
+      if (remote)
+      {
+        if (gTransferRunning.load()) { if (error) *error = "A transfer is running; try again when it has finished."; return false; }
+        std::string err;
+        // the session may be showing another directory by now: list the file's own directory first
+        engine::listRemoteDir(s8(remoteDir), &err);
+        if (!err.empty() || !engine::downloadFromRemote(engine::joinPath(s8(remoteDir), s8(f)), s8(QFileInfo(localPath).absolutePath()), &err, true))
+        { if (error) *error = u8(err); return false; }
+      }
+      QFile in(localPath);
+      if (!in.open(QIODevice::ReadOnly)) { if (error) *error = in.errorString(); return false; }
+      out = in.readAll();
+      return true;
+    };
+    editors.append(ed);
     ed->show();
   };
   auto doQuit = [&] { window.close(); };
@@ -1819,6 +1784,7 @@ int main(int argc, char ** argv)
   left->navigate(u8(engine::homeDir()));
   right->navigate(u8(engine::homeDir()));
   updateStatuses();
+  refreshPanelRoles();      // two local panels: the transfer buttons say "Copy"
 
   // Persist window geometry + splitter on quit.
   QObject::connect(&app, &QApplication::aboutToQuit, [&]{
@@ -2052,6 +2018,37 @@ int main(int argc, char ** argv)
     }
     fprintf(stdout, "[icons] %d blank=%d\n", (int)names.size(), blank); fflush(stdout);
   };
+  // --- internal editor: edit|left opens the selected file; the others act on the last editor opened ---
+  auto lastEditor = [&]() -> EditorWindow * { for (int i = editors.size() - 1; i >= 0; --i) if (editors[i]) return editors[i]; return nullptr; };
+  uiCmd["edit"] = [&](const QStringList & a) { side(a.value(0))->onActivated(); doEdit(); };
+  uiCmd["editinfo"] = [&](const QStringList &) {
+    EditorWindow * e = lastEditor();
+    fprintf(stdout, "[editor] %s\n", e ? e->info().toUtf8().constData() : "none"); fflush(stdout);
+  };
+  uiCmd["editappend"] = [&](const QStringList & a) {   // editappend|text   ("\n" = a new line, "\t" = a tab)
+    if (EditorWindow * e = lastEditor()) e->setText(e->text() + QString(a.join("|")).replace("\\n", "\n").replace("\\t", "\t"));
+  };
+  uiCmd["editreplace"] = [&](const QStringList & a) {  // editreplace|what|with[|case]
+    EditorWindow * e = lastEditor();
+    const int n = e ? e->replaceAll(a.value(0), a.value(1), a.value(2) == "case") : -1;
+    fprintf(stdout, "[editor] replaced=%d\n", n); fflush(stdout);
+  };
+  uiCmd["editfind"] = [&](const QStringList & a) {     // editfind|what[|case]
+    EditorWindow * e = lastEditor();
+    const bool found = e && e->findNext(a.value(0), a.value(1) == "case");
+    fprintf(stdout, "[editor] found=%d %s\n", found ? 1 : 0, e ? e->info().toUtf8().constData() : ""); fflush(stdout);
+  };
+  uiCmd["editgoto"] = [&](const QStringList & a) { if (EditorWindow * e = lastEditor()) e->goToLine(a.value(0).toInt()); };
+  uiCmd["editsave"] = [&](const QStringList &) {
+    EditorWindow * e = lastEditor();
+    fprintf(stdout, "[editor] saved=%d\n", (e && e->save()) ? 1 : 0); fflush(stdout);
+  };
+  uiCmd["editreload"] = [&](const QStringList &) {
+    EditorWindow * e = lastEditor();
+    fprintf(stdout, "[editor] reloaded=%d\n", (e && e->reload()) ? 1 : 0); fflush(stdout);
+  };
+  uiCmd["editshot"] = [&](const QStringList & a) { if (EditorWindow * e = lastEditor()) { e->showFindBar(true); QApplication::processEvents(); e->grab().save(a.value(0)); } };
+  uiCmd["editclose"] = [&](const QStringList &) { if (EditorWindow * e = lastEditor()) { e->close(); QApplication::processEvents(); } };
   uiCmd["keepuptodate"] = [&](const QStringList &) { doKeepUpToDate(); };   // with WINSCP_KEEP_MS: watch for that long
   uiCmd["dropsession"] = [&](const QStringList &) { engine::debugDropConnection(); };   // the connection is gone, the tab stays
   uiCmd["nav"] = [&](const QStringList & a) { (a.value(0) == "right" ? right : left)->navigate(a.value(1)); };
