@@ -431,6 +431,16 @@ std::vector<DirEntry> listLocalDir(const std::string & utf8Path)
       e.size = rec.Size;
       e.modified = ToU8(rec.TimeStamp.DateTimeString());
       e.mtimeSecs = SecondsOf(rec.TimeStamp);
+      {
+        std::error_code ec;
+        const std::filesystem::path full = std::filesystem::path(utf8Path) / e.name;
+        if (std::filesystem::is_symlink(std::filesystem::symlink_status(full, ec)))
+        {
+          e.isLink = true;
+          const std::filesystem::path target = std::filesystem::read_symlink(full, ec);
+          if (!ec) e.linkTarget = target.string();
+        }
+      }
       result.push_back(e);
     }
     while (FindNext(rec) == 0);
@@ -616,6 +626,28 @@ bool validateFileMask(const std::string & mask, std::string * error)
   catch (...) { if (error) *error = "invalid mask"; return false; }
 }
 
+bool matchFileMask(const std::string & mask, const std::vector<DirEntry> & entries, std::vector<bool> & matches, std::string * error)
+{
+  matches.assign(entries.size(), true);
+  if (mask.empty()) return true;
+  try
+  {
+    TFileMasks m; m.Masks = FromU8(mask);
+    for (size_t i = 0; i < entries.size(); ++i)
+    {
+      const DirEntry & e = entries[i];
+      if (e.isParent) continue;
+      TFileMasks::TParams params;
+      params.Size = e.size;
+      params.Modification = TDateTime(static_cast<double>(e.mtimeSecs) / 86400.0);
+      matches[i] = m.MatchesFileName(FromU8(e.name), e.isDir, &params);
+    }
+    return true;
+  }
+  catch (Exception & E) { if (error) *error = ExceptionToU8(E); matches.assign(entries.size(), true); return false; }
+  catch (...) { if (error) *error = "invalid mask"; matches.assign(entries.size(), true); return false; }
+}
+
 void setProgressSink(const std::function<bool(const TransferProgress &)> & cb) { g_progressCb = cb; }
 void setConfirmCallback(const std::function<bool(const std::string &)> & cb) { g_confirmCb = cb; }
 
@@ -661,6 +693,9 @@ std::vector<DirEntry> listRemoteDir(const std::string & utf8Path, std::string * 
           UnicodeString owner = F->Owner.DisplayText;
           UnicodeString group = F->Group.DisplayText;
           e.owner = ToU8(group.IsEmpty() ? owner : (owner + UnicodeString(L"/") + group));
+          e.ownerName = ToU8(owner); e.groupName = ToU8(group);
+          e.isLink = F->IsSymLink;
+          if (e.isLink) e.linkTarget = ToU8(F->LinkTo);
         }
         result.push_back(e);
       }
@@ -918,7 +953,9 @@ bool remoteDelete(const std::string & nameUtf8, std::string * error)
     if (rf == nullptr) { if (error) *error = "file not in current listing"; LogLine("  delete: not in listing"); return false; }
     LogLine("  delete: found '" + ToU8(rf->FullFileName) + "' isDir=" + (rf->IsDirectory ? "1" : "0") + " -> DeleteFile");
     g_lastTransferError.clear();
-    g_terminal->DeleteFile(rf->FullFileName, rf, nullptr);
+    // A directory's FullFileName ends in "/" (LEARNINGS 19h). S3 appends its own "/" to a directory
+    // key, so "dir//" was sent and no directory could be deleted there.
+    g_terminal->DeleteFile(UnixExcludeTrailingBackslash(rf->FullFileName), rf, nullptr);
     LogLine("  delete: DeleteFile returned");
     if (!g_lastTransferError.empty()) { if (error) *error = g_lastTransferError; LogLine("  delete: failed: " + g_lastTransferError); return false; }
     LogLine("  delete: OK");
@@ -936,6 +973,8 @@ bool remoteRename(const std::string & oldNameUtf8, const std::string & newNameUt
   {
     TRemoteFile * rf = FindInListing(FromU8(oldNameUtf8));
     if (rf == nullptr) { if (error) *error = "file not in current listing"; return false; }
+    if (rf->IsDirectory && AS().params.o.protocol == engine::Protocol::S3)     // the engine only says "Error renaming file"
+    { if (error) *error = "Moving or renaming a folder is not supported on S3 (the files in it can be moved)."; return false; }
     g_lastTransferError.clear();
     g_terminal->RenameFile(rf, FromU8(newNameUtf8));
     if (!g_lastTransferError.empty()) { if (error) *error = g_lastTransferError; return false; }
@@ -967,12 +1006,282 @@ bool remoteChmod(const std::string & nameUtf8, const std::string & octalUtf8, bo
     props.Rights.Octal = FromU8(octalUtf8);
     props.Recursive = recursive;   // apply to a directory's contents too
     g_lastTransferError.clear();
-    g_terminal->ChangeFileProperties(rf->FullFileName, rf, &props);
+    g_terminal->ChangeFileProperties(UnixExcludeTrailingBackslash(rf->FullFileName), rf, &props);
     if (!g_lastTransferError.empty()) { if (error) *error = g_lastTransferError; return false; }
     return true;
   }
   catch (Exception & E) { if (error) *error = ExceptionToU8(E); return false; }
   catch (...) { if (error) *error = "unknown error"; return false; }
+}
+
+//=== properties / links / server-side copy and move / information ==========
+namespace {
+bool AllDigits(const std::string & s)
+{
+  if (s.empty()) return false;
+  for (char c : s) if (c < '0' || c > '9') return false;
+  return true;
+}
+// An owner / group as typed: a numeric id, or a name. SFTP before version 4 can only send ids, so a
+// name is looked up among what the session knows (the server's user/group lists when it gives
+// them, and the owners/groups of the files of the current directory).
+TRemoteToken TokenOf(const std::string & s, bool group)
+{
+  TRemoteToken t;
+  if (AllDigits(s) && s.size() <= 9) { t.ID = static_cast<unsigned int>(std::strtoul(s.c_str(), nullptr, 10)); return t; }
+  const UnicodeString name = FromU8(s);
+  t.Name = name;
+  try
+  {
+    const TRemoteTokenList * known = group ? g_terminal->Groups : g_terminal->Users;
+    const TRemoteToken * found = (known != nullptr) ? known->Find(name) : nullptr;
+    if ((found == nullptr) && (g_terminal->Membership != nullptr) && group) found = g_terminal->Membership->Find(name);
+    if (found != nullptr && found->IDValid) return *found;
+  }
+  catch (...) {}
+  TRemoteFileList * Files = g_terminal->Files;
+  if (Files != nullptr)
+    for (int i = 0; i < Files->Count; i++)
+    {
+      const TRemoteToken & c = group ? Files->Files[i]->Group : Files->Files[i]->Owner;
+      if (c.IDValid && c.Name == name) return c;
+    }
+  return t;
+}
+// Does this session's protocol need numeric ids for owner/group (SFTP version 3 and older)?
+bool NeedsNumericIds()
+{
+  if (AS().params.o.protocol != engine::Protocol::Sftp) return false;
+  try
+  {
+    const UnicodeString p = g_terminal->GetFileSystemInfo().ProtocolName;   // "SFTP-3"
+    const int dash = p.LastDelimiter(UnicodeString(L"-"));
+    return (dash > 0) && (StrToIntDef(p.SubString(dash + 1, p.Length() - dash), 3) < 4);
+  }
+  catch (...) { return true; }
+}
+// Common tail of the operations below: the engine reports most failures through the error query /
+// extended-exception events (captured in g_lastTransferError) instead of throwing.
+bool FinishOp(std::string * error)
+{
+  if (!g_lastTransferError.empty()) { if (error) *error = g_lastTransferError; return false; }
+  return true;
+}
+std::string OpError(Exception & E) { return g_lastTransferError.empty() ? ExceptionToU8(E) : g_lastTransferError; }
+} // namespace
+
+bool remoteSetProperties(const std::string & nameUtf8, const RemoteProps & p, std::string * error)
+{
+  ENGINE_LOCK;
+  if (!remoteConnected()) { if (error) *error = "not connected"; return false; }
+  if (p.setRights)
+  {
+    bool valid = (p.octal.size() == 3 || p.octal.size() == 4);
+    for (char c : p.octal) if (c < '0' || c > '7') valid = false;
+    if (!valid) { if (error) *error = "Invalid permissions \"" + p.octal + "\": use three or four octal digits, e.g. 644."; return false; }
+  }
+  if ((p.setOwner && p.owner.empty()) || (p.setGroup && p.group.empty())) { if (error) *error = "Owner and group cannot be empty."; return false; }
+  if (p.setRights && !g_terminal->IsCapable[fcModeChanging]) { if (error) *error = "The server does not support changing permissions."; return false; }
+  if (p.setOwner && !g_terminal->IsCapable[fcOwnerChanging]) { if (error) *error = "The server does not support changing the owner."; return false; }
+  if (p.setGroup && !g_terminal->IsCapable[fcGroupChanging]) { if (error) *error = "The server does not support changing the group."; return false; }
+  try
+  {
+    TRemoteFile * rf = FindInListing(FromU8(nameUtf8));
+    if (rf == nullptr) { if (error) *error = "file not in current listing"; return false; }
+    TRemoteProperties props;
+    TValidProperties valid;
+    if (p.setRights) { valid << vpRights; props.Rights.Octal = FromU8(p.octal); props.AddXToDirectories = p.addXToDirs; }
+    if (p.setOwner) { valid << vpOwner; props.Owner = TokenOf(p.owner, false); }
+    if (p.setGroup) { valid << vpGroup; props.Group = TokenOf(p.group, true); }
+    if (valid.Empty()) return true;
+    // Without this check a name the session cannot translate went out as id 0 (root / wheel).
+    if (NeedsNumericIds() && ((p.setOwner && !props.Owner.IDValid) || (p.setGroup && !props.Group.IDValid)))
+    {
+      const std::string & what = (p.setOwner && !props.Owner.IDValid) ? p.owner : p.group;
+      if (error) *error = "This server (SFTP version 3) changes owner and group by numeric id only, and the id of \"" + what +
+                          "\" is not known. Enter the numeric id instead.";
+      return false;
+    }
+    props.Valid = valid;
+    props.Recursive = p.recursive;
+    g_lastTransferError.clear();
+    const UnicodeString full = UnixExcludeTrailingBackslash(rf->FullFileName);
+    // SCP runs "chmod -R <mode>" and only then gives the top directory its x back: with a mode
+    // without x (644, the usual one for files) chmod locks itself out of the directory on the first
+    // step and nothing below is changed. Directories first (with x), then everything else.
+    if (p.setRights && p.recursive && p.addXToDirs && rf->IsDirectory && AS().params.o.protocol == engine::Protocol::Scp)
+    {
+      TRights dirRights = props.Rights; dirRights.AddExecute();
+      const UnicodeString q = UnicodeString(L"\"") + DelimitStr(full) + UnicodeString(L"\"");   // as the engine quotes paths
+      const UnicodeString cmd =
+        UnicodeString(L"find ") + q + UnicodeString(L" -type d -exec chmod ") + dirRights.Octal + UnicodeString(L" {} + && find ") + q +
+        UnicodeString(L" ! -type d ! -type l -exec chmod ") + props.Rights.Octal + UnicodeString(L" {} +");
+      g_terminal->AnyCommand(cmd, nullptr);
+      if (!FinishOp(error)) return false;
+      props.Valid = valid - (TValidProperties() << vpRights);     // owner / group, if any, the usual way
+      if (props.Valid.Empty()) { g_terminal->ReadDirectory(true); return true; }
+    }
+    g_terminal->ChangeFileProperties(full, rf, &props);
+    return FinishOp(error);
+  }
+  catch (Exception & E) { if (error) *error = OpError(E); return false; }
+  catch (...) { if (error) *error = g_lastTransferError.empty() ? "unknown error" : g_lastTransferError; return false; }
+}
+
+bool remoteCreateLink(const std::string & nameUtf8, const std::string & targetUtf8, bool symbolic, std::string * error)
+{
+  ENGINE_LOCK;
+  if (!remoteConnected()) { if (error) *error = "not connected"; return false; }
+  if (nameUtf8.empty() || targetUtf8.empty()) { if (error) *error = "The link name and its target cannot be empty."; return false; }
+  if (!g_terminal->IsCapable[symbolic ? fcSymbolicLink : fcHardLink])
+  { if (error) *error = symbolic ? "The server does not support symbolic links." : "The server does not support hard links."; return false; }
+  try
+  {
+    g_lastTransferError.clear();
+    g_terminal->CreateLink(FromU8(nameUtf8), FromU8(targetUtf8), symbolic);
+    return FinishOp(error);
+  }
+  catch (Exception & E) { if (error) *error = OpError(E); return false; }
+  catch (...) { if (error) *error = g_lastTransferError.empty() ? "unknown error" : g_lastTransferError; return false; }
+}
+
+namespace {
+bool CopyOrMove(bool move, const std::string & nameUtf8, const std::string & targetDirUtf8, const std::string & newNameUtf8, std::string * error)
+{
+  ENGINE_LOCK;
+  if (!engine::remoteConnected()) { if (error) *error = "not connected"; return false; }
+  if (targetDirUtf8.empty()) { if (error) *error = "The target directory cannot be empty."; return false; }
+  if (!g_terminal->IsCapable[move ? fcRemoteMove : fcRemoteCopy])
+  { if (error) *error = move ? "The server does not support moving files." : "The server does not support duplicating files."; return false; }
+  try
+  {
+    TRemoteFile * rf = FindInListing(FromU8(nameUtf8));
+    if (rf == nullptr) { if (error) *error = "file not in current listing"; return false; }
+    const UnicodeString full = UnixExcludeTrailingBackslash(rf->FullFileName);
+    const UnicodeString target = UnixIncludeTrailingBackslash(FromU8(targetDirUtf8));
+    const UnicodeString newName = newNameUtf8.empty() ? UnixExtractFileName(full) : FromU8(newNameUtf8);
+    if ((target + newName) == full) { if (error) *error = "The source and the target are the same file."; return false; }
+    // Moving/copying a directory into itself would never end (or destroy it).
+    if (rf->IsDirectory && (target + newName + UnicodeString(L"/")).SubString(1, full.Length() + 1) == (full + UnicodeString(L"/")))
+    { if (error) *error = "A directory cannot be copied or moved into itself."; return false; }
+    // SFTP duplicates with the copy-data extension, which works on one file at a time (on a
+    // directory it left an empty file under the new name and failed); S3 has no folder copy either.
+    const engine::Protocol proto = AS().params.o.protocol;
+    if (!move && rf->IsDirectory && (proto == engine::Protocol::Sftp || proto == engine::Protocol::S3))
+    { if (error) *error = "Duplicating a directory is not supported with this protocol. Duplicate the files in it instead."; return false; }
+    if (move && rf->IsDirectory && proto == engine::Protocol::S3)
+    { if (error) *error = "Moving or renaming a folder is not supported on S3 (the files in it can be moved)."; return false; }
+    std::unique_ptr<TStrings> files(new TStringList());
+    files->AddObject(full, rf);
+    g_lastTransferError.clear();
+    // the "file mask" is the new name: a mask without wildcards replaces the name as a whole
+    bool ok = move ? g_terminal->MoveFiles(files.get(), target, newName, false)
+                   : g_terminal->CopyFiles(files.get(), target, newName, false);
+    if (!g_lastTransferError.empty()) { if (error) *error = g_lastTransferError; return false; }
+    if (!ok && error) *error = move ? "The file could not be moved." : "The file could not be duplicated.";
+    return ok;
+  }
+  catch (Exception & E) { if (error) *error = OpError(E); return false; }
+  catch (...) { if (error) *error = g_lastTransferError.empty() ? "unknown error" : g_lastTransferError; return false; }
+}
+} // namespace
+
+bool remoteDuplicate(const std::string & nameUtf8, const std::string & targetDirUtf8, const std::string & newNameUtf8, std::string * error)
+{ return CopyOrMove(false, nameUtf8, targetDirUtf8, newNameUtf8, error); }
+bool remoteMoveTo(const std::string & nameUtf8, const std::string & targetDirUtf8, const std::string & newNameUtf8, std::string * error)
+{ return CopyOrMove(true, nameUtf8, targetDirUtf8, newNameUtf8, error); }
+
+bool remoteCapable(Capability capability)
+{
+  ENGINE_LOCK;
+  if (!remoteConnected()) return false;
+  TFSCapability c = fcModeChanging;
+  switch (capability)
+  {
+    case Capability::ChangeMode: c = fcModeChanging; break;
+    case Capability::ChangeOwner: c = fcOwnerChanging; break;
+    case Capability::ChangeGroup: c = fcGroupChanging; break;
+    case Capability::SymbolicLink: c = fcSymbolicLink; break;
+    case Capability::HardLink: c = fcHardLink; break;
+    case Capability::RemoteCopy: c = fcRemoteCopy; break;
+    case Capability::RemoteMove: c = fcRemoteMove; break;
+    case Capability::SpaceAvailable: c = fcCheckingSpaceAvailable; break;
+    case Capability::Rename: c = fcRename; break;
+    case Capability::AnyCommand: c = fcAnyCommand; break;
+  }
+  try { return g_terminal->IsCapable[c]; } catch (...) { return false; }
+}
+
+bool remoteSpaceAvailable(const std::string & pathUtf8, SpaceInfo & info, std::string * error)
+{
+  ENGINE_LOCK;
+  info = SpaceInfo();
+  if (!remoteConnected()) { if (error) *error = "not connected"; return false; }
+  if (!g_terminal->IsCapable[fcCheckingSpaceAvailable]) { if (error) *error = "The server does not tell how much space is available."; return false; }
+  try
+  {
+    TSpaceAvailable sa;
+    g_lastTransferError.clear();
+    g_terminal->SpaceAvailable(FromU8(pathUtf8.empty() ? std::string("/") : pathUtf8), sa);
+    if (!FinishOp(error)) return false;
+    info.total = sa.BytesOnDevice; info.unused = sa.UnusedBytesOnDevice;
+    info.totalForUser = sa.BytesAvailableToUser; info.unusedForUser = sa.UnusedBytesAvailableToUser;
+    return true;
+  }
+  catch (Exception & E) { if (error) *error = OpError(E); return false; }
+  catch (...) { if (error) *error = g_lastTransferError.empty() ? "unknown error" : g_lastTransferError; return false; }
+}
+
+SessionInformation sessionInformation()
+{
+  ENGINE_LOCK;
+  SessionInformation out;
+  if (!remoteConnected()) return out;
+  try
+  {
+    const TSessionInfo & si = g_terminal->GetSessionInfo();
+    const TFileSystemInfo & fi = g_terminal->GetFileSystemInfo(true);
+    auto row = [](std::vector<InfoRow> & to, const char * label, const UnicodeString & v) {
+      if (!v.IsEmpty()) to.push_back(InfoRow{ label, ToU8(v) });
+    };
+    out.protocol = ToU8(fi.ProtocolName);
+    out.encrypted = !si.SecurityProtocolName.IsEmpty();
+    out.loginSecs = SecondsOf(si.LoginTime);
+    row(out.session, "Session protocol", si.ProtocolName);
+    row(out.session, "File transfer protocol", fi.ProtocolName);
+    row(out.session, "Cryptographic protocol", si.SecurityProtocolName);
+    if (si.CSCipher == si.SCCipher) row(out.session, "Encryption algorithm", si.CSCipher);
+    else { row(out.session, "Encryption algorithm (client to server)", si.CSCipher); row(out.session, "Encryption algorithm (server to client)", si.SCCipher); }
+    if (si.CSCompression == si.SCCompression) row(out.session, "Compression", si.CSCompression);
+    else { row(out.session, "Compression (client to server)", si.CSCompression); row(out.session, "Compression (server to client)", si.SCCompression); }
+    row(out.session, "SSH protocol version", si.SshVersionString);
+    row(out.session, "SSH implementation", si.SshImplementation);
+    row(out.session, "Server host key fingerprint (SHA-256)", si.HostKeyFingerprintSHA256);
+    row(out.session, "Server host key fingerprint (MD5)", si.HostKeyFingerprintMD5);
+    row(out.session, "Certificate fingerprint (SHA-256)", si.CertificateFingerprintSHA256);
+    row(out.session, "Certificate fingerprint (SHA-1)", si.CertificateFingerprintSHA1);
+    row(out.session, "Remote system", fi.RemoteSystem);
+    struct { const char * label; TFSCapability cap; } caps[] = {
+      { "Can change permissions", fcModeChanging },
+      { "Can change owner", fcOwnerChanging },
+      { "Can change group", fcGroupChanging },
+      { "Can execute arbitrary command", fcAnyCommand },
+      { "Can create symbolic link", fcSymbolicLink },
+      { "Can create hard link", fcHardLink },
+      { "Can lookup user groups", fcUserGroupListing },
+      { "Can duplicate remote files", fcRemoteCopy },
+      { "Can move remote files", fcRemoteMove },
+      { "Can check available space", fcCheckingSpaceAvailable },
+      { "Can calculate file checksum", fcCalculatingChecksum },
+      { "Native text (ASCII) mode transfers", fcNativeTextMode },
+      { "Can resume transfers", fcResumeSupport },
+      { "Can lock files", fcLocking },
+    };
+    for (const auto & c : caps) out.capabilities.push_back(InfoRow{ c.label, fi.IsCapable[c.cap] ? "Yes" : "No" });
+    out.additional = ToU8(fi.AdditionalInfo);
+  }
+  catch (...) {}
+  return out;
 }
 
 //=== directory synchronization =============================================

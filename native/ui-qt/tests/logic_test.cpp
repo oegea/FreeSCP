@@ -10,6 +10,7 @@
 #include <vector>
 #include "../textdiff.h"
 #include "../panelcompare.h"
+#include "../panellogic.h"
 
 using textdiff::Row;
 
@@ -69,8 +70,79 @@ static int versionTests()
   return bad;
 }
 
+
+// The file panels' pure logic: path drop-down, recent directories, date patterns, permissions.
+static void testPanelLogic()
+{
+  using namespace panellogic;
+  // --- path hierarchy ---
+  { auto h = pathHierarchy("/a/b/c"); assert(h.size() == 4);
+    assert(h[0].label == "/" && h[0].path == "/"); assert(h[1].label == "a" && h[1].path == "/a");
+    assert(h[2].path == "/a/b"); assert(h[3].label == "c" && h[3].path == "/a/b/c"); }
+  { auto h = pathHierarchy("/"); assert(h.size() == 1 && h[0].path == "/"); }
+  { auto h = pathHierarchy(""); assert(h.size() == 1 && h[0].path == "/"); }
+  { auto h = pathHierarchy("relative/x"); assert(h.size() == 1); }
+  { auto h = pathHierarchy("//a///b/"); assert(h.size() == 3 && h[2].path == "/a/b"); }
+  { auto h = pathHierarchy("/with space/\xC3\xB1 \xE6\xB5\x8B"); assert(h.size() == 3 && h[2].label == "\xC3\xB1 \xE6\xB5\x8B" && h[2].path == "/with space/\xC3\xB1 \xE6\xB5\x8B"); }
+  assert(normalizePath("/a//b/") == "/a/b"); assert(normalizePath("/") == "/"); assert(normalizePath("///") == "/");
+  assert(normalizePath("/a/./b") == "/a/./b");      // "." and ".." are the server's business, not ours
+
+  // --- recent directories ---
+  { std::vector<std::string> r;
+    pushRecent(r, "/a", 3); pushRecent(r, "/b", 3); pushRecent(r, "/a", 3);
+    assert(r.size() == 2 && r[0] == "/a" && r[1] == "/b");
+    pushRecent(r, "/c", 3); pushRecent(r, "/d", 3);
+    assert(r.size() == 3 && r[0] == "/d" && r[1] == "/c" && r[2] == "/a");
+    pushRecent(r, "", 3); assert(r.size() == 3 && r[0] == "/d");
+    pushRecent(r, "/a", 1); assert(r.size() == 1 && r[0] == "/a"); }
+
+  // --- date / time patterns ---
+  assert(fourDigitYear("d/M/yy") == "d/M/yyyy");
+  assert(fourDigitYear("dd/MM/yyyy") == "dd/MM/yyyy");
+  assert(fourDigitYear("M/d/yy") == "M/d/yyyy");
+  assert(fourDigitYear("yy-MM-dd") == "yyyy-MM-dd");
+  assert(fourDigitYear("d MMM yyyy") == "d MMM yyyy");
+  assert(fourDigitYear("d 'day of yy' yy") == "d 'day of yy' yyyy");
+  assert(fourDigitYear("") == "");
+  assert(withSeconds("H:mm") == "H:mm:ss");
+  assert(withSeconds("HH:mm") == "HH:mm:ss");
+  assert(withSeconds("h:mm AP") == "h:mm:ss AP");
+  assert(withSeconds("HH:mm:ss") == "HH:mm:ss");
+  assert(withSeconds("h 'm' mm a") == "h 'm' mm:ss a");
+  assert(withSeconds("HH") == "HH");
+  assert(wallSecondsSince1970(25569LL * 86400LL) == 0);
+  assert(wallSecondsSince1970(25569LL * 86400LL + 3661) == 3661);
+
+  // --- permissions ---
+  assert(octalFromRights("rwxr-xr-x") == 0755);
+  assert(octalFromRights("rw-r--r--") == 0644);
+  assert(octalFromRights("---------") == 0);
+  assert(octalFromRights("rwsr-xr-x") == 04755);
+  assert(octalFromRights("rwSr--r--") == 04644);
+  assert(octalFromRights("rwxr-sr-x") == 02755);
+  assert(octalFromRights("rwxrwxrwt") == 01777);
+  assert(octalFromRights("rwxrwxrwT") == 01776);
+  assert(octalFromRights("") == -1);
+  assert(octalFromRights("rwxr-xr-") == -1);
+  assert(octalFromRights("rwxr-xr-xx") == -1);
+  assert(octalFromRights("xwrr-xr-x") == -1);
+  assert(octalFromRights("rwtr-xr-x") == -1);     // sticky only in the last position
+  for (int v = 0; v <= 07777; ++v) assert(octalFromRights(rightsFromOctal(v)) == v);
+  assert(rightsFromOctal(0755) == "rwxr-xr-x"); assert(rightsFromOctal(04644) == "rwSr--r--"); assert(rightsFromOctal(01777) == "rwxrwxrwt");
+  assert(validOctal("644") && validOctal("0755") && validOctal("4755") && validOctal("000"));
+  assert(!validOctal("") && !validOctal("64") && !validOctal("64444") && !validOctal("9z") && !validOctal("68a") && !validOctal("-44"));
+  assert(octalString(0755) == "755"); assert(octalString(0) == "000"); assert(octalString(04755) == "4755"); assert(octalString(07) == "007");
+  for (int v = 0; v <= 07777; ++v) { const std::string o = octalString(v); assert(validOctal(o)); assert(std::stoi(o, nullptr, 8) == v); }
+
+  // --- session time ---
+  assert(elapsedText(0) == "0:00:00"); assert(elapsedText(7) == "0:00:07"); assert(elapsedText(3723) == "1:02:03");
+  assert(elapsedText(27 * 3600 + 15 * 60) == "27:15:00"); assert(elapsedText(-5) == "0:00:00");
+  std::printf("panel logic: ok\n");
+}
+
 int main()
 {
+  testPanelLogic();
   if (versionTests() != 0) return 1;
   //--- splitLines ---
   {

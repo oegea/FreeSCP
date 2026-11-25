@@ -207,7 +207,64 @@ int main(int argc, char ** argv)
     }
     else if (cmd == "sleep") std::this_thread::sleep_for(std::chrono::seconds(std::atoi(arg(a, 1, "1").c_str())));
     else if (cmd == "mkdir") ok = engine::remoteMakeDir(arg(a, 1), &err);
+    else if (cmd == "rename") { engine::listRemoteDir(std::string()); ok = engine::remoteRename(arg(a, 1), arg(a, 2), &err); }   // rename|old|new
     else if (cmd == "rm") { engine::listRemoteDir(std::string()); ok = engine::remoteDelete(arg(a, 1), &err); }
+    else if (cmd == "lsl")   // lsl[|dir] : long listing (rights, owner, group, link target) of the directory
+    {
+      auto list = engine::listRemoteDir(arg(a, 1), &err);
+      ok = err.empty();
+      for (const auto & e : list)
+        if (!e.isParent)
+          std::printf("  L %c %s %s:%s %s%s%s\n", e.isLink ? 'l' : e.isDir ? 'd' : '-', e.rights.c_str(), e.ownerName.c_str(), e.groupName.c_str(),
+                      e.name.c_str(), e.isLink ? " -> " : "", e.linkTarget.c_str());
+    }
+    else if (cmd == "props")   // props|<name>|rights=644|owner=x|group=y|recursive|addx  (entry of the current directory)
+    {
+      engine::listRemoteDir(std::string());
+      engine::RemoteProps p;
+      for (size_t i = 2; i < a.size(); ++i)
+      {
+        size_t eq = a[i].find('=');
+        std::string k = a[i].substr(0, eq), v = (eq == std::string::npos) ? std::string() : a[i].substr(eq + 1);
+        if (k == "rights") { p.setRights = true; p.octal = v; }
+        else if (k == "owner") { p.setOwner = true; p.owner = v; }
+        else if (k == "group") { p.setGroup = true; p.group = v; }
+        else if (k == "recursive") p.recursive = true;
+        else if (k == "addx") p.addXToDirs = true;
+      }
+      ok = engine::remoteSetProperties(arg(a, 1), p, &err);
+    }
+    else if (cmd == "ln" || cmd == "hardln")   // ln|<name>|<target>
+      ok = engine::remoteCreateLink(arg(a, 1), arg(a, 2), cmd == "ln", &err);
+    else if (cmd == "dup" || cmd == "mv")      // dup|<name>|<target dir>[|<new name>]   (entry of the current directory)
+    {
+      engine::listRemoteDir(std::string());
+      ok = (cmd == "dup") ? engine::remoteDuplicate(arg(a, 1), arg(a, 2), arg(a, 3), &err)
+                          : engine::remoteMoveTo(arg(a, 1), arg(a, 2), arg(a, 3), &err);
+    }
+    else if (cmd == "caps")
+    {
+      using C = engine::Capability;
+      std::printf("CAPS chmod=%d chown=%d chgrp=%d symlink=%d hardlink=%d copy=%d move=%d space=%d\n",
+                  engine::remoteCapable(C::ChangeMode), engine::remoteCapable(C::ChangeOwner), engine::remoteCapable(C::ChangeGroup),
+                  engine::remoteCapable(C::SymbolicLink), engine::remoteCapable(C::HardLink), engine::remoteCapable(C::RemoteCopy),
+                  engine::remoteCapable(C::RemoteMove), engine::remoteCapable(C::SpaceAvailable));
+    }
+    else if (cmd == "df")   // df[|path]
+    {
+      engine::SpaceInfo si;
+      ok = engine::remoteSpaceAvailable(arg(a, 1, engine::remoteCurrentDir()), si, &err);
+      std::printf("DF total=%lld unused=%lld user-total=%lld user-unused=%lld\n", (long long)si.total, (long long)si.unused,
+                  (long long)si.totalForUser, (long long)si.unusedForUser);
+    }
+    else if (cmd == "info")
+    {
+      engine::SessionInformation in = engine::sessionInformation();
+      std::printf("INFO protocol='%s' encrypted=%d login=%lld\n", in.protocol.c_str(), in.encrypted ? 1 : 0, (long long)in.loginSecs);
+      for (const auto & r : in.session) std::printf("  S %s = %s\n", r.label.c_str(), r.value.c_str());
+      for (const auto & r : in.capabilities) std::printf("  C %s = %s\n", r.label.c_str(), r.value.c_str());
+      ok = !in.protocol.empty();
+    }
     else if (cmd == "parallel")
     {
       std::printf("PARALLEL supported=%d\n", engine::parallelSupported() ? 1 : 0);

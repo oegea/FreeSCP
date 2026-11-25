@@ -32,6 +32,10 @@ struct DirEntry
   bool mtimeHasSeconds = true;  // false when the listing only gave minute (or coarser) precision
   std::string rights;     // remote: unix rights string (e.g. "rwxr-xr-x"); empty for local
   std::string owner;      // remote: owner[/group]; empty for local
+  std::string ownerName;  // remote: owner alone (name, or numeric id when the server gives no name)
+  std::string groupName;  // remote: group alone
+  bool isLink = false;    // a symbolic link (local or remote)
+  std::string linkTarget; // where it points, when known
 };
 
 // Engine version/banner (proves winscpcore is linked and callable).
@@ -171,6 +175,11 @@ TransferSettings transferSettings();
 std::string defaultTextMask();
 // Is `mask` a valid file mask? On failure `error` gets the reason.
 bool validateFileMask(const std::string & mask, std::string * error = nullptr);
+// Which of `entries` match the WinSCP file mask `mask` ("*.txt", "*.jpg; *.png | thumb*", "*>1M", a
+// trailing "/" for directories): matches[i] for entries[i]. An empty mask matches everything.
+// Returns false (and everything matching) for an invalid mask.
+bool matchFileMask(const std::string & mask, const std::vector<DirEntry> & entries, std::vector<bool> & matches,
+                   std::string * error = nullptr);
 
 // Transfer a single file over the live SFTP session (TTerminal CopyToRemote/CopyToLocal).
 // localPath/remotePath are full paths; the target is a directory. Returns true on success;
@@ -194,6 +203,49 @@ bool remoteRename(const std::string & oldNameUtf8, const std::string & newNameUt
 std::string remoteFileOctal(const std::string & nameUtf8);
 // Set remote permissions from an octal string. Returns true on success.
 bool remoteChmod(const std::string & nameUtf8, const std::string & octalUtf8, bool recursive = false, std::string * error = nullptr);
+
+//--- properties: permissions, owner, group ---
+struct RemoteProps
+{
+  bool setRights = false;  std::string octal;      // e.g. "644" (or "0644")
+  bool addXToDirs = false;                         // recursive: directories also get x where r is set
+  bool setOwner = false;   std::string owner;      // a name, or a numeric id
+  bool setGroup = false;   std::string group;
+  bool recursive = false;                          // apply to a directory's contents too
+};
+// Change the properties of an entry of the CURRENT remote directory. Only the parts marked "set" are sent.
+bool remoteSetProperties(const std::string & nameUtf8, const RemoteProps & props, std::string * error = nullptr);
+
+// Create a link named `name` in the current remote directory pointing to `target`
+// (symbolic = false: a hard link, where the server supports it).
+bool remoteCreateLink(const std::string & nameUtf8, const std::string & targetUtf8, bool symbolic, std::string * error = nullptr);
+
+// Server-side copy ("Duplicate") / move of an entry of the current remote directory into `targetDir`
+// under `newName` (empty = same name). No data passes through this machine.
+bool remoteDuplicate(const std::string & nameUtf8, const std::string & targetDirUtf8, const std::string & newNameUtf8, std::string * error = nullptr);
+bool remoteMoveTo(const std::string & nameUtf8, const std::string & targetDirUtf8, const std::string & newNameUtf8, std::string * error = nullptr);
+
+// What the active session's protocol/server can do (WinSCP disables what is not available).
+enum class Capability { ChangeMode, ChangeOwner, ChangeGroup, SymbolicLink, HardLink, RemoteCopy, RemoteMove,
+                        SpaceAvailable, Rename, AnyCommand };
+bool remoteCapable(Capability capability);
+
+// Disk space of the file system holding `path` (SFTP statvfs / space-available extensions, WebDAV quota).
+struct SpaceInfo { std::int64_t total = 0, unused = 0, totalForUser = 0, unusedForUser = 0; };
+bool remoteSpaceAvailable(const std::string & pathUtf8, SpaceInfo & info, std::string * error = nullptr);
+
+// "Server and protocol information" of the active session, as label/value rows per section.
+struct InfoRow { std::string label, value; };
+struct SessionInformation
+{
+  std::string protocol;              // e.g. "SFTP-3", "FTP", "WebDAV", "S3"
+  bool encrypted = false;            // SSH or TLS
+  std::int64_t loginSecs = 0;        // when the session was opened (seconds, local time; see DirEntry::mtimeSecs)
+  std::vector<InfoRow> session;      // protocol, encryption, compression, server software, fingerprints
+  std::vector<InfoRow> capabilities; // "Can change permissions" -> "Yes"/"No", ...
+  std::string additional;            // free text from the server (SFTP extensions, FTP FEAT, ...)
+};
+SessionInformation sessionInformation();
 
 //--- find files / directory sizes ---
 struct FoundFile

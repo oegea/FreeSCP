@@ -12,6 +12,11 @@
 #   sync     Synchronize: both directions, mirror with delete (time-based decisions)
 #   gui      the Qt app driven offscreen: saved sites, dialogs, transfer settings, find,
 #            directory sizes, Compare Directories, Compare Files
+#   ops      capabilities + session information, directory delete, permissions / owner / group,
+#            links, server-side duplicate and move, free space                (all protocols)
+#   panels   the Qt app's panels driven offscreen: columns, status lines, hidden files, filter,
+#            selection, sorting, recent directories, bookmarks, and the Properties / Add Link /
+#            Duplicate / Move To / Server Information dialogs
 #
 # Usage:  native/scripts/e2e/servers.sh up <data-dir>
 #         native/scripts/e2e-features.sh <build-dir> <data-dir> [section ...]     (default: all)
@@ -22,7 +27,7 @@
 set -uo pipefail
 
 BUILD="$(cd "${1:?build dir}" && pwd)"; DATA="$(cd "${2:?data dir (servers.sh up)}" && pwd)"; shift 2
-SECTIONS="${*:-conn auth tunnel proxy ftps xfer resume find sync gui}"
+SECTIONS="${*:-conn auth tunnel proxy ftps xfer resume find sync gui ops panels}"
 . "$DATA/env.sh"
 C="$BUILD/ui-qt/freescp-bridge-cli"
 if [ -x "$BUILD/ui-qt/winscp-qt.app/Contents/MacOS/winscp-qt" ]; then APP="$BUILD/ui-qt/winscp-qt.app/Contents/MacOS/winscp-qt"
@@ -460,6 +465,348 @@ if want gui; then
   gui $AC WINSCP_UITEST="setxfer|defaults=1|mask=*.jpg|case=upper;$D0;select|left|doc.txt;comparefiles|left;setxfer|defaults=1"
   chk "Compare Files is not affected by the transfer settings (mask, name case)" "ghas 'different: 3 differences'"
   chk "no temporary comparison copies left behind" "[ \"\$(ls /tmp/freescp-compare 2>/dev/null | wc -l | tr -d ' ')\" = 0 ] || [ ! -d \"\${TMPDIR:-/tmp}/freescp-compare\" ] || [ \"\$(ls \"\${TMPDIR:-/tmp}/freescp-compare\" | wc -l | tr -d ' ')\" = 0 ]"
+  unset QT_QPA_PLATFORM WINSCP_NO_AUTOLOGIN
+  echo "  (screenshots: $SH)"
+fi
+
+#==============================================================================================
+if want ops; then
+  echo "== ops: capabilities and session information"
+  OPS="$W/ops"; rm -rf "$OPS"; mkdir -p "$OPS"
+  echo "alpha content" > "$OPS/a.txt"; echo "beta ñ" > "$OPS/b ñ.txt"; head -c 70000 /dev/urandom > "$OPS/c.bin"
+  for e in "${PROTOS[@]}"; do
+    IFS='|' read -r name opts base host <<< "$e"
+    case $name in
+      sftp) caps='chmod=1 chown=1 chgrp=1 symlink=1 hardlink=1 copy=1 move=1 space=1'; proto='SFTP-'; enc=1;;
+      scp)  caps='chmod=1 chown=1 chgrp=1 symlink=1 hardlink=1 copy=1 move=1 space=0'; proto='SCP';   enc=1;;
+      ftp)  caps='chmod=1 chown=0 chgrp=0 symlink=0 hardlink=0 copy=0 move=1 space=0'; proto='FTP';   enc=0;;
+      dav)  caps='chmod=0 chown=0 chgrp=0 symlink=0 hardlink=0 copy=1 move=1 space=1'; proto='WebDAV'; enc=0;;
+      s3)   caps='chmod=0 chown=0 chgrp=0 symlink=0 hardlink=0 copy=1 move=1 space=0'; proto='S3';    enc=0;;
+    esac
+    run $opts -- caps info
+    chk "$name: capabilities ($caps)" "[ $RC -eq 0 ] && has 'CAPS $caps'"
+    chk "$name: session information names the protocol; encrypted=$enc" "has \"INFO protocol='$proto\" && has 'encrypted=$enc' && has 'S File transfer protocol = $proto'"
+  done
+  run port=2121 user=winscp pass=winscp123 proto=ftp tls=1 -- info
+  chk "ftps: session information reports the TLS connection as encrypted" "[ $RC -eq 0 ] && has 'encrypted=1' && has 'S Cryptographic protocol = .*TLS'"
+  run $SSH -- info
+  chk "sftp: cipher, SSH implementation and host key fingerprint are reported" "has 'S Encryption algorithm' && has 'S SSH implementation = OpenSSH' && has 'S Server host key fingerprint (SHA-256) = '"
+
+  for e in "${PROTOS[@]}"; do
+    IFS='|' read -r name opts base host <<< "$e"
+    echo "== ops: $name"
+    d="$base/e2e-ops"; b="${base:-/}"
+    # is the server's directory a plain directory on this machine? (S3: MinIO keeps its own layout)
+    hd=""; [ "$name" != s3 ] && hd="$host/e2e-ops"
+    tmo 60 "$C" $opts -- "ls|$b" "rm|e2e-ops" > /dev/null 2>&1      # left over from an earlier run
+
+    # --- directories: create, delete empty, delete with contents (S3 sent "dir//" and failed) ---
+    run $opts -- "ls|$b" "mkdir|e2e-ops" "ls|$d" "mkdir|empty" "mkdir|full" "ls|$d/full" "put|$OPS/a.txt|$d/full" "mkdir|inner" \
+                 "put|$OPS/b ñ.txt|$d/full/inner" "ls|$d" "rm|empty" "rm|full" "lsl|$d"
+    chk "$name: delete an empty directory and a directory with contents" "[ $RC -eq 0 ] && has 'OK   rm|empty' && has 'OK   rm|full' && ! has '^  L '"
+
+    # --- a small tree for the rest ---
+    run $opts -- "ls|$d" "put|$OPS/a.txt|$d" "put|$OPS/c.bin|$d" "mkdir|tree" "put|$OPS/a.txt|$d/tree" "ls|$d/tree" "mkdir|sub" "put|$OPS/b ñ.txt|$d/tree/sub"
+    chk "$name: test tree created" "[ $RC -eq 0 ]"
+
+    # --- permissions ---
+    if [ $name = sftp ] || [ $name = scp ] || [ $name = ftp ]; then
+      run $opts -- "ls|$d" "props|a.txt|rights=600" "lsl|$d"
+      chk "$name: chmod 600" "[ $RC -eq 0 ] && has '  L - rw------- .* a.txt' && [ \"\$(perm $hd/a.txt)\" = 600 ]"
+      run $opts -- "ls|$d" "props|tree|rights=640|recursive|addx" "lsl|$d" "lsl|$d/tree" "lsl|$d/tree/sub"
+      chk "$name: recursive chmod 640, directories get x where r is set" \
+          "[ $RC -eq 0 ] && has '  L d rwxr-x--- .* tree' && has '  L - rw-r----- .* a.txt' && has '  L d rwxr-x--- .* sub' && has '  L - rw-r----- .* b ñ.txt'"
+      run $opts -- "ls|$d" "props|a.txt|rights=9z" "props|a.txt|rights=64" "props|e2e-nope|rights=600" "ls|$d"
+      chk "$name: invalid permissions / unknown file are refused, the session keeps working" \
+          "[ $RC -eq 2 ] && [ \$(grep -c 'Invalid permissions' $OUT) = 2 ] && has 'FAIL props|e2e-nope' && [ \$(grep -c '^OK   ls|' $OUT) = 2 ]"
+    else
+      run $opts -- "ls|$d" "props|a.txt|rights=600" "props|a.txt|owner=root" "ls|$d"
+      chk "$name: permissions / owner cannot be changed: a clear refusal, the session keeps working" \
+          "[ $RC -eq 2 ] && has 'does not support changing permissions' && has 'does not support changing the owner' && [ \$(grep -c '^OK   ls|' $OUT) = 2 ]"
+    fi
+    if [ $name = sftp ] || [ $name = scp ]; then
+      # special bits, owner and group on the server's own file system (a bind mount from a Mac
+      # drops setuid and accepts any chown)
+      o="/tmp/e2e-own-$name"
+      tmo 60 "$C" $opts -- "ls|/tmp" "rm|e2e-own-$name" > /dev/null 2>&1
+      run $opts -- "ls|/tmp" "mkdir|e2e-own-$name" "put|$OPS/a.txt|$o" "put|$OPS/c.bin|$o" "ls|$o" "props|c.bin|rights=4755" "lsl|$o" "props|c.bin|rights=0644" "lsl|$o"
+      chk "$name: special bits (4755 -> rwsr-xr-x) and a four-digit value" "[ $RC -eq 0 ] && has '  L - rwsr-xr-x .* c.bin' && has '  L - rw-r--r-- .* c.bin'"
+      run $opts -- "ls|$o" "props|a.txt|group=1000" "lsl|$o"
+      chk "$name: change the group by numeric id" "[ $RC -eq 0 ] && has '  L - .* winscp:users a.txt'"
+      # by name: SCP runs chgrp with the name; SFTP-3 can only send ids, so the name must be one the
+      # session knows (here: the group of the other file of the directory), otherwise a clear refusal
+      G0="$(awk '/  L - .* c.bin/ { split($4, a, ":"); print a[2] }' "$OUT")"
+      run $opts -- "ls|$o" "props|a.txt|group=$G0" "lsl|$o"
+      chk "$name: change the group by name ($G0)" "[ $RC -eq 0 ] && [ -n \"$G0\" ] && has \"  L - .* winscp:$G0 a.txt\""
+      if [ $name = sftp ]; then
+        run $opts -- "ls|$o" "props|a.txt|group=e2e-nogroup" "props|a.txt|owner=e2e-nouser" "lsl|$o"
+        chk "sftp: a name whose id is not known is refused (it is never sent as id 0)" "[ $RC -eq 2 ] && [ \$(grep -c 'by numeric id only' $OUT) = 2 ] && has \"  L - .* winscp:$G0 a.txt\""
+      else
+        run $opts -- "ls|$o" "props|a.txt|group=users" "lsl|$o"
+        chk "scp: change the group by a name not seen in the listing" "[ $RC -eq 0 ] && has '  L - .* winscp:users a.txt'"
+      fi
+      run $opts -- "ls|$o" "props|a.txt|owner=root" "lsl|$o" "props|a.txt|owner=|group=" "ls|$o"
+      chk "$name: changing the owner without the right to is an error, nothing changes, the session keeps working" \
+          "[ $RC -eq 2 ] && has 'FAIL props|a.txt|owner=root' && has '  L - .* winscp:[a-z]* a.txt' && has 'cannot be empty' && [ \$(grep -c '^OK   ls|' $OUT) = 2 ]"
+      tmo 60 "$C" $opts -- "ls|/tmp" "rm|e2e-own-$name" > /dev/null 2>&1
+    fi
+
+    # --- links ---
+    if [ $name = sftp ] || [ $name = scp ]; then
+      run $opts -- "ls|$d" "ln|lnk ñ|a.txt" "hardln|hard.txt|$d/a.txt" "lsl|$d"
+      chk "$name: symbolic link (non-ASCII name) and hard link" \
+          "[ $RC -eq 0 ] && has '  L l .* lnk ñ -> a.txt' && has '  L - .* hard.txt' && [ \"\$(readlink \"$hd/lnk ñ\")\" = a.txt ] && [ $hd/a.txt -ef $hd/hard.txt ]"
+      run $opts -- "ls|$d" "ln|a.txt|c.bin" "ln||a.txt" "ln|x|" "ls|$d"
+      chk "$name: a link over an existing name / without a name or target is refused" "[ $RC -eq 2 ] && [ \$(grep -c '^FAIL ln' $OUT) = 3 ] && [ \$(grep -c '^OK   ls|' $OUT) = 2 ]"
+      freshdl; run $opts -- "getplain|$d/lnk ñ|$W/dl"
+      chk "$name: a file is downloaded through its symbolic link" "[ $RC -eq 0 ] && cmp -s $OPS/a.txt \"$W/dl/lnk ñ\""
+    else
+      run $opts -- "ls|$d" "ln|lnk|a.txt" "hardln|hl|$d/a.txt" "ls|$d"
+      chk "$name: links are not available: a clear refusal" "[ $RC -eq 2 ] && has 'does not support symbolic links' && has 'does not support hard links' && [ \$(grep -c '^OK   ls|' $OUT) = 2 ]"
+    fi
+
+    # --- duplicate (server-side copy) ---
+    if [ $name = ftp ]; then
+      run $opts -- "ls|$d" "dup|a.txt|$d|copy.txt" "lsl|$d"
+      chk "ftp: duplicate is not available: a clear refusal, nothing created" "[ $RC -eq 2 ] && has 'does not support duplicating' && ! has ' copy.txt'"
+    else
+      freshdl
+      run $opts -- "ls|$d" "dup|c.bin|$d|copy ñ.bin" "dup|a.txt|$d/tree/sub" "lsl|$d/tree/sub" "getplain|$d/copy ñ.bin|$W/dl"
+      chk "$name: duplicate a file under a new (non-ASCII) name and into another directory, byte-identical" \
+          "[ $RC -eq 0 ] && has '  L - .* a.txt' && cmp -s $OPS/c.bin \"$W/dl/copy ñ.bin\""
+      if [ $name = s3 ]; then      # S3 has no directories to be missing: a new key prefix is simply created
+        run $opts -- "ls|$d" "dup|a.txt|$d|a.txt" "dup|a.txt|" "lsl|$d"
+        chk "s3: duplicate onto itself / nowhere is an error" "[ $RC -eq 2 ] && has 'same file' && [ \$(grep -c '^FAIL dup' $OUT) = 2 ]"
+      else
+        run $opts -- "ls|$d" "dup|a.txt|$d|a.txt" "dup|a.txt|$d/e2e-nope" "dup|a.txt|" "lsl|$d"
+        chk "$name: duplicate onto itself / into a missing directory / nowhere is an error; nothing appears" \
+            "[ $RC -eq 2 ] && has 'same file' && [ \$(grep -c '^FAIL dup' $OUT) = 3 ] && ! has ' e2e-nope'"
+      fi
+      if [ $name = scp ] || [ $name = dav ]; then
+        run $opts -- "ls|$d" "dup|tree|$d|tree2" "lsl|$d/tree2" "lsl|$d/tree2/sub"
+        chk "$name: duplicate a directory tree" "[ $RC -eq 0 ] && has '  L d .* sub' && has '  L - .* b ñ.txt'"
+      else
+        run $opts -- "ls|$d" "dup|tree|$d|tree2" "lsl|$d"
+        chk "$name: a directory cannot be duplicated with this protocol: said so, nothing left behind" "[ $RC -eq 2 ] && has 'Duplicating a directory is not supported' && ! has ' tree2'"
+      fi
+    fi
+
+    # --- move ---
+    freshdl
+    run $opts -- "ls|$d" "mv|c.bin|$d/tree|moved ñ.bin" "lsl|$d" "getplain|$d/tree/moved ñ.bin|$W/dl"
+    chk "$name: move a file into another directory under a new name, byte-identical" \
+        "[ $RC -eq 0 ] && ! has '  L - .* c.bin' && cmp -s $OPS/c.bin \"$W/dl/moved ñ.bin\""
+    run $opts -- "ls|$d" "mv|tree|$d/tree|inside" "mv|tree|$d/tree/sub|inside" "mv|tree|$d/e2e-nope|x" "mv|e2e-nope|$d/tree" "lsl|$d" "lsl|$d/tree"
+    chk "$name: a directory is not moved into itself or into a missing directory; it stays intact" \
+        "[ $RC -eq 2 ] && [ \$(grep -c 'into itself' $OUT) = 2 ] && [ \$(grep -c '^FAIL mv' $OUT) = 4 ] && has '  L d .* tree' && has '  L d .* sub' && has 'moved ñ.bin'"
+    if [ $name = s3 ]; then
+      run $opts -- "ls|$d" "mv|tree|$d|tree moved" "rename|tree|tree renamed" "lsl|$d" "lsl|$d/tree"
+      chk "s3: a folder cannot be moved or renamed: said so, it stays intact" "[ $RC -eq 2 ] && [ \$(grep -c 'folder is not supported on S3' $OUT) = 2 ] && has '  L d .* tree' && has 'moved ñ.bin'"
+      run $opts -- "ls|$d" "rename|a.txt|a renamed ñ.txt" "lsl|$d"
+      chk "s3: a file is renamed" "[ $RC -eq 0 ] && has 'a renamed ñ.txt'"
+    else
+      run $opts -- "ls|$d" "mv|tree|$d|tree moved" "lsl|$d" "lsl|$d/tree moved/sub"
+      chk "$name: move (rename) a directory tree" "[ $RC -eq 0 ] && has '  L d .* tree moved' && has '  L - .* b ñ.txt'"
+      run $opts -- "ls|$d" "rename|tree moved|tree ñ" "rename|a.txt|a renamed ñ.txt" "lsl|$d"
+      chk "$name: rename a directory and a file" "[ $RC -eq 0 ] && has '  L d .* tree ñ' && has 'a renamed ñ.txt'"
+    fi
+
+    # --- free space ---
+    run $opts -- "df|${base:-/}" "ls|$b"
+    case $name in
+      sftp) chk "sftp: free space of the file system" "[ $RC -eq 0 ] && has 'DF total=[1-9][0-9]* unused=[1-9]'";;
+      dav)  chk "dav: free space request answered (this server reports no quota)" "[ $RC -eq 0 ] && has '^DF total='";;
+      *)    chk "$name: free space is not available: said so, the session keeps working" "[ $RC -eq 2 ] && has 'does not tell how much space' && has '^OK   ls|'";;
+    esac
+
+    run $opts -- "ls|$b" "rm|e2e-ops" "ls|$b"
+    chk "$name: the whole test tree is deleted" "[ $RC -eq 0 ] && [ \$(grep -c '^  d .* e2e-ops  ' $OUT) = 1 ]"
+  done
+fi
+
+#==============================================================================================
+if want panels; then
+  echo "== panels (offscreen): layout"
+  SH="$W/shots"; GO="$W/gui.out"; mkdir -p "$SH"
+  export QT_QPA_PLATFORM=offscreen WINSCP_NO_AUTOLOGIN=1
+  AC="WINSCP_AUTOCONNECT=127.0.0.1:2223:winscp:winscp123:sftp"
+  gui() { tmo 120 env "$@" "$APP" > "$GO" 2>&1; RC=$?; cp "$GO" "$OUT"; }
+  ghas() { grep -aq -- "$1" "$GO"; }
+  gcount() { grep -ac -- "$1" "$GO"; }
+  marked() { awk -v side="$1" '$0 ~ "panel " side {p=1; next} /^\[panel/{p=0} p && /^  \*/{print $2}' "$GO" | tr '\n' ','; }
+  names() { awk -v side="$1" '$0 ~ "panel " side {p=1; next} /^\[/{p=0} p { if ($1 == "*") print $2; else print $1 }' "$GO" | tr '\n' ','; }
+  # the Changed cell of a row of a "columns|<side>" block (field number differs: local has a Type column)
+  cell() { awk -F' [|] ' -v side="$1" -v row="  $2" -v f="$3" '$0 ~ "^\\[columns " side {p=1; next} /^\[/{p=0} p && $1 == row {print $f}' "$GO"; }
+  defaults delete com.winscp-native-port-test.WinSCP >/dev/null 2>&1; rm -rf "$HOME/.config/WinSCP-native-port-test" 2>/dev/null
+
+  PL="$W/pl"; rm -rf "$PL"; mkdir -p "$PL/dirA" "$PL/dir.txt"
+  echo one > "$PL/a.txt"; echo two22 > "$PL/b.txt"; head -c 3000 /dev/zero > "$PL/big.bin"; echo h > "$PL/.hid"; echo m > "$PL/c.md"; echo k > "$PL/old.bak"
+  ln -s a.txt "$PL/lnk"; chmod 644 "$PL/a.txt"; touch -t 202601021530.45 "$PL/a.txt"
+  RP=/config/e2e-pn; HP="$DATA/sshhome/e2e-pn"; rm -rf "$HP"; mkdir -p "$HP/sub/deep"
+  echo r1 > "$HP/r1.txt"; echo r2 > "$HP/r2.log"; echo n > "$HP/sub/n.txt"; echo d > "$HP/sub/deep/d.txt"; ln -s r1.txt "$HP/rl"
+  chmod 644 "$HP/r1.txt" "$HP/r2.log" "$HP/sub/n.txt" "$HP/sub/deep/d.txt"; chmod 755 "$HP" "$HP/sub" "$HP/sub/deep"
+  N="nav|left|$PL;nav|right|$RP"
+
+  gui $AC WINSCP_UITEST="$N;columns|left;columns|right;status|left;status|right;mainstatus"
+  chk "columns: local = Name, Size, Type, Changed; remote = Name, Size, Changed, Rights, Owner" \
+      "[ $RC -eq 0 ] && ghas '^  Name | Size | Type | Changed\$' && ghas '^  Name | Size | Changed | Rights | Owner\$'"
+  chk "Type column: parent row, folders, links, files" \
+      "ghas '^  \\.\\. |  | Parent directory | \$' && ghas '^  dirA |  | File folder | ' && ghas '^  lnk | .* | Symbolic link | ' && ghas '^  big.bin | .* | [A-Za-z].* | '"
+  chk "remote rows show size, rights and owner; the link is a link" "ghas '^  r1.txt | 3 B | .* | rw-r--r-- | winscp\$' && [ -n \"\$(cell right rl 3)\" ]"
+  chk "status lines: '<selected> of <total> in <n> of <count>'" "ghas '^\\[status left\\] 0 B of .* in 0 of 9 || \$' && ghas '^\\[status right\\] 0 B of .* in 0 of 4 || \$'"
+  chk "main status bar: protocol, lock, session time" "ghas \"^\\[mainstatus\\] protocol='SFTP-[0-9]*' encrypted=1 time='0:00:0[0-9]'\""
+
+  gui $AC WINSCP_UITEST="$N;select|left|a.txt;xfer|left;waitidle;columns|left;columns|right"
+  LT="$(cell left a.txt 4)"; RT="$(cell right a.txt 3)"
+  chk "a timestamp reads the same in the local and the remote panel ($LT)" "[ -n \"\$LT\" ] && [ \"\$LT\" = \"\$RT\" ] && echo \"\$LT\" | grep -q '2026.*30.45\\|2026.*30:45'"
+  rm -f "$HP/a.txt"
+
+  gui $AC WINSCP_UITEST="closetab|0;mainstatus;columns|right"
+  chk "after the session is closed the right panel is a local panel again and the status bar is empty" \
+      "ghas \"^\\[mainstatus\\] protocol='' encrypted=0 time=''\" && ghas '^  Name | Size | Type | Changed\$' && ! ghas 'Rights'"
+  gui WINSCP_AUTOCONNECT=127.0.0.1:21:winscp:winscp123:ftp WINSCP_UITEST="mainstatus;columns|right"
+  chk "ftp session: status bar says FTP, not encrypted; remote columns" "ghas \"protocol='FTP' encrypted=0\" && ghas '^  Name | Size | Changed | Rights | Owner\$'"
+  gui WINSCP_AUTOCONNECT=127.0.0.1:2121:winscp:winscp123:ftp WINSCP_AC_TLS=explicit WINSCP_UITEST="mainstatus"
+  chk "ftps session: status bar shows it as encrypted" "ghas \"protocol='FTP' encrypted=1\""
+  gui WINSCP_AUTOCONNECT=127.0.0.1:8087:winscp:winscp123:dav WINSCP_UITEST="mainstatus;columns|right;status|right"
+  chk "webdav session: status bar, columns and status line" "ghas \"protocol='WebDAV' encrypted=0\" && ghas '^  Name | Size | Changed | Rights | Owner\$' && ghas '^\\[status right\\] 0 B of '"
+  gui WINSCP_AUTOCONNECT=127.0.0.1:9101:minioadmin:minioadmin123:s3 WINSCP_UITEST="nav|right|/testbucket;mkdir|right|e2e-gdel;print|right;select|right|e2e-gdel;delete|right;print|right;mainstatus"
+  chk "s3 session: a directory created in the panel can be deleted from it" "ghas \"protocol='S3'\" && [ \$(gcount '^    e2e-gdel/ \\|^  \\* e2e-gdel/ ') = 1 ]"
+
+  echo "== panels: hidden files, filter"
+  gui WINSCP_UITEST="nav|left|$PL;hidden|0;print|left;status|left;hidden|1;print|left;status|left"
+  chk "hidden files off: gone from the list, counted on the status line; on again: back" \
+      "[ \$(gcount '\\.hid |') = 1 ] && ghas '^\\[status left\\] 0 B of .* in 0 of 8 || 1 hidden\$' && ghas '^\\[status left\\] 0 B of .* in 0 of 9 || \$'"
+  gui WINSCP_UITEST="nav|left|$PL;filter|left|*.txt;print|left;status|left"
+  chk "filter *.txt: matching files and all directories stay" "[ \"\$(names left)\" = 'dir.txt/,dirA/,a.txt,b.txt,' ] && ghas '|| 5 filtered (\\*.txt)\$'"
+  # in a scripted command ';' separates the steps and '|' the arguments: a mask list uses ',' and '^' stands for '|'
+  gui WINSCP_UITEST="nav|left|$PL;filter|left|*^*.bak, *.md;print|left;filter|left;print|left;status|left"
+  chk "filter with an exclude part; removing the filter shows everything again" \
+      "[ \$(gcount 'old.bak |') = 1 ] && [ \$(gcount 'c.md |') = 1 ] && [ \$(gcount 'big.bin |') = 2 ] && ghas '^\\[status left\\] .* in 0 of 9 || \$'"
+  gui WINSCP_UITEST="nav|left|$PL;filter|left|*>abc;print|left"
+  chk "an invalid filter mask is refused and filters nothing" "ghas '^\\[filter\\] invalid' && ghas 'big.bin |' && ghas 'old.bak |'"
+  gui WINSCP_DIALOG_SHOTS=$SH WINSCP_DIALOG_SET="filter.mask=*.md" WINSCP_DIALOG_ACCEPT=filter WINSCP_UITEST="nav|left|$PL;filter|left|dialog;print|left"
+  chk "Filter dialog" "[ -s $SH/filter.png ] && [ \"\$(names left)\" = 'dir.txt/,dirA/,c.md,' ]"
+  gui WINSCP_DIALOG_SET="filter.mask=*>abc" WINSCP_DIALOG_ACCEPT=filter WINSCP_UITEST="nav|left|$PL;filter|left|dialog;status|left"
+  chk "Filter dialog refuses an invalid mask" "ghas 'The file mask is not valid' && ghas ' in 0 of 9 || \$'"
+  gui $AC WINSCP_UITEST="$N;filter|right|*.log;print|right;status|right"
+  chk "filter on the remote panel" "[ \"\$(names right)\" = 'sub/,r2.log,' ] && ghas '|| 2 filtered (\\*.log)\$'"
+
+  echo "== panels: selection, sorting"
+  gui WINSCP_UITEST="nav|left|$PL;clearsel|left;selectmask|left|*.txt;print|left;status|left"
+  chk "select by mask: files only" "[ \"\$(marked left)\" = 'a.txt,b.txt,' ] && ghas ' in 2 of 9 || \$'"
+  gui WINSCP_UITEST="nav|left|$PL;clearsel|left;selectmask|left|*.txt|dirs;print|left"
+  chk "select by mask applied to directories too" "[ \"\$(marked left)\" = 'dir.txt/,a.txt,b.txt,' ]"
+  gui WINSCP_UITEST="nav|left|$PL;clearsel|left;selectmask|left|*.md, *.bak;print|left;selectmask|left|*>abc"
+  chk "select by a mask list; an invalid mask is reported" "[ \"\$(marked left)\" = 'c.md,old.bak,' ] && ghas '^\\[selectmask\\] invalid mask'"
+  gui WINSCP_UITEST="nav|left|$PL;selectall|left;status|left;invert|left;status|left;selectmask|left|*.txt;invert|left;print|left"
+  chk "select all (never the parent row), invert" "ghas ' in 9 of 9 || \$' && ghas ' in 0 of 9 || \$' && [ \"\$(marked left)\" = 'dir.txt/,dirA/,.hid,big.bin,c.md,lnk,old.bak,' ]"
+  gui WINSCP_DIALOG_SHOTS=$SH WINSCP_DIALOG_SET="select.mask=*.md;select.dirs=0" WINSCP_DIALOG_ACCEPT=select WINSCP_UITEST="nav|left|$PL;clearsel|left;selectdialog|left;print|left"
+  chk "Select dialog" "[ -s $SH/select.png ] && [ \"\$(marked left)\" = 'c.md,' ]"
+  gui WINSCP_UITEST="nav|left|$PL;sort|left|1;print|left"
+  S1="$(names left)"
+  gui WINSCP_UITEST="nav|left|$PL;sort|left|1;sort|left|1;print|left"
+  S2="$(names left)"
+  chk "sort by size: directories stay first, ascending then descending ($S2)" \
+      "echo \"\$S1\" | grep -q '^dir.txt/,dirA/,.*,big.bin,\$' && echo \"\$S2\" | grep -q '^dirA/,dir.txt/,big.bin,'"
+  gui WINSCP_UITEST="nav|left|$PL;sort|left|3;print|left"
+  chk "sort by the Changed column (the oldest file first)" "[ \"\$(names left | cut -d, -f3)\" = a.txt ]"
+
+  echo "== panels: navigation, recent directories, bookmarks"
+  gui WINSCP_UITEST="nav|left|$PL;nav|left|$PL/dirA;up|left;back|left;print|left;recent|left;forward|left;print|left"
+  chk "up / back / forward" "ghas '^\\[panel left\\] $PL/dirA\$' && ghas '^\\[panel left\\] $PL\$'"
+  chk "recent directories, most recent first; the drop-down lists the path from the root" \
+      "ghas '^\\[recent left\\] $PL/dirA , $PL' && ghas '^\\[dircombo left\\] / , /tmp , /tmp/freescp-e2e , $PL , $PL/dirA , '"
+  gui WINSCP_UITEST="recent|left"
+  chk "recent directories are remembered by the next start" "ghas '^\\[recent left\\] .*$PL/dirA'"
+  gui WINSCP_UITEST="nav|left|$PL;nav|left|$PL/e2e-nope;print|left"
+  chk "a local directory that does not exist: an error, the panel stays where it was" "ghas 'does not exist' && ghas '^\\[panel left\\] $PL\$'"
+  gui WINSCP_UITEST="nav|left|$PL//dirA/;print|left"
+  chk "a typed path is tidied (repeated / trailing slashes)" "ghas '^\\[panel left\\] $PL/dirA\$'"
+  gui WINSCP_DIALOG_SHOTS=$SH WINSCP_DIALOG_SET="opendir.path=$PL/dirA" WINSCP_DIALOG_ACCEPT=opendir WINSCP_UITEST="nav|left|$PL;opendir|left;print|left"
+  chk "Open Directory dialog" "[ -s $SH/opendir.png ] && ghas '^\\[panel left\\] $PL/dirA\$'"
+  gui $AC WINSCP_DIALOG_SET="opendir.path=$RP/sub/deep" WINSCP_DIALOG_ACCEPT=opendir WINSCP_UITEST="opendir|right;print|right"
+  chk "Open Directory on the remote panel" "ghas '^\\[panel right\\] $RP/sub/deep\$' && ghas 'd.txt |'"
+  gui WINSCP_UITEST="nav|left|$PL;bookmark|left;nav|left|$PL/dirA;bookmark|left;bookmark|left;bookmarks"
+  chk "bookmarks: added once each" "ghas '^\\[bookmarks\\] $PL , $PL/dirA\$'"
+
+  echo "== panels: Properties"
+  PA="WINSCP_DIALOG_ACCEPT=properties"
+  gui $AC WINSCP_DIALOG_SHOTS=$SH WINSCP_DIALOG_SET="properties.octal=600" $PA WINSCP_UITEST="$N;select|right|r1.txt;props|right"
+  chk "Properties dialog: permissions of a remote file" "[ -s $SH/properties.png ] && [ \"\$(perm $HP/r1.txt)\" = 600 ]"
+  gui $AC WINSCP_DIALOG_SET="properties.octal=9z" $PA WINSCP_UITEST="$N;select|right|r1.txt;props|right"
+  chk "Properties dialog refuses an invalid value; nothing changes" "ghas 'three or four octal digits' && [ \"\$(perm $HP/r1.txt)\" = 600 ]"
+  gui $AC $PA WINSCP_UITEST="$N;select|right|r2.log;props|right"
+  chk "Properties accepted without a change does nothing" "[ $RC -eq 0 ] && [ \"\$(perm $HP/r2.log)\" = 644 ] && ! ghas 'could not be changed'"
+  gui $AC WINSCP_DIALOG_SET="properties.octal=640" $PA WINSCP_UITEST="$N;select|right|r1.txt, r2.log;props|right"
+  chk "Properties of two files at once" "[ \"\$(perm $HP/r1.txt)\" = 640 ] && [ \"\$(perm $HP/r2.log)\" = 640 ]"
+  gui $AC WINSCP_DIALOG_SET="properties.octal=640;properties.recursive=1;properties.addx=1" $PA WINSCP_UITEST="$N;select|right|sub;props|right"
+  chk "Properties of a directory, recursively, adding x to directories" \
+      "[ \"\$(perm $HP/sub)\" = 750 ] && [ \"\$(perm $HP/sub/n.txt)\" = 640 ] && [ \"\$(perm $HP/sub/deep)\" = 750 ] && [ \"\$(perm $HP/sub/deep/d.txt)\" = 640 ]"
+  gui $AC WINSCP_DIALOG_SET="properties.octal=700" $PA WINSCP_UITEST="$N;select|right|sub;props|right"
+  chk "Properties of a directory, not recursively: its contents are left alone" "[ \"\$(perm $HP/sub)\" = 700 ] && [ \"\$(perm $HP/sub/n.txt)\" = 640 ]"
+  chmod 755 "$HP/sub"
+  gui $AC WINSCP_DIALOG_SET="properties.group=1000" $PA WINSCP_UITEST="nav|right|/tmp;mkdir|right|e2e-gp;select|right|e2e-gp;props|right;select|right|e2e-gp;props|right;select|right|e2e-gp;delete|right"
+  chk "Properties dialog: change the group (numeric id)" "ghas '^\\[mkdir\\] ok' && ! ghas 'could not be changed'"
+  gui $AC WINSCP_DIALOG_SET="properties.group=e2e-nogroup" $PA WINSCP_UITEST="nav|right|/tmp;mkdir|right|e2e-gq;select|right|e2e-gq;props|right;select|right|e2e-gq;delete|right"
+  chk "Properties dialog: a group name the SFTP session cannot translate is refused with an explanation" "ghas 'by numeric id only'"
+  gui $AC WINSCP_DIALOG_SET="properties.owner=root" $PA WINSCP_UITEST="nav|right|/tmp;mkdir|right|e2e-ow;select|right|e2e-ow;props|right;select|right|e2e-ow;delete|right;print|right"
+  chk "Properties dialog: a refused owner change is reported" "ghas 'could not be changed' && ! ghas 'e2e-ow/'"
+  gui WINSCP_DIALOG_SET="properties.octal=600" $PA WINSCP_UITEST="nav|left|$PL;select|left|b.txt;props|left"
+  chk "Properties of a local file" "[ \"\$(perm $PL/b.txt)\" = 600 ]"
+  gui WINSCP_AUTOCONNECT=127.0.0.1:8087:winscp:winscp123:dav WINSCP_DIALOG_SHOTS=$SH WINSCP_DIALOG_SET="properties.octal=600" $PA WINSCP_UITEST="mkdir|right|e2e-pp;select|right|e2e-pp;props|right;select|right|e2e-pp;delete|right;print|right"
+  chk "Properties on a server without permissions (WebDAV): nothing is sent, no error" "[ $RC -eq 0 ] && ! ghas 'could not be changed' && ! ghas 'e2e-pp/'"
+
+  echo "== panels: links, duplicate, move"
+  gui $AC WINSCP_DIALOG_SHOTS=$SH WINSCP_DIALOG_SET="link.name=nl ñ" WINSCP_DIALOG_ACCEPT=link WINSCP_UITEST="$N;select|right|r1.txt;newlink|right;columns|right"
+  chk "Add Link dialog: a symbolic link to the selected remote file" "[ -s $SH/link.png ] && [ \"\$(readlink \"$HP/nl ñ\")\" = r1.txt ] && ghas '^  nl ñ | '"
+  gui $AC WINSCP_DIALOG_ACCEPT=link WINSCP_UITEST="$N;select|right|r1.txt;newlink|right"
+  chk "Add Link dialog refuses an empty name" "ghas 'Enter the name of the link'"
+  gui $AC WINSCP_DIALOG_SET="link.name=r2.log" WINSCP_DIALOG_ACCEPT=link WINSCP_UITEST="$N;select|right|r1.txt;newlink|right"
+  chk "a link over an existing file is an error" "ghas 'Error creating link' && [ ! -L $HP/r2.log ]"
+  gui $AC WINSCP_UITEST="$N;mklink|right|hl|$RP/r1.txt|hard"
+  chk "hard link on the server" "[ $HP/hl -ef $HP/r1.txt ]"
+  gui WINSCP_DIALOG_SET="link.name=ll" WINSCP_DIALOG_ACCEPT=link WINSCP_UITEST="nav|left|$PL;select|left|a.txt;newlink|left;columns|left"
+  chk "a symbolic link in the local panel" "[ \"\$(readlink $PL/ll)\" = a.txt ] && ghas '^  ll | .* | Symbolic link | '"
+  gui WINSCP_UITEST="nav|left|$PL;mklink|left|lh|a.txt|hard;mklink|left|a.txt|b.txt"
+  chk "a local hard link; a link over an existing name is an error" "[ $PL/lh -ef $PL/a.txt ] && ghas 'Error creating link'"
+
+  gui $AC WINSCP_DIALOG_SHOTS=$SH WINSCP_DIALOG_SET="duplicate.name=r1 copy ñ.txt" WINSCP_DIALOG_ACCEPT=duplicate WINSCP_UITEST="$N;select|right|r1.txt;duplicate|right;print|right"
+  chk "Duplicate dialog: a remote file under a new name" "[ -s $SH/duplicate.png ] && cmp -s $HP/r1.txt \"$HP/r1 copy ñ.txt\" && ghas 'r1 copy ñ.txt |'"
+  gui $AC WINSCP_DIALOG_ACCEPT=duplicate WINSCP_UITEST="$N;select|right|r1.txt;duplicate|right"
+  chk "Duplicate onto itself is an error" "ghas 'same file'"
+  gui $AC WINSCP_DIALOG_SET="duplicate.target=$RP/sub" WINSCP_DIALOG_ACCEPT=duplicate WINSCP_UITEST="$N;select|right|r1.txt, r2.log;duplicate|right"
+  chk "Duplicate two files into another directory" "cmp -s $HP/r1.txt $HP/sub/r1.txt && cmp -s $HP/r2.log $HP/sub/r2.log"
+  gui WINSCP_DIALOG_SET="duplicate.name=a2.txt" WINSCP_DIALOG_ACCEPT=duplicate WINSCP_UITEST="nav|left|$PL;select|left|a.txt;duplicate|left"
+  chk "Duplicate a local file" "cmp -s $PL/a.txt $PL/a2.txt"
+  echo inner > "$PL/dirA/in.txt"
+  gui WINSCP_DIALOG_SET="duplicate.name=dirB" WINSCP_DIALOG_ACCEPT=duplicate WINSCP_UITEST="nav|left|$PL;select|left|dirA;duplicate|left"
+  chk "Duplicate a local directory tree" "diff -r $PL/dirA $PL/dirB >/dev/null"
+  gui WINSCP_DIALOG_SET="duplicate.name=b.txt" WINSCP_DIALOG_ACCEPT=duplicate WINSCP_UITEST="nav|left|$PL;select|left|a.txt;duplicate|left"
+  chk "Duplicate never overwrites an existing local file" "ghas 'already exists' && [ \"\$(cat $PL/b.txt)\" = two22 ]"
+  gui WINSCP_DIALOG_SET="duplicate.target=$PL/dirA/x;duplicate.name=dirA" WINSCP_DIALOG_ACCEPT=duplicate WINSCP_UITEST="nav|left|$PL;select|left|dirA;duplicate|left"
+  chk "a local directory is not duplicated into itself" "ghas 'does not exist\\|into itself' && [ ! -e $PL/dirA/x ]"
+
+  gui $AC WINSCP_DIALOG_SHOTS=$SH WINSCP_DIALOG_SET="moveto.target=$RP/sub/deep;moveto.name=r2 moved.log" WINSCP_DIALOG_ACCEPT=moveto WINSCP_UITEST="$N;select|right|r2.log;moveto|right;print|right"
+  chk "Move To dialog: a remote file into another directory under a new name" "[ -s $SH/moveto.png ] && [ ! -e $HP/r2.log ] && [ \"\$(cat \"$HP/sub/deep/r2 moved.log\")\" = r2 ] && ! ghas '  r2.log |'"
+  gui $AC WINSCP_DIALOG_SET="moveto.target=$RP/sub/deep" WINSCP_DIALOG_ACCEPT=moveto WINSCP_UITEST="$N;select|right|sub;moveto|right"
+  chk "a remote directory is not moved into itself" "ghas 'into itself' && [ -d $HP/sub/deep ]"
+  gui WINSCP_DIALOG_SET="moveto.target=$PL/dirA" WINSCP_DIALOG_ACCEPT=moveto WINSCP_UITEST="nav|left|$PL;select|left|c.md, old.bak;moveto|left;print|left"
+  chk "Move To: two local files into a subdirectory" "[ -f $PL/dirA/c.md ] && [ -f $PL/dirA/old.bak ] && [ ! -e $PL/c.md ] && ! ghas '  old.bak |'"
+
+  echo "== panels: server information, icons"
+  gui $AC WINSCP_UITEST="sessioninfo"
+  chk "Server and Protocol Information: protocol, encryption, capabilities" \
+      "ghas '^File transfer protocol: SFTP-' && ghas '^Encryption algorithm' && ghas '^Can create symbolic link: Yes' && ghas '^Can check available space: Yes'"
+  for t in 0 1 2; do rm -f "$SH/sessioninfo.png"; gui $AC WINSCP_DIALOG_SHOTS=$SH WINSCP_INFO_TAB=$t WINSCP_UITEST="sessioninfo|dialog"; cp "$SH/sessioninfo.png" "$SH/sessioninfo-$t.png" 2>/dev/null; done
+  chk "Server and Protocol Information dialog renders (all three pages)" "[ -s $SH/sessioninfo-0.png ] && [ -s $SH/sessioninfo-1.png ] && [ -s $SH/sessioninfo-2.png ]"
+  gui WINSCP_UITEST="sessioninfo|dialog"
+  chk "Server and Protocol Information without a session says so" "ghas 'Connect a remote session first'"
+  gui WINSCP_UITEST="icons|$SH/icons.png"
+  chk "every toolbar icon draws something" "[ -s $SH/icons.png ] && ghas '^\\[icons\\] [4-9][0-9] blank=0\$'"
+  gui $AC WINSCP_UITEST="$N;wait|300;shot|$SH/main-panels.png"
+  chk "main window renders with a session open" "[ $RC -eq 0 ] && [ -s $SH/main-panels.png ]"
+  rm -rf "$HP"
   unset QT_QPA_PLATFORM WINSCP_NO_AUTOLOGIN
   echo "  (screenshots: $SH)"
 fi

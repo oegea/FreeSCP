@@ -31,7 +31,8 @@ set(WINSCP_ICNS ${CMAKE_CURRENT_SOURCE_DIR}/winscp.icns)
 set(CMAKE_AUTORCC ON)
 # Single source of truth for the app version (shown in About + baked into the bundle).
 set(FREESCP_VERSION "0.3.2")
-add_executable(winscp-qt MACOSX_BUNDLE main.cpp updatecheck.cpp logindialog.cpp transferdialog.cpp finddialog.cpp diffview.cpp resources.qrc ${WINSCP_ICNS})
+add_executable(winscp-qt MACOSX_BUNDLE main.cpp updatecheck.cpp logindialog.cpp transferdialog.cpp finddialog.cpp diffview.cpp
+  icons.cpp propsdialog.cpp resources.qrc ${WINSCP_ICNS})
 target_compile_definitions(winscp-qt PRIVATE FREESCP_VERSION="${FREESCP_VERSION}")
 if(APPLE)
   set_source_files_properties(${WINSCP_ICNS} PROPERTIES MACOSX_PACKAGE_LOCATION Resources)

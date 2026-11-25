@@ -62,6 +62,7 @@
 #include <QMenu>
 #include <QTimer>
 #include <QSettings>
+#include <QPainter>
 #include "updatecheck.h"
 #include <QProgressDialog>
 #include <QDesktopServices>
@@ -88,613 +89,21 @@
 #include "finddialog.h"
 #include "diffview.h"
 #include "panelcompare.h"
+#include "filepanel.h"
+#include "icons.h"
+#include "propsdialog.h"
+#include "localops.h"
 
 #ifndef FREESCP_VERSION
 #define FREESCP_VERSION "dev"
 #endif
 
-static bool gShowHidden = true;        // WinSCP "Show hidden files" toggle (dotfiles)
 static bool gConfirmDelete = true;     // confirm before deleting
 static bool gConfirmOverwrite = true;  // confirm before overwriting (stored; enforcement TBD)
 static int  gParallelMax = 2;          // max concurrent connections for queue parallelism (1-4)
 static bool gAltColors = true;         // alternating row colors in panels
 static bool gCompareByTime = true;     // Compare Directories criteria (WinSCP defaults: time on, size off)
 static bool gCompareBySize = false;
-static std::atomic<bool> gTransferRunning{false};  // a background transfer batch is in flight
-
-//===========================================================================
-// Properties dialog — WinSCP-style permissions grid (Owner/Group/Others x R/W/X) with a synced
-// octal field. Returns the chosen octal string, or empty if cancelled.
-//===========================================================================
-static QString showPropertiesDialog(QWidget * parent, const QString & name, const QString & curOctal,
-                                    const QString & info, bool isDir, bool * recursiveOut)
-{
-  QDialog dlg(parent);
-  dlg.setWindowTitle(name + " — Properties");
-
-  auto * outer = new QVBoxLayout(&dlg);
-  if (!info.isEmpty()) { auto * il = new QLabel(info); il->setTextInteractionFlags(Qt::TextSelectableByMouse); outer->addWidget(il); }
-  auto * grp = new QGroupBox("Permissions");
-  auto * g = new QGridLayout(grp);
-  g->addWidget(new QLabel("R"), 0, 1, Qt::AlignHCenter);
-  g->addWidget(new QLabel("W"), 0, 2, Qt::AlignHCenter);
-  g->addWidget(new QLabel("X"), 0, 3, Qt::AlignHCenter);
-  const char * rowNames[3] = { "Owner", "Group", "Others" };
-  QCheckBox * cb[9];
-  for (int row = 0; row < 3; ++row)
-  {
-    g->addWidget(new QLabel(rowNames[row]), row + 1, 0);
-    for (int col = 0; col < 3; ++col)
-    {
-      cb[row * 3 + col] = new QCheckBox;
-      g->addWidget(cb[row * 3 + col], row + 1, col + 1, Qt::AlignHCenter);
-    }
-  }
-  outer->addWidget(grp);
-
-  auto * octRow = new QHBoxLayout;
-  octRow->addWidget(new QLabel("Octal:"));
-  auto * octEdit = new QLineEdit;
-  octRow->addWidget(octEdit);
-  outer->addLayout(octRow);
-
-  // seed from curOctal (last 3 digits)
-  int initial = curOctal.right(3).toInt(nullptr, 8);
-  for (int i = 0; i < 9; ++i) cb[i]->setChecked((initial >> (8 - i)) & 1);
-
-  bool guard = false;
-  auto syncOctalFromBoxes = [&] {
-    if (guard) return; guard = true;
-    int v = 0; for (int i = 0; i < 9; ++i) if (cb[i]->isChecked()) v |= (1 << (8 - i));
-    octEdit->setText(QString("%1").arg(v, 3, 8, QChar('0')));
-    guard = false;
-  };
-  auto syncBoxesFromOctal = [&] {
-    if (guard) return; guard = true;
-    int v = octEdit->text().toInt(nullptr, 8);
-    for (int i = 0; i < 9; ++i) cb[i]->setChecked((v >> (8 - i)) & 1);
-    guard = false;
-  };
-  for (int i = 0; i < 9; ++i) QObject::connect(cb[i], &QCheckBox::toggled, syncOctalFromBoxes);
-  QObject::connect(octEdit, &QLineEdit::textEdited, syncBoxesFromOctal);
-  syncOctalFromBoxes();
-
-  auto * cbRec = new QCheckBox("Set recursively (apply to directory contents)");
-  cbRec->setVisible(isDir);
-  outer->addWidget(cbRec);
-
-  auto * bb = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
-  outer->addWidget(bb);
-  QObject::connect(bb, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
-  QObject::connect(bb, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
-
-  if (dlg.exec() != QDialog::Accepted) return QString();
-  if (recursiveOut) *recursiveOut = cbRec->isChecked();
-  return octEdit->text();
-}
-
-//===========================================================================
-// File panel — a WinSCP-style pane: address bar + file list (Name/Size/Changed/Rights/Owner)
-// + a per-panel status line. Local or remote, both via enginebridge.
-//===========================================================================
-class FilePanel : public QWidget
-{
-public:
-  std::function<void()> onActivated;
-  std::function<void()> onStatusChanged;
-  std::function<void()> onHome;
-  std::function<void()> onFileOpen;   // file (not dir) activated
-  std::function<void(const QString &)> onEnterDir;  // user entered a subdir (for sync browsing)
-  std::function<void()> onLeaveDir;                 // user went up (for sync browsing)
-  std::function<void()> onSwitchPanel;              // Tab pressed -> focus the other panel
-  std::function<void(FilePanel *, const QStringList &)> onDropFiles;  // files dropped from another panel
-  std::function<void(FilePanel *, const QStringList &)> onDropExternal; // local files dropped from Finder
-  std::function<void(const QString &)> onListError;   // a remote directory could not be opened/read
-  static FilePanel * s_dragSource;                  // panel a drag originated from
-
-  // Mirror operations (used by synchronized browsing; navigate directly, no callbacks -> no loop).
-  void enterSubdir(const QString & name)
-  {
-    for (const auto & e : FEntries)
-      if (e.isDir && !e.isParent && u8(e.name) == name) { navigate(u8(engine::joinPath(s8(FPath), e.name))); return; }
-  }
-  void upOne() { navigate(u8(engine::parentDir(s8(FPath)))); }
-
-  //--- directory tree (lazy, click-to-navigate) ---
-  void setTreeVisible(bool v) { FTree->setVisible(v); if (v && FTreeModel->rowCount() == 0) treeReload(); }
-  bool treeVisible() const { return FTree->isVisible(); }
-  void treeReload() {
-    FTreePopulating = true;
-    FTreeModel->clear();
-    auto * root = makeTreeNode("/", "/");
-    FTreeModel->appendRow(root);
-    populateTreeNode(root);
-    FTree->expand(root->index());
-    FTreePopulating = false;
-  }
-  QStandardItem * makeTreeNode(const QString & label, const QString & path) {
-    auto * it = new QStandardItem(qApp->style()->standardIcon(QStyle::SP_DirIcon), label);
-    it->setData(path, Qt::UserRole + 1);     // full path
-    it->setData(false, Qt::UserRole + 2);    // populated?
-    return it;
-  }
-  void populateTreeNode(QStandardItem * node) {
-    if (node->data(Qt::UserRole + 2).toBool()) return;
-    node->setData(true, Qt::UserRole + 2);
-    node->removeRows(0, node->rowCount());   // drop the placeholder
-    QString path = node->data(Qt::UserRole + 1).toString();
-    for (const QString & name : subdirsOf(path)) {
-      auto * child = makeTreeNode(name, u8(engine::joinPath(s8(path), s8(name))));
-      child->appendRow(new QStandardItem());  // placeholder -> shows the expand arrow
-      node->appendRow(child);
-    }
-  }
-  void treeExpand(const QModelIndex & ix) { if (auto * n = FTreeModel->itemFromIndex(ix)) populateTreeNode(n); }
-  QStringList subdirsOf(const QString & path) {
-    QStringList dirs;
-    if (FRemote && gTransferRunning.load()) return dirs;   // don't disturb the session mid-transfer
-    auto entries = FRemote ? engine::listRemoteDir(s8(path)) : engine::listLocalDir(s8(path));
-    for (const auto & e : entries) if (e.isDir && !e.isParent) dirs << u8(e.name);
-    if (FRemote && path != FPath) engine::listRemoteDir(s8(FPath));  // restore session CWD + the panel's listing
-    return dirs;
-  }
-
-  explicit FilePanel(QWidget * parent = nullptr) : QWidget(parent)
-  {
-    auto * layout = new QVBoxLayout(this);
-    layout->setContentsMargins(0, 0, 0, 0);
-    layout->setSpacing(0);
-
-    // Title bar (host/protocol or "Local").
-    FHeader = new QLabel("Local");
-    FHeader->setStyleSheet("padding:4px 6px; font-weight:bold; background:palette(midlight);");
-
-    // Address bar: path + small Up/Refresh buttons (WinSCP-ish).
-    auto * addr = new QWidget;
-    auto * addrLay = new QHBoxLayout(addr);
-    addrLay->setContentsMargins(2, 2, 2, 2);
-    addrLay->setSpacing(2);
-    auto * backBtn = new QToolButton; backBtn->setText("\xE2\x97\x80"); backBtn->setToolTip("Back");
-    auto * fwdBtn  = new QToolButton; fwdBtn->setText("\xE2\x96\xB6");  fwdBtn->setToolTip("Forward");
-    auto * upBtn = new QToolButton; upBtn->setText("\xE2\xAC\x86");  upBtn->setToolTip("Parent directory");
-    auto * homeBtn = new QToolButton; homeBtn->setText("\xF0\x9F\x8F\xA0"); homeBtn->setToolTip("Home");
-    auto * rfBtn = new QToolButton; rfBtn->setText("\xE2\x9F\xB3"); rfBtn->setToolTip("Refresh");
-    FPathEdit = new QLineEdit;
-    addrLay->addWidget(backBtn);
-    addrLay->addWidget(fwdBtn);
-    addrLay->addWidget(upBtn);
-    addrLay->addWidget(homeBtn);
-    addrLay->addWidget(FPathEdit, 1);
-    addrLay->addWidget(rfBtn);
-
-    FView = new QTableView;
-    FModel = new QStandardItemModel(this);
-    FView->setModel(FModel);
-    FView->setSelectionBehavior(QAbstractItemView::SelectRows);
-    FView->setSelectionMode(QAbstractItemView::ExtendedSelection);
-    FView->setEditTriggers(QAbstractItemView::NoEditTriggers);
-    FView->setSortingEnabled(false);
-    FView->setShowGrid(false);
-    FView->setAlternatingRowColors(true);
-    FView->verticalHeader()->setVisible(false);
-    FView->verticalHeader()->setDefaultSectionSize(20);
-    FView->installEventFilter(this);
-    FView->viewport()->installEventFilter(this);     // drag start + drop target
-    FView->viewport()->setAcceptDrops(true);
-
-    FStatus = new QLabel;
-    FStatus->setStyleSheet("padding:2px 6px; background:palette(window); border-top:1px solid palette(mid);");
-
-    // Optional directory tree (WinSCP-style), hidden by default; lazy-loaded, click navigates.
-    FTree = new QTreeView; FTreeModel = new QStandardItemModel(this);
-    FTree->setModel(FTreeModel); FTree->setHeaderHidden(true); FTree->setEditTriggers(QAbstractItemView::NoEditTriggers);
-    FTree->hide();
-    QObject::connect(FTree, &QTreeView::expanded, this, [this](const QModelIndex & ix){ treeExpand(ix); });
-    QObject::connect(FTree, &QTreeView::clicked, this, [this](const QModelIndex & ix){
-      if (FTreePopulating) return;
-      QString p = ix.data(Qt::UserRole + 1).toString();
-      if (!p.isEmpty() && p != FPath) navigate(p);
-    });
-    auto * split = new QSplitter(Qt::Horizontal);
-    split->addWidget(FTree); split->addWidget(FView);
-    split->setStretchFactor(0, 0); split->setStretchFactor(1, 1);
-    split->setSizes({ 200, 600 });
-
-    layout->addWidget(FHeader);
-    layout->addWidget(addr);
-    layout->addWidget(split, 1);
-    layout->addWidget(FStatus);
-
-    QObject::connect(FView, &QTableView::doubleClicked,
-                     [this](const QModelIndex & ix) { activate(ix.row()); });
-    QObject::connect(FPathEdit, &QLineEdit::returnPressed,
-                     [this] { navigate(FPathEdit->text()); });
-    QObject::connect(upBtn, &QToolButton::clicked, [this] { goUp(); });
-    QObject::connect(rfBtn, &QToolButton::clicked, [this] { refresh(); });
-    QObject::connect(backBtn, &QToolButton::clicked, [this] { goBack(); });
-    QObject::connect(fwdBtn, &QToolButton::clicked, [this] { goForward(); });
-    QObject::connect(homeBtn, &QToolButton::clicked, [this] { if (onHome) onHome(); });
-    QObject::connect(FView->selectionModel(), &QItemSelectionModel::selectionChanged,
-                     [this] { if (onStatusChanged) onStatusChanged(); });
-    // Columns + header set up ONCE here (not per-render) so they're user-resizable and widths persist.
-    FModel->setColumnCount(5);
-    FModel->setHorizontalHeaderLabels({ "Name", "Size", "Changed", "Rights", "Owner" });
-    auto * hh = FView->horizontalHeader();
-    hh->setSectionsClickable(true);
-    hh->setSectionsMovable(false);
-    hh->setStretchLastSection(true);                 // last column fills leftover space
-    for (int c = 0; c < 5; ++c) hh->setSectionResizeMode(c, QHeaderView::Interactive);  // all resizable
-    FView->setColumnWidth(0, 240); FView->setColumnWidth(1, 90);
-    FView->setColumnWidth(2, 150); FView->setColumnWidth(3, 95);
-    QObject::connect(hh, &QHeaderView::sectionClicked, [this](int col) { sortByColumn(col); });
-  }
-
-  QString path() const { return FPath; }
-  QTableView * view() const { return FView; }
-  bool isRemote() const { return FRemote; }
-  // Size (bytes) of a listed entry by name, for the transfer queue; 0 if unknown/dir.
-  qint64 sizeOf(const QString & name) const {
-    std::string n = s8(name);
-    for (const auto & e : FEntries) if (e.name == n) return e.isDir ? FDirSizes.value(name, 0) : (qint64)e.size;
-    return 0;
-  }
-  // The current listing (for Compare Directories).
-  const std::vector<engine::DirEntry> & entries() const { return FEntries; }
-  // A calculated directory size ("Calculate Directory Sizes"): shown in the Size column until the
-  // panel moves to another directory. Ignored if the panel is no longer showing `forPath`.
-  void setDirSize(const QString & forPath, const QString & name, qint64 bytes) {
-    if (forPath != FPath) return;
-    FDirSizes.insert(name, bytes);
-    for (int r = 0; r < (int)FEntries.size(); ++r)
-      if (FEntries[r].isDir && !FEntries[r].isParent && u8(FEntries[r].name) == name && FModel->item(r, 1))
-        FModel->item(r, 1)->setText(u8(engine::formatSize(bytes)));
-    if (onStatusChanged) onStatusChanged();
-  }
-  bool hasDirSize(const QString & name) const { return FDirSizes.contains(name); }
-  // Replace the selection with exactly these entries; the first one becomes the current row.
-  void selectNames(const QStringList & names) {
-    QItemSelectionModel * sm = FView->selectionModel(); if (!sm) return;
-    sm->clearSelection();
-    int first = -1;
-    for (int r = 0; r < (int)FEntries.size(); ++r) {
-      if (FEntries[r].isParent || !names.contains(u8(FEntries[r].name))) continue;
-      sm->select(QItemSelection(FModel->index(r, 0), FModel->index(r, FModel->columnCount() - 1)), QItemSelectionModel::Select);
-      if (first < 0) first = r;
-    }
-    if (first >= 0) { sm->setCurrentIndex(FModel->index(first, 0), QItemSelectionModel::NoUpdate); FView->scrollTo(FModel->index(first, 0)); }
-    if (onStatusChanged) onStatusChanged();
-  }
-  // Entry metadata by name (nullptr if not in the current listing).
-  const engine::DirEntry * entryNamed(const QString & name) const {
-    std::string n = s8(name);
-    for (const auto & e : FEntries) if (e.name == n) return &e;
-    return nullptr;
-  }
-  // Does the current listing already contain this name (for overwrite confirmation)?
-  bool contains(const QString & name) const {
-    std::string n = s8(name);
-    for (const auto & e : FEntries) if (!e.isParent && e.name == n) return true;
-    return false;
-  }
-  void setLocal() { FRemote = false; FHeader->setText("\xF0\x9F\x92\xBB  Local"); }
-  void setRemote(const QString & label) { FRemote = true; FHeader->setText("\xF0\x9F\x8C\x90  " + label); }
-
-  void setActive(bool a)
-  {
-    FActive = a;
-    FHeader->setStyleSheet(QString("padding:4px 6px; font-weight:bold; color:%1; background:%2;")
-                             .arg(a ? "palette(highlighted-text)" : "palette(window-text)")
-                             .arg(a ? "palette(highlight)" : "palette(midlight)"));
-  }
-
-  void goBack()    { if (FHistIdx > 0) { FNav = true; navigate(FHistory[--FHistIdx]); FNav = false; } }
-  void goForward() { if (FHistIdx + 1 < FHistory.size()) { FNav = true; navigate(FHistory[++FHistIdx]); FNav = false; } }
-
-  void navigate(const QString & path)
-  {
-    if (FRemote && gTransferRunning.load()) return;   // engine busy with a transfer batch
-    if (!FNav)   // record history (truncate any forward entries)
-    {
-      while (FHistory.size() > FHistIdx + 1) FHistory.removeLast();
-      if (FHistory.isEmpty() || FHistory.last() != path) { FHistory.append(path); FHistIdx = FHistory.size() - 1; }
-    }
-    std::string listError;
-    std::vector<engine::DirEntry> entries = FRemote ? engine::listRemoteDir(s8(path), &listError) : engine::listLocalDir(s8(path));
-    if (FRemote && !listError.empty())
-    {
-      // WinSCP reports the error and stays where it was; it never shows an unreadable directory as
-      // an empty one. Go back to the directory the panel was showing (the session may already have
-      // changed into the unreadable one).
-      QString prev = FPath;
-      if (!FHistory.isEmpty() && FHistory.last() == path && !FNav)
-      { FHistory.removeLast(); FHistIdx = FHistory.size() - 1; }
-      if (!prev.isEmpty() && prev != path)
-      {
-        std::string again;
-        std::vector<engine::DirEntry> back = engine::listRemoteDir(s8(prev), &again);
-        if (again.empty()) entries = back; else { entries.clear(); }
-      }
-      else entries.clear();
-      FPathEdit->setText(prev);
-      if (onListError) onListError(u8(listError));
-      if (prev.isEmpty()) FPath = path;      // first listing of the session failed: nothing to go back to
-    }
-    else
-    {
-      FPath = path;
-      FPathEdit->setText(path);
-    }
-    if (FPath != FListedPath) FDirSizes.clear();   // calculated sizes belong to the directory they were made for
-    FListedPath = FPath;
-    FEntries = entries;
-    if (!gShowHidden)
-      FEntries.erase(std::remove_if(FEntries.begin(), FEntries.end(),
-        [](const engine::DirEntry & e) { return !e.isParent && !e.name.empty() && e.name[0] == '.'; }),
-        FEntries.end());
-    FDirs = 0; FFiles = 0;
-    for (const auto & e : FEntries) { if (e.isParent) continue; if (e.isDir) ++FDirs; else ++FFiles; }
-    sortEntries();
-    renderEntries();
-    if (onStatusChanged) onStatusChanged();
-  }
-
-  // Sort FEntries by the active column ("." parent always first), then dirs-first within the
-  // chosen key (WinSCP groups folders), respecting ascending/descending.
-  void sortEntries()
-  {
-    std::stable_sort(FEntries.begin(), FEntries.end(), [this](const engine::DirEntry & a, const engine::DirEntry & b) {
-      if (a.isParent != b.isParent) return a.isParent > b.isParent;     // ".." first
-      if (a.isDir != b.isDir) return a.isDir > b.isDir;                 // dirs before files
-      int c = 0;
-      switch (FSortCol)
-      {
-        case 1: { qint64 sa = a.isDir ? FDirSizes.value(u8(a.name), 0) : (qint64)a.size,   // Size (calculated, for directories)
-                         sb = b.isDir ? FDirSizes.value(u8(b.name), 0) : (qint64)b.size;
-                  c = (sa < sb) ? -1 : (sa > sb) ? 1 : 0; break; }
-        case 2: c = QString::compare(u8(a.modified), u8(b.modified)); break;     // Changed
-        case 3: c = QString::compare(u8(a.rights), u8(b.rights)); break;         // Rights
-        case 4: c = QString::compare(u8(a.owner), u8(b.owner)); break;           // Owner
-        default: c = QString::compare(u8(a.name), u8(b.name), Qt::CaseInsensitive); break;  // Name
-      }
-      return FSortAsc ? (c < 0) : (c > 0);
-    });
-  }
-
-  void renderEntries()
-  {
-    // Remove only the rows (NOT clear()) so the columns, header sections and the user's column
-    // widths survive a navigation. Sort arrow goes on the header text via setHeaderData.
-    if (FModel->rowCount() > 0) FModel->removeRows(0, FModel->rowCount());
-    static const char * heads[5] = { "Name", "Size", "Changed", "Rights", "Owner" };
-    for (int i = 0; i < 5; ++i) {
-      QString h = heads[i]; if (i == FSortCol) h += FSortAsc ? "  \xE2\x96\xB2" : "  \xE2\x96\xBC";
-      FModel->setHeaderData(i, Qt::Horizontal, h);
-    }
-    for (const auto & e : FEntries)
-    {
-      QList<QStandardItem *> row;
-      auto * nameItem = new QStandardItem(u8(e.name));
-      nameItem->setIcon(iconFor(e));               // native folder / file-type icon
-      row << nameItem;
-      auto * sz = new QStandardItem(e.isDir ? (FDirSizes.contains(u8(e.name)) ? u8(engine::formatSize(FDirSizes.value(u8(e.name)))) : QString())
-                                            : u8(engine::formatSize(e.size)));
-      sz->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
-      row << sz;
-      row << new QStandardItem(u8(e.modified));
-      row << new QStandardItem(u8(e.rights));
-      row << new QStandardItem(u8(e.owner));
-      FModel->appendRow(row);
-    }
-    if (FModel->rowCount() > 0) FView->selectRow(0);
-  }
-
-  void sortByColumn(int col)
-  {
-    if (col == FSortCol) FSortAsc = !FSortAsc; else { FSortCol = col; FSortAsc = true; }
-    sortEntries();
-    renderEntries();
-    if (onStatusChanged) onStatusChanged();
-  }
-
-  // Per-panel status: selection / totals (WinSCP shows selected of total).
-  QString statusText() const
-  {
-    QStringList sel = selectedItems();
-    if (!sel.isEmpty())
-    {
-      qint64 bytes = 0; for (const QString & n : sel) bytes += sizeOf(n);
-      return QString("%1 of %2 selected  \xE2\x80\x94  %3")
-        .arg(sel.size()).arg(FFiles + FDirs).arg(u8(engine::formatSize(bytes)));
-    }
-    return QString("%1 director%2, %3 file(s)").arg(FDirs).arg(FDirs == 1 ? "y" : "ies").arg(FFiles);
-  }
-
-  // Selected real files only (excludes dirs + "..").
-  QStringList selectedFiles() const { return selected(false); }
-  // Selected items including directories (excludes ".."); used by copy/move/delete which the
-  // engine handles recursively for folders.
-  QStringList selectedItems() const { return selected(true); }
-
-  QStringList selected(bool includeDirs) const
-  {
-    QStringList out;
-    if (!FView->selectionModel()) return out;
-    const auto rows = FView->selectionModel()->selectedRows();
-    for (const auto & ix : rows)
-    {
-      int r = ix.row();
-      if (r < 0 || r >= (int)FEntries.size() || FEntries[r].isParent) continue;
-      if (FEntries[r].isDir && !includeDirs) continue;
-      out << u8(FEntries[r].name);
-    }
-    return out;
-  }
-
-  // Select (or deselect) all entries matching a wildcard mask (e.g. "*.txt") — WinSCP Ctrl+Num+/-.
-  void selectByMask(const QString & mask, bool sel) {
-    QItemSelectionModel * sm = FView->selectionModel(); if (!sm) return;
-    QRegularExpression re(QRegularExpression::wildcardToRegularExpression(mask), QRegularExpression::CaseInsensitiveOption);
-    for (int r = 0; r < (int)FEntries.size(); ++r) {
-      if (FEntries[r].isParent) continue;
-      if (re.match(u8(FEntries[r].name)).hasMatch())
-        sm->select(QItemSelection(FModel->index(r, 0), FModel->index(r, 4)),
-                   sel ? QItemSelectionModel::Select : QItemSelectionModel::Deselect);
-    }
-    if (onStatusChanged) onStatusChanged();
-  }
-  void setStatusLine(const QString & s) { FStatus->setText(s); }
-  // The listing as text (name, size column, selected mark) - for scripted UI checks.
-  QStringList dump() const {
-    QStringList out;
-    QItemSelectionModel * sm = FView->selectionModel();
-    for (int r = 0; r < (int)FEntries.size(); ++r) {
-      if (FEntries[r].isParent) continue;
-      out << QString("%1 %2%3 | %4 | %5").arg(sm && sm->isRowSelected(r, QModelIndex()) ? "*" : " ")
-               .arg(u8(FEntries[r].name), FEntries[r].isDir ? "/" : "")
-               .arg(FModel->item(r, 1) ? FModel->item(r, 1)->text() : QString())
-               .arg(u8(FEntries[r].modified));
-    }
-    return out;
-  }
-  // Native icon for an entry: folder icon for dirs, "up" for "..", file-type icon (by extension) for
-  // files. Cached per extension so listing stays fast.
-  QIcon iconFor(const engine::DirEntry & e) const {
-    static QFileIconProvider prov;
-    static QIcon folder = prov.icon(QFileIconProvider::Folder);
-    static QIcon upIcon = qApp->style()->standardIcon(QStyle::SP_FileDialogToParent);
-    static QIcon genericFile = prov.icon(QFileIconProvider::File);
-    static QHash<QString, QIcon> byExt;
-    if (e.isParent) return upIcon;
-    if (e.isDir) return folder;
-    QString n = u8(e.name); int dot = n.lastIndexOf('.');
-    QString ext = (dot > 0) ? n.mid(dot + 1).toLower() : QString();
-    if (ext.isEmpty()) return genericFile;
-    auto it = byExt.find(ext);
-    if (it != byExt.end()) return it.value();
-    QIcon ic = prov.icon(QFileInfo("x." + ext));   // type icon by extension
-    if (ic.isNull()) ic = genericFile;
-    byExt.insert(ext, ic);
-    return ic;
-  }
-  void refresh() { navigate(FPath); }
-  // Norton-style: toggle selection of the current row, then move down one.
-  void toggleSelectAndAdvance() {
-    int row = FView->currentIndex().row();
-    if (row < 0) return;
-    QItemSelectionModel * sm = FView->selectionModel();
-    QModelIndex ix = FModel->index(row, 0);
-    sm->select(QItemSelection(FModel->index(row, 0), FModel->index(row, FModel->columnCount() - 1)),
-               QItemSelectionModel::Toggle);
-    int next = (row + 1 < FModel->rowCount()) ? row + 1 : row;
-    FView->setCurrentIndex(FModel->index(next, 0));
-  }
-  void goUp() { navigate(u8(engine::parentDir(s8(FPath)))); if (onLeaveDir) onLeaveDir(); }
-
-protected:
-  bool eventFilter(QObject * obj, QEvent * ev) override
-  {
-    if (ev->type() == QEvent::FocusIn && onActivated) onActivated();
-    if (ev->type() == QEvent::KeyPress)
-    {
-      auto * ke = static_cast<QKeyEvent *>(ev);
-      if (ke->key() == Qt::Key_Backspace) { goUp(); return true; }
-      if (ke->key() == Qt::Key_Tab) { if (onSwitchPanel) onSwitchPanel(); return true; }
-      if (ke->key() == Qt::Key_Return || ke->key() == Qt::Key_Enter)
-      { activate(FView->currentIndex().row()); return true; }
-    }
-    // --- drag & drop between panels ---
-    if (obj == FView->viewport())
-    {
-      static const char * kFmt = "application/x-winscp-files";
-      if (ev->type() == QEvent::MouseButtonPress)
-      { auto * me = static_cast<QMouseEvent *>(ev); if (me->button() == Qt::LeftButton) FDragStart = me->pos(); }
-      else if (ev->type() == QEvent::MouseMove)
-      {
-        auto * me = static_cast<QMouseEvent *>(ev);
-        if ((me->buttons() & Qt::LeftButton) &&
-            (me->pos() - FDragStart).manhattanLength() >= QApplication::startDragDistance() &&
-            !selectedItems().isEmpty())
-        {
-          s_dragSource = this;
-          auto * mime = new QMimeData; mime->setData(kFmt, "1");   // inter-panel marker
-          // Also expose the files as URLs so they can be dropped on Finder/Nautilus (drag OUT).
-          // Local: real paths (free). Remote: download the selected files to a temp dir first.
-          QList<QUrl> urls;
-          QStringList selFiles = selectedFiles();   // files only (dirs not exported this way)
-          if (!FRemote) {
-            for (const QString & f : selFiles) urls << QUrl::fromLocalFile(FPath + "/" + f);
-          } else if (!selFiles.isEmpty() && !gTransferRunning.load()) {
-            QString tmp = QDir::tempPath() + "/freescp-dragout"; QDir().mkpath(tmp);
-            QGuiApplication::setOverrideCursor(Qt::BusyCursor);
-            for (const QString & f : selFiles) {
-              std::string err;
-              if (engine::downloadFromRemote(engine::joinPath(s8(FPath), s8(f)), s8(tmp), &err, true))
-                urls << QUrl::fromLocalFile(tmp + "/" + f);
-            }
-            QGuiApplication::restoreOverrideCursor();
-          }
-          if (!urls.isEmpty()) mime->setUrls(urls);
-          auto * drag = new QDrag(this); drag->setMimeData(mime);
-          drag->exec(Qt::CopyAction);
-          s_dragSource = nullptr;
-          return true;
-        }
-      }
-      else if (ev->type() == QEvent::DragEnter || ev->type() == QEvent::DragMove)
-      {
-        auto * de = static_cast<QDragMoveEvent *>(ev);
-        bool internal = de->mimeData()->hasFormat(kFmt) && s_dragSource && s_dragSource != this;
-        bool external = de->mimeData()->hasUrls();   // files from Finder/Nautilus
-        if (internal || external) { de->acceptProposedAction(); return true; }
-      }
-      else if (ev->type() == QEvent::Drop)
-      {
-        auto * de = static_cast<QDropEvent *>(ev);
-        if (de->mimeData()->hasFormat(kFmt) && s_dragSource && s_dragSource != this)
-        { FilePanel * src = s_dragSource; if (onDropFiles) onDropFiles(src, src->selectedItems()); de->acceptProposedAction(); return true; }
-        if (de->mimeData()->hasUrls())   // external (Finder) -> import the local files into this panel
-        {
-          QStringList paths;
-          for (const QUrl & u : de->mimeData()->urls()) if (u.isLocalFile()) paths << u.toLocalFile();
-          if (!paths.isEmpty() && onDropExternal) { onDropExternal(this, paths); de->acceptProposedAction(); return true; }
-        }
-      }
-    }
-    return false;
-  }
-
-private:
-  void activate(int row)
-  {
-    if (row < 0 || row >= static_cast<int>(FEntries.size())) return;
-    const auto & e = FEntries[static_cast<size_t>(row)];
-    if (!e.isDir) { if (onFileOpen) onFileOpen(); return; }
-    if (e.isParent) { goUp(); }
-    else { QString nm = u8(e.name); navigate(u8(engine::joinPath(s8(FPath), e.name))); if (onEnterDir) onEnterDir(nm); }
-  }
-
-  QLabel * FHeader;
-  QLineEdit * FPathEdit;
-  QTableView * FView;
-  QStandardItemModel * FModel;
-  QLabel * FStatus;
-  QTreeView * FTree = nullptr;
-  QStandardItemModel * FTreeModel = nullptr;
-  bool FTreePopulating = false;
-  QString FPath;
-  bool FRemote = false;
-  bool FActive = false;
-  bool FNav = false;
-  int FDirs = 0, FFiles = 0;
-  int FSortCol = 0; bool FSortAsc = true;
-  QPoint FDragStart;
-  QStringList FHistory;
-  int FHistIdx = -1;
-  std::vector<engine::DirEntry> FEntries;
-  QHash<QString, qint64> FDirSizes;   // name -> calculated total size, for FListedPath
-  QString FListedPath;
-};
-FilePanel * FilePanel::s_dragSource = nullptr;
 
 //===========================================================================
 // Internal text editor (the classic WinSCP notepad): edit + save, line/col, Find, word-wrap,
@@ -788,27 +197,28 @@ int main(int argc, char ** argv)
   { QSettings s;
     if (s.contains("win/geometry")) window.restoreGeometry(s.value("win/geometry").toByteArray()); }
 
-  // Main toolbar (native icons, WinSCP-style text-beside-icon).
+  // Main toolbar, in the order of WinSCP's Commander: session, synchronization, tools, queue,
+  // transfer settings. File operations live on each panel's own toolbar (see filepanel.h).
   auto * tb = window.addToolBar("Main");
   tb->setMovable(false);
   tb->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
   tb->setIconSize(QSize(16, 16));   // WinSCP-style small toolbar icons
-  auto ic = [&](QStyle::StandardPixmap sp) { return window.style()->standardIcon(sp); };
-  auto * actConnect = tb->addAction(ic(QStyle::SP_DialogOpenButton), "Login");
+  auto * actConnect = tb->addAction(appIcon("newtab"), "New Tab"); actConnect->setToolTip("Open a new session (Ctrl+N)");
+  auto * actDisconnect = tb->addAction(appIcon("disconnect"), "Disconnect"); actDisconnect->setEnabled(false);
   tb->addSeparator();
-  auto * actHome = tb->addAction(ic(QStyle::SP_DirHomeIcon), "Home");
-  auto * actRefresh = tb->addAction(ic(QStyle::SP_BrowserReload), "Refresh");
-  auto * actDisconnect = tb->addAction(ic(QStyle::SP_DialogCloseButton), "Disconnect"); actDisconnect->setEnabled(false);
+  auto * tbSyncDirs = tb->addAction(appIcon("sync"), "Synchronize"); tbSyncDirs->setToolTip("Synchronize the local directory with the remote one (Ctrl+S)");
+  auto * tbCompare = tb->addAction(appIcon("compare"), "Compare"); tbCompare->setToolTip("Compare directories: mark the files that differ (Shift+F2)");
+  auto * actSync = tb->addAction(appIcon("syncbrowse"), "Sync browsing"); actSync->setCheckable(true);
+  actSync->setToolTip("Synchronized browsing: changing directory in one panel does the same in the other");
   tb->addSeparator();
-  auto * actSync = tb->addAction(ic(QStyle::SP_FileDialogContentsView), "Sync browsing"); actSync->setCheckable(true);
-  auto * actTree = tb->addAction(ic(QStyle::SP_DirIcon), "Directory tree"); actTree->setCheckable(true);
+  auto * tbTerminal = tb->addAction(appIcon("terminal"), "Terminal"); tbTerminal->setToolTip("Open the server in a terminal (Ctrl+T)");
   tb->addSeparator();
-  auto * tbNewDir = tb->addAction(ic(QStyle::SP_FileDialogNewFolder), "New folder");
-  auto * tbDelete = tb->addAction(ic(QStyle::SP_TrashIcon), "Delete");
-  auto * tbProps  = tb->addAction(ic(QStyle::SP_FileDialogInfoView), "Properties");
+  auto * tbQueue  = tb->addAction(appIcon("queue"), "Queue"); tbQueue->setCheckable(true); tbQueue->setToolTip("Transfer queue (Ctrl+Q)");
+  auto * tbLog    = tb->addAction(appIcon("log"), "Log"); tbLog->setCheckable(true); tbLog->setToolTip("Session log (Ctrl+L)");
   tb->addSeparator();
-  auto * tbQueue  = tb->addAction(ic(QStyle::SP_FileDialogDetailedView), "Queue"); tbQueue->setCheckable(true);
-  auto * tbLog    = tb->addAction(ic(QStyle::SP_FileDialogListView), "Log"); tbLog->setCheckable(true);
+  auto * tbXfer   = tb->addAction(appIcon("transfer"), "Transfer Settings"); tbXfer->setToolTip("How files are transferred: text/binary, timestamps, masks, speed limit");
+  auto * tbPrefs  = tb->addAction(appIcon("settings"), "Preferences");
+  auto * actTree = new QAction(appIcon("tree"), "Directory &tree", &window); actTree->setCheckable(true);
   // Keep every command reachable: size the window so the toolbar never collapses into Qt's
   // hard-to-hover overflow popup at normal sizes (WinSCP keeps its toolbar fully visible).
   window.setMinimumWidth(qMax(960, tb->sizeHint().width() + 16));
@@ -835,11 +245,15 @@ int main(int argc, char ** argv)
   tabBar->setExpanding(false);
   tabBar->setDrawBase(false);
   tabBar->setDocumentMode(true);          // left-aligns tabs (macOS centers them otherwise)
+
   auto * tabRow = new QWidget;
   auto * tabRowLay = new QHBoxLayout(tabRow);
   tabRowLay->setContentsMargins(0, 0, 0, 0); tabRowLay->setSpacing(0);
-  auto * newTabBtn = new QToolButton; newTabBtn->setText("+"); newTabBtn->setToolTip("New session (Ctrl+N)");
+  auto * newTabBtn = new QToolButton; newTabBtn->setText("New Tab"); newTabBtn->setIcon(appIcon("newtab"));
+  newTabBtn->setToolButtonStyle(Qt::ToolButtonTextBesideIcon); newTabBtn->setIconSize(QSize(16, 16));
+  newTabBtn->setToolTip("New session (Ctrl+N)"); newTabBtn->setFocusPolicy(Qt::NoFocus);
   newTabBtn->setAutoRaise(true);
+  tabRow->setStyleSheet(kFlatButtons);
   tabRowLay->addWidget(tabBar); tabRowLay->addWidget(newTabBtn); tabRowLay->addStretch(1);   // tabs + "+" to the left
   tabRow->hide();
   centralLay->addWidget(tabRow);
@@ -848,18 +262,56 @@ int main(int argc, char ** argv)
   // Bottom function-key bar (the iconic WinSCP/Norton-Commander row).
   auto * fkeys = new QWidget;
   auto * fkLay = new QHBoxLayout(fkeys);
-  fkLay->setContentsMargins(3, 3, 3, 3);
-  fkLay->setSpacing(3);
+  fkLay->setContentsMargins(2, 1, 2, 1);
+  fkLay->setSpacing(0);
+  fkeys->setObjectName("fkeys");
+  fkeys->setStyleSheet(QString("QWidget#fkeys { border-top:1px solid palette(mid); } ") + kFlatButtons);
   central->setLayout(centralLay);
   centralLay->addWidget(fkeys);
   window.setCentralWidget(central);
 
   FilePanel * active = left;
 
-  auto updateStatuses = [&] {
-    left->setStatusLine(left->statusText());
-    right->setStatusLine(right->statusText());
-    window.statusBar()->showMessage(active->path());
+  // Main status bar, like WinSCP's: messages on the left; on the right a lock when the session is
+  // encrypted, the protocol and the time the session has been open.
+  auto * sbLock = new QLabel; auto * sbProto = new QLabel; auto * sbTime = new QLabel;
+  sbLock->setFixedSize(18, 16); sbProto->setMinimumWidth(52); sbTime->setMinimumWidth(52);
+  sbProto->setAlignment(Qt::AlignCenter); sbTime->setAlignment(Qt::AlignCenter);
+  for (QLabel * l : { sbLock, sbProto, sbTime }) window.statusBar()->addPermanentWidget(l);
+  static QString sessProtocol; static bool sessEncrypted = false; static qint64 sessLoginWall = 0;
+  auto wallNow = [] { const QDateTime n = QDateTime::currentDateTime(); return n.toSecsSinceEpoch() + n.offsetFromUtc(); };
+  auto showSessionStatus = [&] {
+    const bool on = !sessProtocol.isEmpty();
+    sbLock->setPixmap(on ? appIcon(sessEncrypted ? "lock" : "unlock").pixmap(16, 16) : QPixmap());
+    sbLock->setToolTip(!on ? QString() : sessEncrypted ? "The connection is encrypted" : "The connection is NOT encrypted");
+    sbProto->setText(sessProtocol);
+    sbTime->setText(on ? u8(panellogic::elapsedText(wallNow() - sessLoginWall)) : QString());
+  };
+  // Ask the engine about the active session (not while a transfer holds it).
+  auto readSessionStatus = [&] {
+    if (gTransferRunning.load()) return;
+    if (!engine::remoteConnected()) { sessProtocol.clear(); sessEncrypted = false; sessLoginWall = 0; }
+    else
+    {
+      const engine::SessionInformation in = engine::sessionInformation();
+      sessProtocol = u8(in.protocol); sessEncrypted = in.encrypted;
+      sessLoginWall = panellogic::wallSecondsSince1970(in.loginSecs);
+    }
+    showSessionStatus();
+  };
+  auto * sessTimer = new QTimer(&window);
+  QObject::connect(sessTimer, &QTimer::timeout, [&] { if (!sessProtocol.isEmpty()) showSessionStatus(); });
+  sessTimer->start(1000);
+
+  auto updateStatuses = [&] { left->updateStatus(); right->updateStatus(); };
+  // What each panel's transfer button does, and whether links can be created there.
+  auto refreshPanelRoles = [&] {
+    for (FilePanel * p : { left, right })
+    {
+      FilePanel * other = (p == left) ? right : left;
+      if (!p->isRemote()) p->setTransferCaption(other->isRemote() ? "Upload" : "Copy", other->isRemote() ? "upload" : "copy");
+      p->setLinkEnabled(!p->isRemote() || (!gTransferRunning.load() && engine::remoteCapable(engine::Capability::SymbolicLink)));
+    }
   };
   left->onStatusChanged = updateStatuses;
   right->onStatusChanged = updateStatuses;
@@ -1186,6 +638,7 @@ int main(int argc, char ** argv)
     if (st.size() >= 1 && !st[0].isEmpty()) right->navigate(st[0]);
     if (st.size() >= 2 && !st[1].isEmpty()) left->navigate(st[1]);
     curTab = i;
+    readSessionStatus(); refreshPanelRoles();
   };
   QObject::connect(tabBar, &QTabBar::currentChanged, [&](int i) {
     if (tabSwitching || i < 0) return;
@@ -1202,6 +655,7 @@ int main(int argc, char ** argv)
       tabRow->hide(); curTab = -1;
       right->setLocal(); right->navigate(u8(engine::homeDir()));
       actDisconnect->setEnabled(false); window.setWindowTitle("FreeSCP");
+      readSessionStatus(); refreshPanelRoles();
     } else {
       int ni = qMin(i, tabBar->count() - 1);
       tabBar->setCurrentIndex(ni); activateTab(ni);
@@ -1214,7 +668,7 @@ int main(int argc, char ** argv)
   // After a successful connect (interactive or scripted): show the session in the remote panel.
   static engine::ConnectOptions connOpts;   // the active session's options (Open Terminal, copy URL)
   auto sessionOpened = [&](const engine::ConnectOptions & o, const engine::ConnectResult & r) {
-    right->setRemote(QString("%1@%2 \xE2\x80\x94 %3").arg(u8(o.user), u8(o.host), protocolName(o.protocol)));
+    right->setRemote(QString("%1@%2").arg(u8(o.user), u8(o.host)));
     remoteHome = u8(r.currentDir);
     connOpts = o;
     connHost = u8(o.host); connUser = u8(o.user); connPort = o.port;
@@ -1226,6 +680,7 @@ int main(int argc, char ** argv)
     QString route = routeSummary(o);
     log("Connected" + (route.isEmpty() ? QString() : " (" + route + ")") + ". Remote directory: " + u8(r.currentDir));
     addSessionTab(QString("%1@%2").arg(u8(o.user), u8(o.host)));   // open a tab for this session
+    readSessionStatus(); refreshPanelRoles();
   };
   auto connectWith = [&](const engine::ConnectOptions & o) -> bool {
     window.statusBar()->showMessage("Connecting\xE2\x80\xA6");
@@ -1265,6 +720,7 @@ int main(int argc, char ** argv)
     window.setWindowTitle("FreeSCP");
     window.statusBar()->showMessage("Disconnected");
     log("Disconnected.");
+    readSessionStatus(); refreshPanelRoles();
   };
 
   // Open a system terminal with an ssh command to the current server (the "open in PuTTY" of Windows).
@@ -1386,12 +842,28 @@ int main(int argc, char ** argv)
                QMessageBox::Ok);
   };
 
-  // Select files by wildcard mask (Ctrl+Num+) / deselect (Ctrl+Num-).
+  // Select files by mask (Ctrl+Num+) / unselect (Ctrl+Num-), as WinSCP's Select dialog.
   auto doSelectMask = [&](bool sel) {
-    bool okIn = false;
-    QString mask = QInputDialog::getText(&window, sel ? "Select files" : "Unselect files",
-                                         "File mask (e.g. *.txt):", QLineEdit::Normal, "*", &okIn);
-    if (okIn && !mask.isEmpty()) active->selectByMask(mask, sel);
+    static QString lastMask = "*"; static bool applyToDirs = false;
+    QString mask = lastMask; bool dirs = applyToDirs;
+    if (!showSelectDialog(&window, sel, mask, dirs)) return;
+    lastMask = mask; applyToDirs = dirs;
+    if (!active->selectByMask(mask, sel, dirs)) appMessage(&window, sel ? "Select files" : "Unselect files", "The file mask is not valid.");
+  };
+
+  // Show only the files matching a mask in the active panel (empty mask = everything).
+  auto doFilter = [&] {
+    QString mask = active->filter();
+    if (!showFilterDialog(&window, mask)) return;
+    QString err;
+    if (!active->setFilter(mask, &err)) appMessage(&window, "Filter", "The file mask is not valid:\n" + err);
+    else window.statusBar()->showMessage(mask.isEmpty() ? "Filter removed" : "Filter: " + mask);
+  };
+
+  // Open Directory (Ctrl+O): type a path or pick a bookmark / recent directory.
+  auto doOpenDir = [&] {
+    QString chosen;
+    if (showOpenDirectoryDialog(&window, active->path(), active->recentDirs(), chosen)) active->navigate(chosen);
   };
 
   // Create a new empty file (Shift+F4) — WinSCP's "New > File".
@@ -1455,32 +927,158 @@ int main(int argc, char ** argv)
     window.statusBar()->showMessage(QString("Deleted %1/%2 item(s)").arg(ok).arg(sel.size()));
     if (ok < sel.size()) appMessage(&window, "Delete", "Some items could not be deleted:\n" + u8(lastErr));
   };
+  // Properties (F9) of the selected entries: permissions, and on servers that allow it owner and group.
   auto doProps = [&] {
-    if (busy()) return;
-    QStringList sel = active->selectedItems();
-    if (sel.size() != 1) { window.statusBar()->showMessage("Select exactly one item"); return; }
-    if (!active->isRemote()) { appMessage(&window, "Properties", "Properties (permissions) apply to remote files."); return; }
-    QString name = sel.first();
-    std::string cur = engine::remoteFileOctal(s8(name));
-    const engine::DirEntry * e = active->entryNamed(name);
-    QString info;
-    if (e) {
-      info = QString("Type: %1\nSize: %2\nOwner: %3\nModified: %4")
-        .arg(e->isDir ? "Directory" : "File")
-        .arg(e->isDir ? QString("—") : u8(engine::formatSize(e->size)))
-        .arg(e->owner.empty() ? QString("—") : u8(e->owner))
-        .arg(e->modified.empty() ? QString("—") : u8(e->modified));
+    if (active->isRemote() && busy()) return;
+    FilePanel * panel = active;
+    const QStringList sel = panel->selectedItems();
+    if (sel.isEmpty()) { window.statusBar()->showMessage("No files selected"); return; }
+    PropsRequest rq;
+    rq.names = sel; rq.location = panel->path(); rq.remote = panel->isRemote();
+    qint64 bytes = 0; bool sizeKnown = true;
+    for (const QString & n : sel)
+    {
+      const engine::DirEntry * x = panel->entryNamed(n);
+      if (x != nullptr && x->isDir) { rq.anyDirectory = true; if (!panel->hasDirSize(n)) sizeKnown = false; }
+      bytes += panel->sizeOf(n);
     }
-    bool recursive = false;
-    QString oct = showPropertiesDialog(&window, name, cur.empty() ? "644" : u8(cur),
-                                       info, e && e->isDir, &recursive);
-    if (oct.isEmpty()) return;
-    std::string err;
-    bool ok = engine::remoteChmod(s8(name), s8(oct), recursive, &err);
-    active->refresh();
-    window.statusBar()->showMessage(ok ? (recursive ? "Set " + oct + " recursively" : "Set " + oct)
-                                       : "chmod failed — " + u8(err));
+    if (sizeKnown) rq.sizeText = u8(engine::formatSize(bytes)) + (sel.size() > 1 ? QString(" in %1 items").arg(sel.size()) : QString());
+    else if (sel.size() > 1) rq.sizeText = QString("%1 items").arg(sel.size());
+    const engine::DirEntry * e = panel->entryNamed(sel.first());
+    if (e != nullptr && sel.size() == 1)
+    {
+      rq.linkTarget = u8(e->linkTarget);
+      rq.modified = formatPanelTime(e->mtimeSecs, e->mtimeHasSeconds);
+    }
+    if (panel->isRemote())
+    {
+      using C = engine::Capability;
+      rq.canChangeRights = engine::remoteCapable(C::ChangeMode);
+      rq.canChangeOwner = engine::remoteCapable(C::ChangeOwner);
+      rq.canChangeGroup = engine::remoteCapable(C::ChangeGroup);
+      if (e != nullptr)
+      {
+        rq.owner = u8(e->ownerName); rq.group = u8(e->groupName);
+        rq.rights = panellogic::octalFromRights(e->rights);
+        if (rq.rights < 0) { const std::string oct = engine::remoteFileOctal(e->name); if (!oct.empty()) rq.rights = QString(u8(oct)).toInt(nullptr, 8); }
+      }
+    }
+    else
+    {
+      LocalFileInfo li;
+      if (localFileInfo(panel->path() + "/" + sel.first(), li)) { rq.rights = li.mode; rq.owner = li.owner; rq.group = li.group; }
+      rq.canChangeRights = true;
+    }
+    const PropsResult r = showPropertiesDialog(&window, rq);
+    if (!r.accepted || !r.anything()) return;
+    int ok = 0; QString lastErr;
+    for (const QString & n : sel)
+    {
+      if (panel->isRemote())
+      {
+        engine::RemoteProps p;
+        p.setRights = r.rightsChanged; p.octal = s8(r.octal); p.addXToDirs = r.addXToDirs;
+        p.setOwner = r.ownerChanged; p.owner = s8(r.owner);
+        p.setGroup = r.groupChanged; p.group = s8(r.group);
+        p.recursive = r.recursive;
+        std::string err;
+        if (engine::remoteSetProperties(s8(n), p, &err)) ++ok; else lastErr = u8(err);
+      }
+      else
+      {
+        QString err;
+        if (!r.rightsChanged || localChmod(panel->path() + "/" + n, r.octal.toInt(nullptr, 8), &err)) ++ok; else lastErr = err;
+      }
+    }
+    panel->refresh();
+    panel->selectNames(sel);
+    window.statusBar()->showMessage(QString("Properties changed for %1 of %2 item(s)").arg(ok).arg(sel.size()));
+    if (ok < sel.size())
+      appMessage(&window, "Properties", QString("The properties of %1 of %2 item(s) could not be changed.\n\n%3").arg(sel.size() - ok).arg(sel.size()).arg(lastErr.trimmed()));
   };
+
+  // New > Link (Ctrl+Alt+F6): a symbolic (or hard) link in the active panel's directory.
+  auto createLink = [&](FilePanel * panel, const QString & name, const QString & target, bool symbolic) -> bool {
+    QString error;
+    bool ok;
+    if (panel->isRemote()) { std::string err; ok = engine::remoteCreateLink(s8(name), s8(target), symbolic, &err); error = u8(err); }
+    else ok = localCreateLink(panel->path() + "/" + name, target, symbolic, panel->path(), &error);
+    panel->refresh();
+    if (ok) { panel->selectNames(QStringList(name)); window.statusBar()->showMessage("Created link " + name); }
+    else
+    {
+      window.statusBar()->showMessage("Create link failed");
+      appMessage(&window, "Add Link", QString("Error creating link \"%1\".\n\n%2").arg(name, error.trimmed().isEmpty() ? QString("The operation failed.") : error.trimmed()));
+    }
+    return ok;
+  };
+  auto doNewLink = [&] {
+    if (active->isRemote() && busy()) return;
+    FilePanel * panel = active;
+    using C = engine::Capability;
+    const bool canSym = !panel->isRemote() || engine::remoteCapable(C::SymbolicLink);
+    const bool canHard = !panel->isRemote() || engine::remoteCapable(C::HardLink);
+    if (!canSym && !canHard) { appMessage(&window, "Add Link", "The server does not support links."); return; }
+    QString name, target; bool symbolic = canSym;
+    const QStringList sel = panel->selectedItems();
+    if (sel.size() == 1) target = sel.first();     // WinSCP: the link points to the selected file
+    if (!showLinkDialog(&window, name, target, symbolic, canSym, canHard)) return;
+    createLink(panel, name, target, symbolic);
+  };
+
+  // Duplicate (Shift+F5) / Move To (Shift+F6): copy or move within the same side - on the server for
+  // a remote panel (nothing is downloaded), on this machine for a local one.
+  auto copyOrMoveWithin = [&](FilePanel * panel, bool move, const QStringList & names, const QString & targetDir, const QString & newName) -> bool {
+    int ok = 0; QString lastErr;
+    const QString tdir = u8(panellogic::normalizePath(s8(targetDir)));
+    for (const QString & n : names)
+    {
+      const QString nn = (names.size() == 1 && !newName.isEmpty()) ? newName : n;
+      if (panel->isRemote())
+      {
+        std::string err;
+        const bool r = move ? engine::remoteMoveTo(s8(n), s8(tdir), s8(nn), &err) : engine::remoteDuplicate(s8(n), s8(tdir), s8(nn), &err);
+        if (r) ++ok; else lastErr = u8(err);
+      }
+      else
+      {
+        QString err;
+        if (localCopyOrMove(panel->path() + "/" + n, tdir + (tdir.endsWith('/') ? "" : "/") + nn, move, &err)) ++ok; else lastErr = err;
+      }
+    }
+    left->refresh(); right->refresh();
+    const QString verb = move ? "Moved" : "Duplicated";
+    window.statusBar()->showMessage(QString("%1 %2 of %3 item(s)").arg(verb).arg(ok).arg(names.size()));
+    if (ok < names.size())
+      appMessage(&window, move ? "Move" : "Duplicate",
+                 QString("%1 of %2 item(s) could not be %3.\n\n%4").arg(names.size() - ok).arg(names.size()).arg(move ? "moved" : "duplicated", lastErr.trimmed()));
+    return ok == names.size();
+  };
+  auto doCopyOrMoveWithin = [&](bool move) {
+    if (busy()) return;
+    FilePanel * panel = active;
+    const QStringList sel = panel->selectedItems();
+    if (sel.isEmpty()) { window.statusBar()->showMessage("No files selected"); return; }
+    if (panel->isRemote() && !engine::remoteCapable(move ? engine::Capability::RemoteMove : engine::Capability::RemoteCopy))
+    { appMessage(&window, move ? "Move" : "Duplicate", move ? "The server does not support moving files." : "The server does not support duplicating files."); return; }
+    QString targetDir = panel->path(), newName = sel.size() == 1 ? sel.first() : QString();
+    if (!showRemoteCopyDialog(&window, move, sel, targetDir, newName)) return;
+    copyOrMoveWithin(panel, move, sel, targetDir, newName);
+  };
+
+  // Server and Protocol Information (the session's protocol, encryption, capabilities, free space).
+  auto doSessionInfo = [&] {
+    if (!engine::remoteConnected()) { appMessage(&window, "Server and Protocol Information", "Connect a remote session first."); return; }
+    if (busy()) return;
+    FilePanel * rp = right->isRemote() ? right : left;
+    showSessionInfoDialog(&window, engine::sessionInformation(), rp->path(),
+      [&](const QString & path, engine::SpaceInfo & si, QString * error) -> bool {
+        std::string err; const bool ok = engine::remoteSpaceAvailable(s8(path), si, &err);
+        if (!ok && error) *error = u8(err);
+        return ok;
+      });
+  };
+
   auto doOpen = [&] {
     if (active->isRemote() && busy()) return;
     QStringList sel = active->selectedFiles();
@@ -1726,25 +1324,43 @@ int main(int argc, char ** argv)
   };
 
   // Right-click context menu on each panel (WinSCP-style).
+  std::function<void()> ctxOpen, ctxEdit, ctxMove, ctxNewFile;   // set below, once those operations exist
   auto installContextMenu = [&](FilePanel * panel) {
     panel->view()->setContextMenuPolicy(Qt::CustomContextMenu);
     QObject::connect(panel->view(), &QWidget::customContextMenuRequested, [&, panel](const QPoint & pos) {
       active = panel; panel->onActivated();
+      FilePanel * other = (panel == left) ? right : left;
+      const bool any = !panel->selectedItems().isEmpty();
       QMenu menu;
-      menu.addAction(active->isRemote() ? "Download (F5)" : "Upload / Copy (F5)", doCopy);
-      menu.addAction("Rename (F2)", doRename);
-      menu.addAction("Delete (F8)", doDelete);
+      auto add = [&](const QString & icon, const QString & text, const std::function<void()> & fn, bool enabled = true) {
+        QAction * a = menu.addAction(appIcon(icon), text, fn); a->setEnabled(enabled); return a;
+      };
+      add("open", "Open\tF3", ctxOpen, panel->selectedFiles().size() == 1);
+      add("edit", "Edit\tF4", ctxEdit, panel->selectedFiles().size() == 1);
       menu.addSeparator();
-      menu.addAction("Create Directory (F7)", doMkdir);
-      if (active->isRemote()) menu.addAction("Properties (F9)", doProps);
+      add(panel->isRemote() ? "download" : (other->isRemote() ? "upload" : "copy"),
+          panel->isRemote() ? "Download\xE2\x80\xA6\tF5" : (other->isRemote() ? "Upload\xE2\x80\xA6\tF5" : "Copy\xE2\x80\xA6\tF5"), doCopy, any);
+      add("duplicate", "Duplicate\xE2\x80\xA6\tShift+F5", [&]{ doCopyOrMoveWithin(false); }, any);
+      add("move", "Move To\xE2\x80\xA6\tShift+F6", [&]{ doCopyOrMoveWithin(true); }, any);
+      add("delete", "Delete\tF8", doDelete, any);
+      add("rename", "Rename\tF2", doRename, panel->selectedItems().size() == 1);
       menu.addSeparator();
-      menu.addAction("Compare Files", [&]{ doCompareFiles(); });
-      menu.addAction("Calculate Directory Sizes", doCalcSizes);
+      QMenu * mNew = menu.addMenu(appIcon("newfile"), "New");
+      mNew->addAction(appIcon("newfile"), "File\xE2\x80\xA6\tShift+F4", ctxNewFile);
+      mNew->addAction(appIcon("newdir"), "Directory\xE2\x80\xA6\tF7", doMkdir);
+      mNew->addAction(appIcon("link"), "Link\xE2\x80\xA6\tCtrl+Alt+F6", doNewLink);
+      menu.addSeparator();
+      add("copy", "Copy Path to Clipboard\tCtrl+Shift+C", doCopyPath, any);
+      add("compare", "Compare Files", [&]{ doCompareFiles(); }, panel->selectedFiles().size() == 1);
+      add("find", "Calculate Directory Sizes", doCalcSizes);
+      menu.addSeparator();
+      add("properties", "Properties\tF9", doProps, any);
       menu.exec(panel->view()->viewport()->mapToGlobal(pos));
     });
   };
   installContextMenu(left);
   installContextMenu(right);
+  ctxOpen = doOpen; ctxEdit = doEdit; ctxMove = doMove; ctxNewFile = doNewFile;
 
   // About dialog: icon on top, GPLv3, repo link, credit to WinSCP.
   // "What is this and who pays for it" - shown once on first launch and from Help > Support FreeSCP.
@@ -1817,178 +1433,270 @@ int main(int argc, char ** argv)
     d.exec();
   };
 
+  // The Options > "Show hidden files" toggle (also in Preferences).
+  auto * actHidden = new QAction("Show &hidden files", &window); actHidden->setCheckable(true); actHidden->setChecked(gShowHidden);
+  actHidden->setShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_H));
+  QObject::connect(actHidden, &QAction::toggled, [&](bool on){ gShowHidden = on; left->refresh(); right->refresh();
+    QSettings().setValue("prefs/showHidden", on); });
+
+  auto showPreferences = [&]{
+    QDialog d(&window); d.setWindowTitle("Preferences"); d.resize(520, 360);
+    auto * outer = new QVBoxLayout(&d);
+    auto * tabs = new QTabWidget; outer->addWidget(tabs, 1);
+
+    // --- Environment ---
+    auto * envTab = new QWidget; auto * envLay = new QVBoxLayout(envTab);
+    auto * cbHidden = new QCheckBox("Show hidden files"); cbHidden->setChecked(gShowHidden);
+    auto * cbDel = new QCheckBox("Confirm file deletion"); cbDel->setChecked(gConfirmDelete);
+    auto * cbOvr = new QCheckBox("Confirm overwrites"); cbOvr->setChecked(gConfirmOverwrite);
+    auto * cbUpd = new QCheckBox("Check for new &versions at startup"); cbUpd->setChecked(updates::enabled());
+    auto * updHint = new QLabel("Asks GitHub for the latest version number, at most once a day. Nothing about you "
+                                "or this computer is sent, and nothing is downloaded.");
+    updHint->setWordWrap(true); updHint->setStyleSheet("color: gray; margin-left: 22px;");
+    envLay->addWidget(cbHidden); envLay->addWidget(cbDel); envLay->addWidget(cbOvr);
+    envLay->addSpacing(10); envLay->addWidget(cbUpd); envLay->addWidget(updHint); envLay->addStretch(1);
+    tabs->addTab(envTab, "Environment");
+
+    // --- Transfer ---
+    auto * trTab = new QWidget; auto * trForm = new QFormLayout(trTab);
+    auto * spinPar = new QSpinBox; spinPar->setRange(1, 4); spinPar->setValue(gParallelMax);
+    trForm->addRow("Maximum parallel transfers:", spinPar);
+    auto * xferSummary = new QLabel(transferSummary(engine::transferSettings())); xferSummary->setWordWrap(true);
+    auto * xferEdit = new QPushButton("Transfer settings\xE2\x80\xA6");
+    trForm->addRow("Transfer settings:", xferSummary);
+    trForm->addRow("", xferEdit);
+    QObject::connect(xferEdit, &QPushButton::clicked, &d, [&, xferSummary] {
+      if (editTransferSettings(&d)) xferSummary->setText(transferSummary(engine::transferSettings()));
+    });
+    tabs->addTab(trTab, "Transfer");
+
+    // --- Panels ---
+    auto * pnTab = new QWidget; auto * pnLay = new QVBoxLayout(pnTab);
+    auto * cbAlt = new QCheckBox("Alternating row colors"); cbAlt->setChecked(gAltColors);
+    auto * cmpBox = new QGroupBox("Compare directories");
+    auto * cmpLay = new QVBoxLayout(cmpBox);
+    auto * cbCmpTime = new QCheckBox("Compare by &time (mark the newer file)"); cbCmpTime->setChecked(gCompareByTime);
+    auto * cbCmpSize = new QCheckBox("Compare by &size (mark files whose sizes differ)"); cbCmpSize->setChecked(gCompareBySize);
+    auto * cmpHint = new QLabel("Files that exist in one panel only are always marked.");
+    cmpHint->setStyleSheet("color: gray;");
+    cmpLay->addWidget(cbCmpTime); cmpLay->addWidget(cbCmpSize); cmpLay->addWidget(cmpHint);
+    pnLay->addWidget(cbAlt); pnLay->addWidget(cmpBox); pnLay->addStretch(1);
+    tabs->addTab(pnTab, "Panels");
+
+    auto * bb = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
+    outer->addWidget(bb);
+    QObject::connect(bb, &QDialogButtonBox::accepted, &d, &QDialog::accept);
+    QObject::connect(bb, &QDialogButtonBox::rejected, &d, &QDialog::reject);
+    if (execDialog(d, "preferences") != QDialog::Accepted) return;
+    gShowHidden = cbHidden->isChecked(); gConfirmDelete = cbDel->isChecked();
+    gConfirmOverwrite = cbOvr->isChecked(); gParallelMax = spinPar->value(); gAltColors = cbAlt->isChecked();
+    gCompareByTime = cbCmpTime->isChecked(); gCompareBySize = cbCmpSize->isChecked();
+    updates::setEnabled(cbUpd->isChecked());
+    actHidden->setChecked(gShowHidden);
+    QSettings s;
+    s.setValue("prefs/showHidden", gShowHidden); s.setValue("prefs/confirmDelete", gConfirmDelete);
+    s.setValue("prefs/confirmOverwrite", gConfirmOverwrite); s.setValue("prefs/parallelMax", gParallelMax);
+    s.setValue("prefs/altColors", gAltColors);
+    s.setValue("prefs/compareByTime", gCompareByTime); s.setValue("prefs/compareBySize", gCompareBySize);
+    left->view()->setAlternatingRowColors(gAltColors); right->view()->setAlternatingRowColors(gAltColors);
+    left->refresh(); right->refresh();
+  };
+
+  auto addBookmark = [&]{
+    QStringList bm = bookmarkList();
+    const QString p = active->path();
+    if (!bm.contains(p)) { bm << p; setBookmarkList(bm); }
+    window.statusBar()->showMessage("Bookmarked " + p);
+  };
+  // The session-independent part of the toolbar's Transfer Settings caption.
+  auto showXferCaption = [&] {
+    const bool def = transferSummary(engine::transferSettings()) == transferSummary(engine::TransferSettings());
+    tbXfer->setText(def ? "Transfer Settings: Default" : "Transfer Settings: Custom");
+    tbXfer->setToolTip("Transfer settings: " + transferSummary(engine::transferSettings()));
+  };
+  showXferCaption();
+
   QAction * actPrefs = nullptr;
-  // Menu bar (WinSCP layout; actions wired to the same ops as the toolbar/F-keys).
+  // Menu bar in WinSCP's Commander order: Local, Mark, Files, Commands, Tabs, Options, Remote, Help.
+  // "Local" acts on the left panel and "Remote" on the right one, as in WinSCP.
   {
-    auto * mLocal = window.menuBar()->addMenu("&Local");
-    mLocal->addAction("&Refresh", [&]{ left->refresh(); });
-    mLocal->addAction("&Home", [&]{ left->navigate(u8(engine::homeDir())); });
-    auto * mFiles = window.menuBar()->addMenu("&Files");
-    mFiles->addAction("&Copy / Upload\tF5", doCopy);
-    mFiles->addAction("&Rename\tF2", doRename);
-    mFiles->addAction("&Delete\tF8", doDelete);
-    mFiles->addAction("&Properties\tF9", doProps);
-    mFiles->addSeparator();
-    mFiles->addAction("Create &Directory\tF7", doMkdir);
-    mFiles->addAction("Create &File\tShift+F4", doNewFile);
-    mFiles->addSeparator();
-    mFiles->addAction("&Select files\xE2\x80\xA6\tCtrl++", [&]{ doSelectMask(true); });
-    mFiles->addAction("&Unselect files\xE2\x80\xA6\tCtrl+-", [&]{ doSelectMask(false); });
-    mFiles->addAction("Copy &path to clipboard\tCtrl+Shift+C", doCopyPath);
-    mFiles->addSeparator();
-    mFiles->addAction("Co&mpare Files\tCtrl+Shift+D", [&]{ doCompareFiles(); });
-    mFiles->addAction("Calculate Directory Si&zes\tShift+Alt+Enter", doCalcSizes);
-    auto * mSession = window.menuBar()->addMenu("&Session");
-    mSession->addAction("&Login\xE2\x80\xA6", doConnect);
-    mSession->addAction("&Disconnect", doDisconnect);
-    mSession->addSeparator();
-    mSession->addAction("E&xit\tF10", doQuit);
-    auto * mOptions = window.menuBar()->addMenu("&Options");
-    mOptions->addAction("Session &log\tCtrl+L", [&]{ logDock->setVisible(!logDock->isVisible()); });
-    mOptions->addAction("Open &diagnostics log file", [&]{
-      QString p = u8(engine::logPath());
-      window.statusBar()->showMessage("Diagnostics log: " + p);
-      QProcess::startDetached("open", { "-R", p });   // reveal in Finder (macOS)
-    });
-    mOptions->addAction("Transfer &queue\tCtrl+Q", [&]{ queueDock->setVisible(!queueDock->isVisible()); });
-    auto * actHidden = mOptions->addAction("Show &hidden files"); actHidden->setCheckable(true); actHidden->setChecked(gShowHidden);
-    actHidden->setShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_H));
-    QObject::connect(actHidden, &QAction::toggled, [&](bool on){ gShowHidden = on; left->refresh(); right->refresh();
-      QSettings().setValue("prefs/showHidden", on); });
-    mOptions->addAction("&Transfer settings\xE2\x80\xA6", [&]{ editTransferSettings(&window); });
-    mOptions->addSeparator();
-    actPrefs = mOptions->addAction("&Preferences\xE2\x80\xA6", [&]{
-      QDialog d(&window); d.setWindowTitle("Preferences"); d.resize(520, 360);
-      auto * outer = new QVBoxLayout(&d);
-      auto * tabs = new QTabWidget; outer->addWidget(tabs, 1);
-
-      // --- Environment ---
-      auto * envTab = new QWidget; auto * envLay = new QVBoxLayout(envTab);
-      auto * cbHidden = new QCheckBox("Show hidden files"); cbHidden->setChecked(gShowHidden);
-      auto * cbDel = new QCheckBox("Confirm file deletion"); cbDel->setChecked(gConfirmDelete);
-      auto * cbOvr = new QCheckBox("Confirm overwrites"); cbOvr->setChecked(gConfirmOverwrite);
-      auto * cbUpd = new QCheckBox("Check for new &versions at startup"); cbUpd->setChecked(updates::enabled());
-      auto * updHint = new QLabel("Asks GitHub for the latest version number, at most once a day. Nothing about you "
-                                  "or this computer is sent, and nothing is downloaded.");
-      updHint->setWordWrap(true); updHint->setStyleSheet("color: gray; margin-left: 22px;");
-      envLay->addWidget(cbHidden); envLay->addWidget(cbDel); envLay->addWidget(cbOvr);
-      envLay->addSpacing(10); envLay->addWidget(cbUpd); envLay->addWidget(updHint); envLay->addStretch(1);
-      tabs->addTab(envTab, "Environment");
-
-      // --- Transfer ---
-      auto * trTab = new QWidget; auto * trForm = new QFormLayout(trTab);
-      auto * spinPar = new QSpinBox; spinPar->setRange(1, 4); spinPar->setValue(gParallelMax);
-      trForm->addRow("Maximum parallel transfers:", spinPar);
-      auto * xferSummary = new QLabel(transferSummary(engine::transferSettings())); xferSummary->setWordWrap(true);
-      auto * xferEdit = new QPushButton("Transfer settings\xE2\x80\xA6");
-      trForm->addRow("Transfer settings:", xferSummary);
-      trForm->addRow("", xferEdit);
-      QObject::connect(xferEdit, &QPushButton::clicked, &d, [&, xferSummary] {
-        if (editTransferSettings(&d)) xferSummary->setText(transferSummary(engine::transferSettings()));
+    auto * mb = window.menuBar();
+    auto sideMenu = [&](const QString & title, FilePanel * pn) {
+      auto * m = mb->addMenu(title);
+      auto on = [&, pn](const std::function<void()> & f) -> std::function<void()> { return [&, pn, f]{ pn->onActivated(); f(); }; };
+      auto * go = m->addMenu("&Go To");
+      go->addAction(appIcon("opendir"), "&Open Directory/Bookmark\xE2\x80\xA6\tCtrl+O", on(doOpenDir));
+      go->addSeparator();
+      go->addAction(appIcon("parent"), "&Parent Directory\tBackspace", on([&]{ active->goUp(); }));
+      go->addAction(appIcon("root"), "&Root Directory\tCtrl+\\", on([&]{ active->navigate("/"); }));
+      go->addAction(appIcon("home"), "&Home Directory\tCtrl+H", on([&]{ if (active->onHome) active->onHome(); }));
+      go->addSeparator();
+      go->addAction(appIcon("back"), "&Back\tAlt+Left", on([&]{ active->goBack(); }));
+      go->addAction(appIcon("forward"), "&Forward\tAlt+Right", on([&]{ active->goForward(); }));
+      m->addAction(appIcon("refresh"), "&Refresh\tCtrl+R", on([&]{ active->refresh(); }));
+      m->addSeparator();
+      m->addAction(appIcon("bookmark"), "&Add Path to Bookmarks\tCtrl+B", on(addBookmark));
+      auto * bm = m->addMenu("&Bookmarks");
+      QObject::connect(bm, &QMenu::aboutToShow, [&, bm, pn]{
+        bm->clear();
+        const QStringList list = bookmarkList();
+        for (const QString & p : list) bm->addAction(appIcon("bookmark"), p, [&, pn, p]{ pn->onActivated(); pn->navigate(p); });
+        if (list.isEmpty()) bm->addAction("(no bookmarks)")->setEnabled(false);
+        else
+        {
+          bm->addSeparator();
+          bm->addAction("&Remove current directory", [&, pn]{ QStringList b = bookmarkList(); b.removeAll(pn->path()); setBookmarkList(b); });
+        }
       });
-      tabs->addTab(trTab, "Transfer");
-
-      // --- Panels ---
-      auto * pnTab = new QWidget; auto * pnLay = new QVBoxLayout(pnTab);
-      auto * cbAlt = new QCheckBox("Alternating row colors"); cbAlt->setChecked(gAltColors);
-      auto * cmpBox = new QGroupBox("Compare directories");
-      auto * cmpLay = new QVBoxLayout(cmpBox);
-      auto * cbCmpTime = new QCheckBox("Compare by &time (mark the newer file)"); cbCmpTime->setChecked(gCompareByTime);
-      auto * cbCmpSize = new QCheckBox("Compare by &size (mark files whose sizes differ)"); cbCmpSize->setChecked(gCompareBySize);
-      auto * cmpHint = new QLabel("Files that exist in one panel only are always marked.");
-      cmpHint->setStyleSheet("color: gray;");
-      cmpLay->addWidget(cbCmpTime); cmpLay->addWidget(cbCmpSize); cmpLay->addWidget(cmpHint);
-      pnLay->addWidget(cbAlt); pnLay->addWidget(cmpBox); pnLay->addStretch(1);
-      tabs->addTab(pnTab, "Panels");
-
-      auto * bb = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
-      outer->addWidget(bb);
-      QObject::connect(bb, &QDialogButtonBox::accepted, &d, &QDialog::accept);
-      QObject::connect(bb, &QDialogButtonBox::rejected, &d, &QDialog::reject);
-      if (execDialog(d, "preferences") != QDialog::Accepted) return;
-      gShowHidden = cbHidden->isChecked(); gConfirmDelete = cbDel->isChecked();
-      gConfirmOverwrite = cbOvr->isChecked(); gParallelMax = spinPar->value(); gAltColors = cbAlt->isChecked();
-      gCompareByTime = cbCmpTime->isChecked(); gCompareBySize = cbCmpSize->isChecked();
-      updates::setEnabled(cbUpd->isChecked());
-      actHidden->setChecked(gShowHidden);
-      QSettings s;
-      s.setValue("prefs/showHidden", gShowHidden); s.setValue("prefs/confirmDelete", gConfirmDelete);
-      s.setValue("prefs/confirmOverwrite", gConfirmOverwrite); s.setValue("prefs/parallelMax", gParallelMax);
-      s.setValue("prefs/altColors", gAltColors);
-      s.setValue("prefs/compareByTime", gCompareByTime); s.setValue("prefs/compareBySize", gCompareBySize);
-      left->view()->setAlternatingRowColors(gAltColors); right->view()->setAlternatingRowColors(gAltColors);
-      left->refresh(); right->refresh();
-    });
-    auto * mCommands = window.menuBar()->addMenu("&Commands");
-    mCommands->addAction("Open &Terminal\tCtrl+T", doOpenTerminal);
-    mCommands->addAction("&Synchronize\xE2\x80\xA6\tCtrl+S", doSync);
-    mCommands->addAction("&Compare Directories\tShift+F2", doCompareDirs);
-    mCommands->addAction("&Find Files\xE2\x80\xA6\tCtrl+Alt+F", [&]{ doFind(QString()); });
-    { auto * a = new QAction(&window); a->setShortcut(Qt::CTRL | Qt::Key_S);
-      QObject::connect(a, &QAction::triggered, doSync); window.addAction(a); }
-    auto * mRemote = window.menuBar()->addMenu("&Remote");
-    mRemote->addAction("&Refresh", [&]{ if (right->isRemote()) right->refresh(); });
-
-    // Bookmarks: persisted directory shortcuts; the menu is rebuilt each time it opens.
-    auto * mBookmarks = window.menuBar()->addMenu("&Bookmarks");
-    auto addBookmark = [&]{
-      QSettings st; QStringList bm = st.value("bookmarks").toStringList();
-      QString p = active->path();
-      if (!bm.contains(p)) { bm << p; st.setValue("bookmarks", bm); st.sync(); }
-      window.statusBar()->showMessage("Bookmarked " + p);
+      m->addSeparator();
+      m->addAction(appIcon("filter"), "&Filter\xE2\x80\xA6\tCtrl+Alt+I", on(doFilter));
+      auto * sort = m->addMenu("&Sort");
+      QObject::connect(sort, &QMenu::aboutToShow, [sort, pn]{
+        sort->clear();
+        const QStringList cols = pn->dumpColumns().value(0).split(" | ");
+        for (int i = 0; i < cols.size(); ++i) sort->addAction("By " + cols[i], [pn, i]{ pn->sortByColumn(i); });
+      });
+      auto * tree = m->addAction(appIcon("tree"), "&Tree");
+      tree->setCheckable(true);
+      QObject::connect(tree, &QAction::triggered, [pn](bool v){ pn->setTreeVisible(v); });
+      QObject::connect(m, &QMenu::aboutToShow, [tree, pn]{ tree->setChecked(pn->treeVisible()); });
     };
-    QObject::connect(mBookmarks, &QMenu::aboutToShow, [&, mBookmarks]{
-      mBookmarks->clear();
-      mBookmarks->addAction("&Add current directory\tCtrl+B", addBookmark);
-      QStringList bm = QSettings().value("bookmarks").toStringList();
-      if (!bm.isEmpty()) {
-        mBookmarks->addSeparator();
-        for (const QString & p : bm) { auto * a = mBookmarks->addAction(p); QObject::connect(a, &QAction::triggered, [&, p]{ active->navigate(p); }); }
-        mBookmarks->addSeparator();
-        mBookmarks->addAction("&Remove current directory", [&]{
-          QSettings st; QStringList b = st.value("bookmarks").toStringList();
-          b.removeAll(active->path()); st.setValue("bookmarks", b); st.sync();
-        });
-      }
+
+    sideMenu("&Local", left);
+
+    auto * mMark = mb->addMenu("&Mark");
+    mMark->addAction(appIcon("select"), "&Select Files\xE2\x80\xA6\tCtrl++", [&]{ doSelectMask(true); });
+    mMark->addAction(appIcon("unselect"), "&Unselect Files\xE2\x80\xA6\tCtrl+-", [&]{ doSelectMask(false); });
+    mMark->addAction(appIcon("selectall"), "Select &All\tCtrl+A", [&]{ active->selectAll(); });
+    mMark->addAction("&Invert Selection\tCtrl+*", [&]{ active->invertSelection(); });
+    mMark->addAction("&Clear Selection", [&]{ active->clearSelection(); });
+
+    auto * mFiles = mb->addMenu("&Files");
+    auto * mNew = mFiles->addMenu(appIcon("newfile"), "&New");
+    mNew->addAction(appIcon("newfile"), "&File\xE2\x80\xA6\tShift+F4", doNewFile);
+    mNew->addAction(appIcon("newdir"), "&Directory\xE2\x80\xA6\tF7", doMkdir);
+    mNew->addAction(appIcon("link"), "&Link\xE2\x80\xA6\tCtrl+Alt+F6", doNewLink);
+    mFiles->addSeparator();
+    mFiles->addAction(appIcon("open"), "&Open\tF3", doOpen);
+    mFiles->addAction(appIcon("edit"), "&Edit\tF4", doEdit);
+    mFiles->addSeparator();
+    mFiles->addAction(appIcon("copy"), "&Copy (Upload / Download)\xE2\x80\xA6\tF5", doCopy);
+    mFiles->addAction(appIcon("duplicate"), "D&uplicate\xE2\x80\xA6\tShift+F5", [&]{ doCopyOrMoveWithin(false); });
+    mFiles->addAction(appIcon("move"), "&Move\xE2\x80\xA6\tF6", doMove);
+    mFiles->addAction(appIcon("move"), "Move &To\xE2\x80\xA6\tShift+F6", [&]{ doCopyOrMoveWithin(true); });
+    mFiles->addAction(appIcon("delete"), "&Delete\tF8", doDelete);
+    mFiles->addAction(appIcon("rename"), "&Rename\tF2", doRename);
+    mFiles->addAction(appIcon("properties"), "&Properties\tF9", doProps);
+    mFiles->addSeparator();
+    mFiles->addAction("Copy Pat&h to Clipboard\tCtrl+Shift+C", doCopyPath);
+    mFiles->addAction(appIcon("compare"), "Compare F&iles\tCtrl+Shift+D", [&]{ doCompareFiles(); });
+    mFiles->addAction("Calculate Directory Si&zes\tShift+Alt+Enter", doCalcSizes);
+
+    auto * mCommands = mb->addMenu("&Commands");
+    mCommands->addAction(appIcon("compare"), "&Compare Directories\tShift+F2", doCompareDirs);
+    mCommands->addAction(appIcon("sync"), "&Synchronize\xE2\x80\xA6\tCtrl+S", doSync);
+    actSync->setText("Synchronize &Browsing"); actSync->setIconText("Sync browsing");
+    mCommands->addAction(actSync);
+    mCommands->addAction(appIcon("find"), "&Find Files\xE2\x80\xA6\tCtrl+Alt+F", [&]{ doFind(QString()); });
+    mCommands->addSeparator();
+    mCommands->addAction(appIcon("terminal"), "Open &Terminal\tCtrl+T", doOpenTerminal);
+
+    auto * mTabs = mb->addMenu("&Tabs");
+    mTabs->addAction(appIcon("newtab"), "&New Tab\xE2\x80\xA6\tCtrl+N", doConnect);
+    mTabs->addAction(appIcon("disconnect"), "&Close Tab (Disconnect)\tCtrl+Shift+W", doDisconnect);
+    auto * mSites = mTabs->addMenu(appIcon("login"), "&Sites");
+    QObject::connect(mSites, &QMenu::aboutToShow, [&, mSites]{
+      mSites->clear();
+      const QStringList names = savedSiteNames();
+      for (const QString & n : names)
+        mSites->addAction(appIcon("login"), n, [&, n]{ if (busy()) return; engine::ConnectOptions o; if (loadSite(n, o)) connectWith(o); });
+      if (names.isEmpty()) mSites->addAction("(no saved sites)")->setEnabled(false);
+      mSites->addSeparator();
+      mSites->addAction("Site &Manager\xE2\x80\xA6", doConnect);
     });
-    { auto * a = new QAction(&window); a->setShortcut(Qt::CTRL | Qt::Key_B);
-      QObject::connect(a, &QAction::triggered, addBookmark); window.addAction(a); }
-    auto * mHelp = window.menuBar()->addMenu("&Help");
+    mTabs->addSeparator();
+    mTabs->addAction(appIcon("info"), "Server/Protocol &Information\tCtrl+I", doSessionInfo);
+    mTabs->addSeparator();
+    mTabs->addAction(appIcon("quit"), "&Quit\tF10", doQuit);
+
+    auto * mOptions = mb->addMenu("&Options");
+    mOptions->addAction(actHidden);
+    actTree->setText("Directory &Tree in Both Panels\tCtrl+Alt+T");
+    mOptions->addAction(actTree);
+    mOptions->addSeparator();
+    mOptions->addAction(appIcon("queue"), "Transfer &Queue\tCtrl+Q", [&]{ queueDock->setVisible(!queueDock->isVisible()); });
+    mOptions->addAction(appIcon("log"), "Session &Log\tCtrl+L", [&]{ logDock->setVisible(!logDock->isVisible()); });
+    mOptions->addAction("Open &Diagnostics Log File", [&]{
+      const QString p = u8(engine::logPath());
+      window.statusBar()->showMessage("Diagnostics log: " + p);
+#ifdef Q_OS_MACOS
+      QProcess::startDetached("open", { "-R", p });   // reveal in Finder
+#else
+      QDesktopServices::openUrl(QUrl::fromLocalFile(QFileInfo(p).absolutePath()));
+#endif
+    });
+    mOptions->addSeparator();
+    mOptions->addAction(appIcon("transfer"), "&Transfer Settings\xE2\x80\xA6", [&]{ editTransferSettings(&window); showXferCaption(); });
+    actPrefs = mOptions->addAction(appIcon("settings"), "&Preferences\xE2\x80\xA6", showPreferences);
+
+    sideMenu("&Remote", right);
+
+    auto * mHelp = mb->addMenu("&Help");
     mHelp->addAction("&Support FreeSCP (free, open source, no telemetry)\xE2\x80\xA6", [&]{ showWelcome(false); });
     mHelp->addAction("Check for &Updates\xE2\x80\xA6", [&]{ updates::check(&window, true); });
     mHelp->addAction("&About FreeSCP", showAbout);
   }
 
+  // The panels' own toolbar buttons.
+  auto panelCommand = [&](const QString & c) {
+    if (c == "transfer") doCopy();
+    else if (c == "edit") doEdit();
+    else if (c == "delete") doDelete();
+    else if (c == "props") doProps();
+    else if (c == "newfile") doNewFile();
+    else if (c == "newdir") doMkdir();
+    else if (c == "newlink") doNewLink();
+    else if (c == "selectmask") doSelectMask(true);
+    else if (c == "unselectmask") doSelectMask(false);
+    else if (c == "find") doFind(QString());
+    else if (c == "filter") doFilter();
+    else if (c == "opendir") doOpenDir();
+  };
+  left->onCommand = panelCommand; right->onCommand = panelCommand;
+
   //--- function-key bar buttons ------------------------------------------
-  auto addFKey = [&](const QString & text, const std::function<void()> & fn) {
-    auto * b = new QPushButton(text);
+  auto addFKey = [&](const QString & icon, const QString & text, const std::function<void()> & fn) {
+    auto * b = new QToolButton;                      // flat, like WinSCP's bottom toolbar
+    b->setText(text); b->setIcon(appIcon(icon)); b->setIconSize(QSize(16, 16));
+    b->setToolButtonStyle(Qt::ToolButtonTextBesideIcon); b->setAutoRaise(true);
+    b->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
     b->setFocusPolicy(Qt::NoFocus);
-    QObject::connect(b, &QPushButton::clicked, fn);
+    QObject::connect(b, &QToolButton::clicked, fn);
     fkLay->addWidget(b, 1);
     return b;
   };
-  addFKey("F2 Rename", doRename);
-  addFKey("F4 Edit", doEdit);
-  addFKey("F5 Copy", doCopy);
-  addFKey("F6 Move", doMove);
-  addFKey("F7 Create Directory", doMkdir);
-  addFKey("F8 Delete", doDelete);
-  addFKey("F9 Properties", doProps);
-  addFKey("F10 Quit", doQuit);
+  addFKey("rename", "F2 Rename", doRename);
+  addFKey("edit", "F4 Edit", doEdit);
+  addFKey("copy", "F5 Copy", doCopy);
+  addFKey("move", "F6 Move", doMove);
+  addFKey("newdir", "F7 Create Directory", doMkdir);
+  addFKey("delete", "F8 Delete", doDelete);
+  addFKey("properties", "F9 Properties", doProps);
+  addFKey("quit", "F10 Quit", doQuit);
 
   //--- toolbar / shortcuts ------------------------------------------------
   QObject::connect(actConnect, &QAction::triggered, doConnect);
   QObject::connect(newTabBtn, &QToolButton::clicked, doConnect);   // "+" tab = open another session
-  QObject::connect(tbNewDir, &QAction::triggered, doMkdir);
-  QObject::connect(tbDelete, &QAction::triggered, doDelete);
-  QObject::connect(tbProps,  &QAction::triggered, doProps);
+  QObject::connect(tbSyncDirs, &QAction::triggered, doSync);
+  QObject::connect(tbCompare, &QAction::triggered, doCompareDirs);
+  QObject::connect(tbTerminal, &QAction::triggered, doOpenTerminal);
+  QObject::connect(tbXfer, &QAction::triggered, [&]{ editTransferSettings(&window); showXferCaption(); });
+  QObject::connect(tbPrefs, &QAction::triggered, showPreferences);
   QObject::connect(tbQueue, &QAction::toggled, [&](bool v){ queueDock->setVisible(v); });
   QObject::connect(tbLog,   &QAction::toggled, [&](bool v){ logDock->setVisible(v); });
   QObject::connect(queueDock, &QDockWidget::visibilityChanged, [tbQueue](bool v){ tbQueue->setChecked(v); });
   QObject::connect(logDock,   &QDockWidget::visibilityChanged, [tbLog](bool v){ tbLog->setChecked(v); });
   QObject::connect(actDisconnect, &QAction::triggered, doDisconnect);
-  QObject::connect(actHome, &QAction::triggered, [&] { if (!active->isRemote()) active->navigate(u8(engine::homeDir())); });
-  QObject::connect(actRefresh, &QAction::triggered, [&] { active->refresh(); });
 
   auto shortcut = [&](QKeySequence k, const std::function<void()> & fn) {
     auto * a = new QAction(&window); a->setShortcut(k);
@@ -2033,6 +1741,19 @@ int main(int argc, char ** argv)
   shortcut(Qt::CTRL | Qt::SHIFT | Qt::Key_D, [&]{ doCompareFiles(); });       // compare files (diff)
   shortcut(Qt::SHIFT | Qt::ALT | Qt::Key_Return, doCalcSizes);               // calculate directory sizes
   shortcut(Qt::SHIFT | Qt::ALT | Qt::Key_Enter, doCalcSizes);
+  shortcut(Qt::CTRL | Qt::Key_S, doSync);                                    // synchronize
+  shortcut(Qt::CTRL | Qt::Key_B, addBookmark);                               // bookmark the current directory
+  shortcut(Qt::CTRL | Qt::Key_O, doOpenDir);                                 // open directory / bookmark
+  shortcut(Qt::SHIFT | Qt::Key_F5, [&]{ doCopyOrMoveWithin(false); });       // duplicate
+  shortcut(Qt::SHIFT | Qt::Key_F6, [&]{ doCopyOrMoveWithin(true); });        // move to
+  shortcut(Qt::CTRL | Qt::ALT | Qt::Key_F6, doNewLink);                      // new link
+  shortcut(Qt::CTRL | Qt::Key_Backslash, [&]{ active->navigate("/"); });     // root directory
+  shortcut(Qt::CTRL | Qt::Key_H, [&]{ if (active->onHome) active->onHome(); });   // home directory
+  shortcut(Qt::CTRL | Qt::ALT | Qt::Key_I, doFilter);                        // filter
+  shortcut(Qt::CTRL | Qt::Key_Asterisk, [&]{ active->invertSelection(); });  // invert selection
+  shortcut(Qt::CTRL | Qt::Key_I, doSessionInfo);                             // server/protocol information
+  shortcut(Qt::CTRL | Qt::SHIFT | Qt::Key_W, doDisconnect);                  // close tab
+  shortcut(Qt::CTRL | Qt::ALT | Qt::Key_T, [&]{ actTree->toggle(); });       // directory tree
 
   left->setActive(true);
   left->navigate(u8(engine::homeDir()));
@@ -2046,7 +1767,8 @@ int main(int argc, char ** argv)
     s.setValue("win/splitter", splitter->saveState());
   });
 
-  window.statusBar()->showMessage(QString::fromUtf8(engine::banner().c_str()));
+  engine::logLine("[ui] " + engine::banner());
+  window.statusBar()->showMessage("Ready");
   window.show();
 
   // Dev affordances (scripted runs).
@@ -2179,6 +1901,96 @@ int main(int argc, char ** argv)
     engine::ConnectOptions o; optionsFromEnv(o);
     LoginParams lp = showLoginDialog(&window, &o);
     if (lp.ok) connectWith(lp.o);
+  };
+  // --- panels: layout, status, filter, selection ---
+  auto side = [&](const QString & n) -> FilePanel * { return n == "right" ? right : left; };
+  uiCmd["columns"] = [&](const QStringList & a) {     // columns|left : captions + every cell as shown
+    fprintf(stdout, "[columns %s]\n", a.value(0).toUtf8().constData());
+    for (const QString & line : side(a.value(0))->dumpColumns()) fprintf(stdout, "  %s\n", line.toUtf8().constData());
+    fflush(stdout);
+  };
+  uiCmd["status"] = [&](const QStringList & a) {      // status|left : the panel's status line
+    FilePanel * pn = side(a.value(0));
+    fprintf(stdout, "[status %s] %s || %s\n", a.value(0).toUtf8().constData(), pn->statusText().toUtf8().constData(), pn->statusRightText().toUtf8().constData());
+    fflush(stdout);
+  };
+  uiCmd["mainstatus"] = [&](const QStringList &) {    // the main status bar's session part
+    fprintf(stdout, "[mainstatus] protocol='%s' encrypted=%d time='%s'\n", sbProto->text().toUtf8().constData(), sessEncrypted ? 1 : 0, sbTime->text().toUtf8().constData());
+    fflush(stdout);
+  };
+  uiCmd["filter"] = [&](const QStringList & a) {      // filter|left|*.txt  (no mask = remove; "dialog" = through the dialog)
+    FilePanel * pn = side(a.value(0)); pn->onActivated();
+    if (a.value(1) == "dialog") { doFilter(); return; }
+    QString err;
+    if (!pn->setFilter(QString(a.value(1)).replace('^', '|'), &err)) { fprintf(stdout, "[filter] invalid: %s\n", err.toUtf8().constData()); fflush(stdout); }
+  };
+  uiCmd["hidden"] = [&](const QStringList & a) { actHidden->setChecked(a.value(0) != "0"); };   // hidden|0  /  hidden|1
+  uiCmd["selectall"] = [&](const QStringList & a) { side(a.value(0))->selectAll(); };
+  uiCmd["invert"] = [&](const QStringList & a) { side(a.value(0))->invertSelection(); };
+  uiCmd["clearsel"] = [&](const QStringList & a) { side(a.value(0))->clearSelection(); };
+  uiCmd["selectmask"] = [&](const QStringList & a) {  // selectmask|left|*.txt|dirs   (mask semantics of the Select dialog)
+    FilePanel * pn = side(a.value(0));
+    const bool ok = pn->selectByMask(QString(a.value(1)).replace('^', '|'), true, a.value(2) == "dirs");
+    if (!ok) { fprintf(stdout, "[selectmask] invalid mask\n"); fflush(stdout); }
+  };
+  uiCmd["selectdialog"] = [&](const QStringList & a) { side(a.value(0))->onActivated(); doSelectMask(a.value(1) != "unselect"); };
+  uiCmd["sort"] = [&](const QStringList & a) { side(a.value(0))->sortByColumn(a.value(1).toInt()); };   // sort|left|<column index>
+  uiCmd["recent"] = [&](const QStringList & a) {      // recent|left : recent directories + the drop-down's paths
+    FilePanel * pn = side(a.value(0));
+    fprintf(stdout, "[recent %s] %s\n[dircombo %s] %s\n", a.value(0).toUtf8().constData(), pn->recentDirs().join(" , ").toUtf8().constData(),
+            a.value(0).toUtf8().constData(), pn->dirComboItems().join(" , ").toUtf8().constData());
+    fflush(stdout);
+  };
+  uiCmd["up"] = [&](const QStringList & a) { side(a.value(0))->goUp(); };
+  uiCmd["back"] = [&](const QStringList & a) { side(a.value(0))->goBack(); };
+  uiCmd["forward"] = [&](const QStringList & a) { side(a.value(0))->goForward(); };
+  uiCmd["opendir"] = [&](const QStringList & a) { side(a.value(0))->onActivated(); doOpenDir(); };
+  uiCmd["bookmark"] = [&](const QStringList & a) { side(a.value(0))->onActivated(); addBookmark(); };
+  uiCmd["bookmarks"] = [&](const QStringList &) { fprintf(stdout, "[bookmarks] %s\n", bookmarkList().join(" , ").toUtf8().constData()); fflush(stdout); };
+  // --- operations ---
+  uiCmd["props"] = [&](const QStringList & a) { side(a.value(0))->onActivated(); doProps(); };          // the Properties dialog
+  uiCmd["newlink"] = [&](const QStringList & a) { side(a.value(0))->onActivated(); doNewLink(); };      // the Add Link dialog
+  uiCmd["mklink"] = [&](const QStringList & a) {      // mklink|right|name|target[|hard]
+    createLink(side(a.value(0)), a.value(1), a.value(2), a.value(3) != "hard");
+  };
+  uiCmd["duplicate"] = [&](const QStringList & a) { side(a.value(0))->onActivated(); doCopyOrMoveWithin(false); };   // the dialogs
+  uiCmd["moveto"] = [&](const QStringList & a) { side(a.value(0))->onActivated(); doCopyOrMoveWithin(true); };
+  uiCmd["sessioninfo"] = [&](const QStringList & a) {  // sessioninfo[|dialog]
+    if (a.value(0) == "dialog") { doSessionInfo(); return; }
+    fprintf(stdout, "[sessioninfo]\n%s\n", sessionInfoText(engine::sessionInformation()).toUtf8().constData()); fflush(stdout);
+  };
+  uiCmd["mkdir"] = [&](const QStringList & a) {       // mkdir|right|name   (no dialog)
+    FilePanel * pn = side(a.value(0)); std::string err;
+    const bool ok = pn->isRemote() ? engine::remoteMakeDir(s8(a.value(1)), &err) : engine::localMakeDir(s8(pn->path()), s8(a.value(1)), &err);
+    pn->refresh();
+    fprintf(stdout, "[mkdir] %s %s\n", ok ? "ok" : "FAILED", err.c_str()); fflush(stdout);
+  };
+  uiCmd["delete"] = [&](const QStringList & a) {      // delete|right : F8 on the selection, confirmed
+    side(a.value(0))->onActivated();
+    const bool confirm = gConfirmDelete; gConfirmDelete = false; doDelete(); gConfirmDelete = confirm;
+  };
+  uiCmd["icons"] = [&](const QStringList & a) {       // icons|file.png : every own icon on one sheet, for review
+    const QStringList names = appIconNames();
+    const int cols = 8, cell = 112;
+    QPixmap sheet(cols * cell, ((names.size() + cols - 1) / cols) * 64); sheet.fill(Qt::white);
+    QPainter p(&sheet);
+    for (int i = 0; i < names.size(); ++i)
+    {
+      const int x = (i % cols) * cell, y = (i / cols) * 64;
+      appIcon(names[i]).paint(&p, QRect(x + 8, y + 6, 32, 32));
+      appIcon(names[i]).paint(&p, QRect(x + 48, y + 14, 16, 16));
+      p.setPen(Qt::black); p.drawText(QRect(x + 2, y + 42, cell - 4, 16), Qt::AlignLeft, names[i]);
+    }
+    p.end(); sheet.save(a.value(0));
+    int blank = 0;      // an icon that draws nothing at toolbar size
+    for (const QString & n : names)
+    {
+      const QImage im = appIcon(n).pixmap(16, 16).toImage().convertToFormat(QImage::Format_ARGB32);
+      bool any = false;
+      for (int y = 0; y < im.height() && !any; ++y) for (int x = 0; x < im.width(); ++x) if (qAlpha(im.pixel(x, y)) > 40) { any = true; break; }
+      if (!any) ++blank;
+    }
+    fprintf(stdout, "[icons] %d blank=%d\n", (int)names.size(), blank); fflush(stdout);
   };
   uiCmd["nav"] = [&](const QStringList & a) { (a.value(0) == "right" ? right : left)->navigate(a.value(1)); };
   uiCmd["activate"] = [&](const QStringList & a) { (a.value(0) == "right" ? right : left)->onActivated(); };
