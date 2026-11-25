@@ -1226,11 +1226,10 @@ which the macOS 26 SDK no longer has (`ld: framework 'AGL' not found`). CI (maco
 | macOS arm64 (dev build, Homebrew Qt) | 4/4 | ALL OK | **466 / 466** |
 | macOS x86-64 under Rosetta (universal build, official Qt 6.9.3) | 4/4 | ALL OK | **466 / 466** |
 | Linux arm64 (Docker, Ubuntu 22.04) | 4/4 | ALL OK | **464 passed, 2 skipped** |
-| Linux amd64 (Docker under emulation) | see below | | |
+| Linux amd64 (Docker under emulation) | 4/4 | ALL OK | **464 passed, 2 skipped** |
 
 The two skips on Linux-in-Docker need `docker exec` from inside the test container (an oversized
-`.filepart`, a session killed by the server); both run on macOS and in CI.
-Linux amd64 under emulation, previous commit of this round (`b0c26b73e`): unit 4/4, e2e-ssh ALL OK,
-407 passed / 1 failed / 2 skipped - the failure is "an idle tunnelled session does not spin the
-CPU", a CPU-time threshold that the emulator's overhead exceeds (it passes natively on x86-64 CI).
+`.filepart`, a session killed by the server); both run on macOS and in CI. One earlier amd64 run
+failed "an idle tunnelled session does not spin the CPU" once: a CPU-time threshold that the
+emulator's overhead can exceed (it passed in the final run).
 Not run: the signed / notarized bundle, the AppImage, and GitHub CI (nothing was pushed).
