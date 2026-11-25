@@ -1,0 +1,17 @@
+# Linux build + test environment for native/scripts/linux-docker.sh (same packages as the CI job
+# in .github/workflows/linux.yml, plus what the end-to-end suites need).
+FROM ubuntu:22.04
+ENV DEBIAN_FRONTEND=noninteractive LANG=C.UTF-8 LC_ALL=C.UTF-8
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      clang lld cmake ninja-build python3 python3-venv python3-pip qt6-base-dev libqt6svg6-dev qt6-qpa-plugins libssl-dev \
+      nasm autoconf automake libtool pkg-config zlib1g-dev libgl1-mesa-dev \
+      openssh-server openssh-client xvfb file libxkbcommon-x11-0 libxcb-cursor0 \
+      libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 libxcb-shape0 \
+      socat xxd time perl git ca-certificates curl gdb rsync fonts-dejavu-core openssl make tzdata \
+    && rm -rf /var/lib/apt/lists/*
+# the SSH account the CI job creates (empty skeleton: login dotfiles that print break SFTP/SCP)
+RUN useradd -m -k /dev/null -s /bin/bash winscp && echo 'winscp:winscp123' | chpasswd && mkdir -p /run/sshd \
+    && python3 -m pip install -q asyncssh \
+    && useradd -m -s /bin/bash dev
+# Builds and tests run as "dev", not root: root can write anywhere, which hides the failure paths
+# the suites check (an unwritable configuration file, an unreadable directory).
