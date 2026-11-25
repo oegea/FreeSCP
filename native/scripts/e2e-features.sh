@@ -20,6 +20,7 @@
 #
 # Usage:  native/scripts/e2e/servers.sh up <data-dir>
 #         native/scripts/e2e-features.sh <build-dir> <data-dir> [section ...]     (default: all)
+#         E2E_RUN="arch -x86_64" native/scripts/e2e-features.sh <universal build dir> <data-dir>   (Rosetta)
 #
 # Uses the bridge CLI (ui-qt/tests/bridgecli.cpp) - the same API the GUI calls - and the app's
 # scripted-UI hooks (WINSCP_UITEST, see main.cpp). Everything is created under /tmp/freescp-e2e and
@@ -33,6 +34,14 @@ C="$BUILD/ui-qt/freescp-bridge-cli"
 if [ -x "$BUILD/ui-qt/winscp-qt.app/Contents/MacOS/winscp-qt" ]; then APP="$BUILD/ui-qt/winscp-qt.app/Contents/MacOS/winscp-qt"
 else APP="$BUILD/ui-qt/winscp-qt"; fi
 W=/tmp/freescp-e2e; rm -rf "$W"; mkdir -p "$W/dl" "$W/shots"
+# E2E_RUN="arch -x86_64" runs both binaries through a launcher (the universal macOS build under
+# Rosetta); E2E_CLI / E2E_APP name other binaries than the build tree's.
+C="${E2E_CLI:-$C}"; APP="${E2E_APP:-$APP}"
+if [ -n "${E2E_RUN:-}" ]; then
+  mkdir -p "$W/bin"
+  printf '#!/bin/sh\nexec %s "%s" "$@"\n' "$E2E_RUN" "$C" > "$W/bin/cli"; printf '#!/bin/sh\nexec %s "%s" "$@"\n' "$E2E_RUN" "$APP" > "$W/bin/app"
+  chmod +x "$W/bin/cli" "$W/bin/app"; C="$W/bin/cli"; APP="$W/bin/app"
+fi
 OUT="$W/last.out"; LOG=/tmp/winscp-session.log
 export WINSCP_INI="$W/engine.ini"    # private host-key / certificate cache for the bridge CLI and the app
 IP="${E2E_LAN_IP:-}"; K="$DATA/keys"
@@ -619,6 +628,11 @@ if want ops; then
       *)    chk "$name: free space is not available: said so, the session keeps working" "[ $RC -eq 2 ] && has 'does not tell how much space' && has '^OK   ls|'";;
     esac
 
+    # --- a lost connection is noticed and the session reopened in place ---
+    run $opts -- "ls|$b" lost drop lost "ls|$b" reconnect lost "ls|$b" "mkdir|e2e-ops-rc" "ls|$b" "rm|e2e-ops-rc"
+    chk "$name: reconnect a session whose connection is gone" \
+        "[ $RC -eq 2 ] && has 'LOST 0 connected=1' && has 'LOST 1 connected=0' && has 'RECONNECT ok=1 .* sessions=1 active=0' && has 'OK   mkdir|e2e-ops-rc' && has 'OK   rm|e2e-ops-rc'"
+
     run $opts -- "ls|$b" "rm|e2e-ops" "ls|$b"
     chk "$name: the whole test tree is deleted" "[ $RC -eq 0 ] && [ \$(grep -c '^  d .* e2e-ops  ' $OUT) = 1 ]"
   done
@@ -793,6 +807,24 @@ if want panels; then
   chk "a remote directory is not moved into itself" "ghas 'into itself' && [ -d $HP/sub/deep ]"
   gui WINSCP_DIALOG_SET="moveto.target=$PL/dirA" WINSCP_DIALOG_ACCEPT=moveto WINSCP_UITEST="nav|left|$PL;select|left|c.md, old.bak;moveto|left;print|left"
   chk "Move To: two local files into a subdirectory" "[ -f $PL/dirA/c.md ] && [ -f $PL/dirA/old.bak ] && [ ! -e $PL/c.md ] && ! ghas '  old.bak |'"
+
+  echo "== panels: reconnect"
+  gui $AC WINSCP_UITEST="$N;dropsession;nav|right|$RP/sub;wait|600;print|right;mainstatus;tabs"
+  chk "a lost session is offered to be reconnected; the tab and the directory come back" \
+      "ghas 'Connection lost' && ghas '^\\[panel right\\] $RP\$' && ghas '  r1.txt\\|  rl ' && ghas \"protocol='SFTP-\" && ghas 'tabs\\] count=1 current=0 engine-active=0'"
+  rm -rf /tmp/dlq
+  gui $AC WINSCP_UITEST="$N;nav|left|$PL/dirA;dropsession;select|right|rl;xfer|right;waitidle;wait|600;select|right|rl;xfer|right;waitidle;print|left"
+  chk "a transfer that fails because the session is gone offers the reconnect; the next transfer works" "ghas 'Connection lost' && [ \"\$(cat $PL/dirA/rl 2>/dev/null)\" = r1 ]"
+  gui $AC WINSCP_UITEST="connect|127.0.0.1:2224:jumper:jump456:sftp;tabs;dropsession;nav|right|/config/logs;wait|600;tabs;tab|0;print|right"
+  chk "reconnecting the second tab leaves the first one alone" \
+      "ghas 'Connection lost' && [ \$(gcount 'tabs\\] count=2 current=1 engine-active=1') = 2 ] && ghas '^\\[panel right\\] /config\$'"
+  if docker exec freescp-e2e-jump true >/dev/null 2>&1; then
+    ( sleep 4; docker exec freescp-e2e-jump sh -c 'pkill -f "sshd.*jumper"; pkill -f sshd-session; pkill -f sftp-server' >/dev/null 2>&1 ) &
+    gui WINSCP_AUTOCONNECT=127.0.0.1:2224:jumper:jump456:sftp WINSCP_UITEST="print|right;wait|7000;nav|right|/config/logs;wait|1500;nav|right|/config/logs;print|right;mainstatus"
+    wait
+    chk "the server drops the connection for real: noticed at the next action, reconnected" \
+        "ghas 'Connection lost' && ghas '^\\[panel right\\] /config/logs\$' && ghas \"protocol='SFTP-\""
+  else skip "connection dropped by the server (docker exec not available)"; fi
 
   echo "== panels: server information, icons"
   gui $AC WINSCP_UITEST="sessioninfo"

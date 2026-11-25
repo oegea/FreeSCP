@@ -485,3 +485,40 @@ defects by reading; neither had a failing test. Give the reviewer the diff, not 
 (POLLOUT|POLLHUP). BSD/macOS: nothing. Any Windows-event emulation must not watch a socket before
 `connect()`/`listen()`; FTP's passive data socket is created one round trip before it connects.
 Everything FTP passed on macOS and failed on Linux - run the protocol suites on both.
+
+## 21. The UI fidelity round (2026-11-25): what the new tests turned up
+
+**a. An upstream fix can undo a port-side guarantee.** Issue 2487 replaced our "destructor must not
+throw" patch with explicit `Flush()` calls at every writer - and the one in `StoreHostKey` now threw
+in the middle of connecting when the cache file was not writable. Nothing failed to compile or
+merge; `e2e-ssh.sh` ("unwritable INI does not abort the connection") caught it. After every upstream
+merge run `e2e-ssh.sh` as well as the feature suite - they cover different failure paths.
+
+**b. `TRemoteFile::FullFileName` of a directory ends in "/" - again.** §19h was the download; this
+time `DeleteFile`: S3 appends its own "/" to a folder key, sent `dir//`, and no folder could be
+deleted from the panel (in 0.3.2 too). Every bridge call that hands a listing entry to the engine
+uses `UnixExcludeTrailingBackslash(rf->FullFileName)`.
+
+**c. Protocols differ exactly where the dialogs look the same.** One Properties dialog, five
+back ends: SFTP-3 carries owner/group as ids only (a name the session cannot translate went out as
+id 0 - as root that is a chown to root), SCP runs shell commands (`chmod -R 644` locks itself out of
+the directory before "add X" is applied), FTP has chmod and nothing else, WebDAV and S3 have none of
+it, S3 cannot move a folder. Test every operation on every protocol, and assert the *refusal text*
+where it is not available - "the server does not support ..." instead of whatever the engine says.
+
+**d. A bind mount from a Mac is not a Unix file system.** `chown` to anyone succeeds and does
+nothing, setuid is dropped silently. Owner / group / special-bit tests run in the server's own
+`/tmp`, not in the mounted home.
+
+**e. Drive the real dialog.** `WINSCP_DIALOG_SET="<dialog>.<field>=<value>;..."` fills the fields
+and `WINSCP_DIALOG_ACCEPT` clicks the dialog's own OK button, so its validation runs; a refused
+dialog is then cancelled instead of hanging the run. (Before, a scripted "accept" bypassed the
+checks.) In a scripted command `;` separates steps and `|` arguments: write a mask list with `,`
+and an exclude mask with `^`.
+
+**f. Root hides failures.** The first Linux-in-Docker run "failed" the unwritable-INI check because
+root can create any directory. The container runs builds and tests as an ordinary user.
+
+**g. Standard icons are not standard.** `QStyle::standardIcon` and the icon theme differ per desktop
+and some themes have none: the toolbars use icons drawn in code (`icons.cpp`), with the platform's
+file-type icons only where they exist. A test renders every icon and fails on a blank one.

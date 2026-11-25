@@ -8,6 +8,7 @@
 //---------------------------------------------------------------------------
 #include "logindialog.h"
 #include "uicommon.h"
+#include "icons.h"
 
 #include <QCheckBox>
 #include <QComboBox>
@@ -22,6 +23,7 @@
 #include <QInputDialog>
 #include <QLabel>
 #include <QLineEdit>
+#include <QMenu>
 #include <QPushButton>
 #include <QSettings>
 #include <QSpinBox>
@@ -336,17 +338,21 @@ LoginParams showLoginDialog(QWidget * parent, const engine::ConnectOptions * pre
   // Left: sites tree — "New Site" plus saved sessions (the WinSCP Site Manager experience: pick a
   // saved server instead of retyping).
   auto * sites = new QTreeWidget;
-  sites->setHeaderLabel("");
-  sites->setMaximumWidth(220);
-  sites->setMinimumWidth(180);
-  auto * newSite = new QTreeWidgetItem(sites, QStringList("\xF0\x9F\x96\xA5  New Site"));
+  sites->setHeaderHidden(true);
+  sites->setRootIsDecorated(false);
+  sites->setIconSize(QSize(16, 16));
+  sites->setMaximumWidth(230);
+  sites->setMinimumWidth(190);
+  auto * newSite = new QTreeWidgetItem(sites, QStringList("New Site"));
+  newSite->setIcon(0, appIcon("newtab"));
   top->addWidget(sites);
 
   auto reloadSites = [&] {
     while (sites->topLevelItemCount() > 1) delete sites->takeTopLevelItem(1);
     for (const QString & name : savedSiteNames())
     {
-      auto * it = new QTreeWidgetItem(sites, QStringList("\xF0\x9F\x8C\x90  " + name));
+      auto * it = new QTreeWidgetItem(sites, QStringList(name));
+      it->setIcon(0, appIcon("login"));
       it->setData(0, Qt::UserRole, name);
     }
   };
@@ -368,28 +374,41 @@ LoginParams showLoginDialog(QWidget * parent, const engine::ConnectOptions * pre
   auto * keyLabel = new QLabel("Private key:");
   auto * keyWidget = keyRow(&dlg, keyEdit);
 
-  grid->addWidget(new QLabel("File protocol:"), 0, 0);
-  grid->addWidget(proto, 0, 1);
-  grid->addWidget(encLabel, 0, 2);
-  grid->addWidget(enc, 0, 3);
-  grid->addWidget(new QLabel("Host name:"), 1, 0);
-  grid->addWidget(host, 1, 1);
-  grid->addWidget(new QLabel("Port number:"), 1, 2);
-  grid->addWidget(port, 1, 3);
-  grid->addWidget(new QLabel("User name:"), 2, 0);
-  grid->addWidget(user, 2, 1);
-  grid->addWidget(new QLabel("Password:"), 2, 2);
-  grid->addWidget(pass, 2, 3);
-  grid->addWidget(keyLabel, 3, 0);
-  grid->addWidget(keyWidget, 3, 1, 1, 3);
+  // WinSCP's Session box: captions above the fields - protocol (and encryption), host + port,
+  // user + password - then Save on the left and Advanced on the right.
+  auto caption = [](const QString & text, QWidget * buddy) { auto * l = new QLabel(text); l->setBuddy(buddy); return l; };
+  grid->setVerticalSpacing(3); grid->setHorizontalSpacing(10);
+  grid->addWidget(caption("&File protocol:", proto), 0, 0);
+  encLabel->setText("&Encryption:"); encLabel->setBuddy(enc);
+  grid->addWidget(encLabel, 0, 1, 1, 2);
+  grid->addWidget(proto, 1, 0);
+  grid->addWidget(enc, 1, 1, 1, 2);
+  grid->setRowMinimumHeight(2, 8);
+  grid->addWidget(caption("&Host name:", host), 3, 0, 1, 2);
+  grid->addWidget(caption("Po&rt number:", port), 3, 2);
+  grid->addWidget(host, 4, 0, 1, 2);
+  grid->addWidget(port, 4, 2);
+  grid->setRowMinimumHeight(5, 8);
+  grid->addWidget(caption("&User name:", user), 6, 0);
+  grid->addWidget(caption("&Password:", pass), 6, 1, 1, 2);
+  grid->addWidget(user, 7, 0);
+  grid->addWidget(pass, 7, 1, 1, 2);
+  grid->setRowMinimumHeight(8, 8);
+  keyLabel->setText("Private &key:"); keyLabel->setBuddy(keyEdit);
+  grid->addWidget(keyLabel, 9, 0, 1, 3);
+  grid->addWidget(keyWidget, 10, 0, 1, 3);
+  grid->setRowMinimumHeight(11, 10);
   // Advanced settings: a button + a line saying what is configured, so a tunnel or proxy is never
   // an invisible property of the site.
+  auto * saveBtn = new QPushButton("&Save\xE2\x80\xA6");
   auto * advBtn = new QPushButton("&Advanced\xE2\x80\xA6");
+  auto * sessionBtns = new QHBoxLayout;
+  sessionBtns->addWidget(saveBtn); sessionBtns->addStretch(1); sessionBtns->addWidget(advBtn);
+  grid->addLayout(sessionBtns, 12, 0, 1, 3);
   auto * advSummary = new QLabel; advSummary->setStyleSheet("color: gray;"); advSummary->setWordWrap(true);
-  grid->addWidget(advBtn, 4, 0);
-  grid->addWidget(advSummary, 4, 1, 1, 3);
-  grid->setRowStretch(5, 1);
-  grid->setColumnStretch(1, 3); grid->setColumnStretch(3, 2);
+  grid->addWidget(advSummary, 13, 0, 1, 3);
+  grid->setRowStretch(14, 1);
+  grid->setColumnStretch(0, 3); grid->setColumnStretch(1, 2); grid->setColumnStretch(2, 1);
   top->addWidget(session, 1);
 
   auto currentProtocol = [&]() { return kProtocols[qBound(0, proto->currentIndex(), 4)]; };
@@ -481,12 +500,36 @@ LoginParams showLoginDialog(QWidget * parent, const engine::ConnectOptions * pre
     if (it && !it->data(0, Qt::UserRole).toString().isEmpty()) dlg.accept();
   });
 
-  // Bottom buttons: Save / Delete ... Login / Close (WinSCP layout).
+  // Bottom buttons, as in WinSCP: Manage (the selected site) on the left, Login / Close on the right.
   auto * btnRow = new QHBoxLayout;
-  auto * saveBtn = new QPushButton("&Save");
-  auto * delBtn = new QPushButton("&Delete");
-  btnRow->addWidget(saveBtn);
-  btnRow->addWidget(delBtn);
+  auto * manageBtn = new QPushButton("&Manage");
+  auto * manageMenu = new QMenu(manageBtn);
+  auto * actRename = manageMenu->addAction("&Rename\xE2\x80\xA6");
+  auto * actDelete = manageMenu->addAction("&Delete");
+  manageBtn->setMenu(manageMenu);
+  btnRow->addWidget(manageBtn);
+  auto currentSiteName = [&]() { return sites->currentItem() ? sites->currentItem()->data(0, Qt::UserRole).toString() : QString(); };
+  auto selectSite = [&](const QString & name) {
+    for (int i = 1; i < sites->topLevelItemCount(); ++i)
+      if (sites->topLevelItem(i)->data(0, Qt::UserRole).toString() == name) sites->setCurrentItem(sites->topLevelItem(i));
+  };
+  QObject::connect(manageMenu, &QMenu::aboutToShow, &dlg, [&] {
+    const bool saved = !currentSiteName().isEmpty();
+    actRename->setEnabled(saved); actDelete->setEnabled(saved);
+  });
+  QObject::connect(actRename, &QAction::triggered, &dlg, [&] {
+    const QString old = currentSiteName();
+    if (old.isEmpty()) return;
+    bool okIn = false;
+    QString name = QInputDialog::getText(&dlg, "Rename site", "New site name:", QLineEdit::Normal, old, &okIn).trimmed();
+    if (!okIn || name.isEmpty() || name == old) return;
+    name.replace('/', '_');
+    if (savedSiteNames().contains(name)) { appMessage(&dlg, "Rename site", QString("A site named \"%1\" already exists.").arg(name)); return; }
+    engine::ConnectOptions o;
+    if (!loadSite(old, o)) return;
+    saveSite(name, o); deleteSite(old);
+    reloadSites(); selectSite(name);
+  });
   QObject::connect(saveBtn, &QPushButton::clicked, &dlg, [&] {
     engine::ConnectOptions o = getForm();
     QString def = sites->currentItem() ? sites->currentItem()->data(0, Qt::UserRole).toString() : QString();
@@ -497,10 +540,9 @@ LoginParams showLoginDialog(QWidget * parent, const engine::ConnectOptions * pre
     name.replace('/', '_');                  // '/' would nest the QSettings group
     saveSite(name, o);
     reloadSites();
-    for (int i = 1; i < sites->topLevelItemCount(); ++i)
-      if (sites->topLevelItem(i)->data(0, Qt::UserRole).toString() == name) sites->setCurrentItem(sites->topLevelItem(i));
+    selectSite(name);
   });
-  QObject::connect(delBtn, &QPushButton::clicked, &dlg, [&] {
+  QObject::connect(actDelete, &QAction::triggered, &dlg, [&] {
     auto * it = sites->currentItem();
     if (!it) return;
     QString n = it->data(0, Qt::UserRole).toString();

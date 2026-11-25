@@ -205,6 +205,14 @@ int main(int argc, char ** argv)
       for (int fd = 0; fd < 4096; ++fd) if (::fcntl(fd, F_GETFD) != -1) ++n;
       std::printf("FDS %d\n", n);
     }
+    else if (cmd == "lost") std::printf("LOST %d connected=%d\n", engine::sessionLost() ? 1 : 0, engine::remoteConnected() ? 1 : 0);
+    else if (cmd == "drop") engine::debugDropConnection();
+    else if (cmd == "reconnect")
+    {
+      engine::ConnectResult rr = engine::reconnect();
+      ok = rr.ok; err = rr.error;
+      std::printf("RECONNECT ok=%d cwd=%s sessions=%d active=%d\n", rr.ok ? 1 : 0, rr.currentDir.c_str(), engine::sessionCount(), engine::activeSession());
+    }
     else if (cmd == "sleep") std::this_thread::sleep_for(std::chrono::seconds(std::atoi(arg(a, 1, "1").c_str())));
     else if (cmd == "mkdir") ok = engine::remoteMakeDir(arg(a, 1), &err);
     else if (cmd == "rename") { engine::listRemoteDir(std::string()); ok = engine::remoteRename(arg(a, 1), arg(a, 2), &err); }   // rename|old|new

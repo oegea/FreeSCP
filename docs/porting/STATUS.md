@@ -2,7 +2,9 @@
 
 Update this whenever a target starts/stops building. Verify by actually building.
 
-_Last updated: 2026-11-16 — **v0.3.0**: feature round on top of 6.7.1 + a pre-release bug hunt (see the last two sections): SSH tunnel, proxies, 2FA prompts, FTPS, Transfer Settings + resume, Find Files, directory sizes, Compare Directories, side-by-side file comparison — and the platform-layer bugs that end-to-end testing of those exposed (time zones / file timestamps, FindFirst, port forwarding, socket event loop). See "Feature round" at the end. **Verified on macOS arm64 only; the Linux build has not been rebuilt with these changes.**_
+_Last updated: 2026-11-25 — engine at WinSCP stable `b56534410` (6.7.1 + issues 2487, 2489, 2492); UI fidelity round: WinSCP-style panels, Properties with owner/group, links, duplicate / move to, filter, reconnect (see the last section). Not released yet (after 0.3.2).
+
+_Previous header:_ Last updated: 2026-11-16 — **v0.3.0**: feature round on top of 6.7.1 + a pre-release bug hunt (see the last two sections): SSH tunnel, proxies, 2FA prompts, FTPS, Transfer Settings + resume, Find Files, directory sizes, Compare Directories, side-by-side file comparison — and the platform-layer bugs that end-to-end testing of those exposed (time zones / file timestamps, FindFirst, port forwarding, socket event loop). See "Feature round" at the end. **Verified on macOS arm64 only; the Linux build has not been rebuilt with these changes.**_
 
 _Previous header:_ Last updated: 2026-11-13 — engine synced to **WinSCP 6.7.1** (+ post-release fixes; PuTTY 0.85, neon 0.37.1, Expat 2.10.0). All 5 protocols re-verified end to end on macOS arm64 after the merge; see "Upstream sync to 6.7.1 + bug-hunt" at the end. **Linux build NOT re-verified after this sync.**_
 
@@ -1116,3 +1118,61 @@ and "the one **exception** is a check for a newer version" matched `exception`. 
   wrapper that runs it with `arch -arm64`).
 - Website: version strings, and the headline now leads with the project's own name ("FreeSCP. The
   WinSCP engine, natively on Mac & Linux.") instead of "WinSCP." alone.
+
+## Upstream sync + UI fidelity round (2026-11-25, after 0.3.2, not released)
+
+### Upstream
+Merged `winscp/master` up to `b56534410` (9 commits; in the engine: Issue 2492 SCP upload failure,
+Issue 2487 failed configuration save, a double free in the FTP control socket). One conflict
+(`TIniFileStorage` destructor: upstream fixed it its own way) and one regression the merge brought
+in, found by `e2e-ssh.sh` and fixed with a guarded patch - see UPSTREAM-PATCHES.md and LEARNINGS 21a.
+`winscp/dev` (6.8, unreleased) is not merged.
+
+### What is new in the GUI
+- **Panels like WinSCP's Commander**: per-panel navigation toolbar (directory drop-down with the
+  path hierarchy and the recent directories, open directory, filter, back / forward, parent, root,
+  home, refresh, find, tree) and operations toolbar (Upload / Download, Edit, Delete, Properties,
+  New, select / unselect / select all); the path as a caption above the list (highlighted in the
+  active panel, click to type); WinSCP's columns (local: Name, Size, Type, Changed - remote: Name,
+  Size, Changed, Rights, Owner) with remembered widths; one timestamp format for both panels; status
+  line `<selected> of <total> in <n> of <count>` with hidden / filtered counts; lock, protocol and
+  session time in the main status bar; menus in WinSCP's order (Local, Mark, Files, Commands, Tabs,
+  Options, Remote, Help); flat function-key bar. Files: `filepanel.h`, `icons.{h,cpp}` (own icon
+  set, drawn in code - nothing of WinSCP's artwork), `panellogic.h` (pure logic, unit-tested).
+- **Properties (F9)**: several files, owner / group where the server allows, special bits, "add X
+  to directories", recursive; local files too (`propsdialog.cpp`, `localops.h`).
+- **New > Link** (symbolic / hard), **Duplicate** (Shift+F5) and **Move To** (Shift+F6) - on the
+  server for a remote panel -, panel **filter** by file mask, Select / Unselect dialog, select all /
+  invert, **Open Directory** (Ctrl+O) with bookmarks and persisted recent directories, Tabs >
+  **Sites**, **Server and Protocol Information** (protocol, encryption, capabilities, free space).
+- **Reconnect**: a session whose connection is gone is offered to be reopened in the same tab, in
+  the same directory (also when a transfer fails for that reason).
+- **Login dialog** arranged like WinSCP's: captions above the fields, Save / Advanced inside the
+  Session box, Manage (Rename, Delete) at the bottom left.
+
+### Bugs found by testing the new operations on every protocol (all fixed)
+- **S3: no folder could be deleted from the panel** (present in 0.3.2): the key went out as `dir//`.
+- SFTP: an owner / group *name* the session cannot translate to an id was sent as id 0.
+- SCP: "permissions recursively + add X to directories" failed on its first command.
+- SFTP: duplicating a directory failed and left an empty file under the new name; now refused up front
+  (S3 likewise; S3 folder move / rename says so instead of "Error renaming file").
+- A local directory that does not exist showed as an empty panel.
+- Upstream merge: an unwritable engine cache ended the connection ("Can't create file").
+- Linux: "Open diagnostics log file" called macOS's `open`.
+
+### Engine bridge additions (`enginebridge.h`)
+`remoteSetProperties`, `remoteCreateLink`, `remoteDuplicate`, `remoteMoveTo`, `remoteCapable`,
+`remoteSpaceAvailable`, `sessionInformation`, `matchFileMask`, `sessionLost` / `reconnect`; listing
+entries carry owner, group, link flag and link target. `freescp-bridge-cli` has a command for each.
+
+### Tests
+- Unit: `test_uilogic` covers `panellogic.h` (path hierarchy, recent list, date patterns, permission
+  strings - all 4096 modes round-trip).
+- `e2e-features.sh` sections **ops** (all five protocols: capabilities, session information,
+  directory delete, permissions / owner / group, links, duplicate, move, rename, free space,
+  reconnect - every refusal text included) and **panels** (the app driven offscreen through the real
+  dialogs: columns, status lines, filter, selection, sorting, navigation, bookmarks, Properties,
+  links, duplicate / move, reconnect, server information, icons).
+- **Linux in Docker from a Mac**: `native/scripts/linux-docker.sh <arm64|amd64> build|ssh|features`
+  (source copied to a case-sensitive volume, runs as a non-root user). The full feature suite runs
+  on Linux aarch64 this way - CI only runs it on x86-64.

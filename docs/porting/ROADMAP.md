@@ -20,10 +20,18 @@ Settings** (text/binary/auto, preserve timestamp, permissions, name case, file m
 **Compare Files** (side-by-side local/remote diff) · correct time zones + preserved timestamps everywhere ·
 FTP time-outs + keep-alive · each session tab remembers its directories. (Released as **v0.3.0**.)
 
+✅ Added 2026-11-25 (UI fidelity round): panels laid out like WinSCP's Commander (per-panel navigation
+and operation toolbars, path caption, WinSCP's column sets, one date format, WinSCP's status lines, lock /
+protocol / session time in the status bar, menus in WinSCP's order, own icon set) · **Properties** with
+owner / group / special bits / several files / "add X to directories", also for local files · **New > Link**
+(symbolic, hard) · **Duplicate** and **Move To** (server-side on a remote panel) · panel **filter** by file
+mask · Select / Unselect dialog, select all, invert · **Open Directory** with bookmarks + **recent
+directories** (persisted) · Tabs > **Sites** · **Server and Protocol Information** (with free space) ·
+**reconnect** a lost session in the same tab · Login dialog arranged like WinSCP's (Manage > Rename / Delete).
+
 ## High value, next
 - 🟡 **Drag OUT of folders** — drag-out works for files; remote *directories* aren't exported yet
   (needs recursive temp download or macOS file promises).
-- ⬜ **Recent directories** dropdown in the address bar (per panel, persisted).
 - ⬜ **Synchronize two local directories** (new in WinSCP 6.6; engine side merged, needs a native
   replacement for the Windows shell copy/delete + UI).
 - ⬜ **Keep remote directory up to date** — watch local dir, auto-sync changes (WinSCP's killer sync).
@@ -49,24 +57,27 @@ FTP time-outs + keep-alive · each session tab remembers its directories. (Relea
 ## Navigation / panels
 - ⬜ **Explorer mode** (single pane + tree) — only Commander now.
 - ⬜ Workspaces (save/restore a set of tabs).
-- ⬜ Bookmarks **bar** (toolbar), not just menu.
-- ⬜ Panel file-mask **filter** box (show only *.txt).
-- ⬜ Configurable columns (add/remove/reorder); per-column sort persistence.
+- 🟡 Bookmarks: Open Directory dialog (Ctrl+O) and the Local / Remote > Bookmarks menus; no per-session
+  bookmarks and no bookmark toolbar.
+- 🟡 Columns: WinSCP's default sets, widths remembered; no add/remove/reorder, sort order not persisted.
 
 ## Operations
-- ⬜ Owner/group edit (chown/chgrp); numeric + symbolic perms.
-- ⬜ Create symlink / follow symlinks; touch / set timestamps.
-- ⬜ Duplicate (server-side copy where supported).
+- 🟡 Owner / group: by name or id (SFTP-3 sends ids only: a name must be one the session has seen); no
+  drop-down of the server's users and groups.
+- ⬜ Edit an existing link's target; touch / set timestamps.
+- 🟡 Duplicate: files everywhere but FTP; a directory only where the server copies trees (SCP, WebDAV).
+  WinSCP falls back to a second shell session or a local temporary copy.
 - ⬜ Custom commands (run a command on the selection, local/remote).
 - 🟡 Compare Files: read-only side-by-side view done; no merge / external diff tool hook (WinSCP does this through extensions).
 
 ## UI / polish
 - ⬜ **Dark theme** (option) + font/color config.
-- ⬜ Richer toolbar (drive/bookmark bar, more named buttons) + configurable.
-- ⬜ File-type icon overlays (symlink, hidden); MIME-accurate icons.
-- ⬜ Free space / quota in the status bar (SFTP statvfs extension).
+- 🟡 Toolbars: WinSCP's arrangement, own icons; not configurable, no bookmark bar.
+- 🟡 Icon overlays: symbolic links are marked; hidden files are not dimmed.
+- 🟡 Free space: in Server and Protocol Information (SFTP, WebDAV); not in the status bar.
 - ⬜ Full Preferences (WinSCP has ~15 pages: Storage, Logging, Integration, Editors list, presets…).
-- ⬜ Reconnect / auto-reconnect on dropped session.
+- 🟡 Reconnect: a lost session is offered to be reopened in the same tab (same directory); no automatic
+  retry after a delay, no keep-alive setting, a transfer that was running is not resumed by itself.
 - ⬜ Translations / i18n.
 
 ## Out of scope (for now)
@@ -80,4 +91,10 @@ portable INI mode.
 - Transfer Settings are one global set (no presets); a file excluded by the mask shows "done".
 - Sync browsing mirror is relative + no-ops if the subdir doesn't exist (WinSCP is similar).
 - Parallel transfers gated to serial for FTP (single-connection backend).
+- SCP: "Set permissions recursively" with "Add X to directories" runs `find ... -exec chmod` (directories
+  first). WinSCP runs `chmod -R <mode>` and then fixes the top directory only, which fails as soon as
+  the mode has no x (e.g. 644).
+- S3: folders cannot be renamed, moved or duplicated (same as WinSCP); the panel says so up front.
+- The local panel shows a Type column from the file name (MIME description, or "EXT File"), not the
+  operating system's registered type names.
 - putty libs built with 4-byte wchar_t (off the SFTP path; see LEARNINGS §13) — fine in practice.

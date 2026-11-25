@@ -173,8 +173,11 @@ int main(int argc, char ** argv)
   QApplication app(argc, argv);
   // QSettings scope. Headless/offscreen test runs use an ISOLATED org so they never read or wipe the
   // user's real saved sites/prefs. Every QSettings() default-ctor below inherits this org + app name.
-  QCoreApplication::setOrganizationName(qgetenv("QT_QPA_PLATFORM") == "offscreen" ? "WinSCP-native-port-test"
-                                                                                  : "WinSCP-native-port");
+  // WINSCP_SETTINGS_ORG names another store (e.g. to render screenshots with the real platform
+  // plugin without touching the user's settings).
+  QCoreApplication::setOrganizationName(!qEnvironmentVariableIsEmpty("WINSCP_SETTINGS_ORG") ? qEnvironmentVariable("WINSCP_SETTINGS_ORG")
+                                        : qgetenv("QT_QPA_PLATFORM") == "offscreen" ? QString("WinSCP-native-port-test")
+                                                                                    : QString("WinSCP-native-port"));
   app.setApplicationName("WinSCP");
   app.setApplicationVersion(FREESCP_VERSION);
   app.setApplicationDisplayName("FreeSCP");   // stable app-menu name (avoids LaunchServices "FreeSCP 2")
@@ -411,6 +414,40 @@ int main(int argc, char ** argv)
     }
   });
 
+  // A lost connection (dropped by the server or the network, a laptop that slept): offer to open
+  // the session again in the same tab, back in the directory the panel was showing.
+  static bool reconnecting = false;
+  auto offerReconnect = [&]() -> bool {
+    if (reconnecting || gTransferRunning.load() || !engine::sessionLost()) return false;
+    reconnecting = true;
+    bool ok = false;
+    log("The connection to the server was lost.");
+    if (appMessage(&window, "Connection lost", "The connection to the server was lost.\n\nReconnect?",
+                   QMessageBox::Yes | QMessageBox::No, QMessageBox::Yes) == QMessageBox::Yes)
+    {
+      window.statusBar()->showMessage("Reconnecting\xE2\x80\xA6");
+      QApplication::processEvents();
+      const QString where = right->path();
+      const engine::ConnectResult cr = engine::reconnect();
+      if (cr.ok)
+      {
+        log("Reconnected. Remote directory: " + u8(cr.currentDir));
+        readSessionStatus(); refreshPanelRoles();
+        right->navigate(where.isEmpty() ? u8(cr.currentDir) : where);
+        window.statusBar()->showMessage("Reconnected");
+        ok = true;
+      }
+      else
+      {
+        log("Reconnect FAILED: " + u8(cr.error));
+        window.statusBar()->showMessage("Reconnect failed");
+        appMessage(&window, "Reconnect", u8(cr.error));
+      }
+    }
+    reconnecting = false;
+    return ok;
+  };
+
   auto busy = [&]() -> bool {
     if (gTransferRunning.load()) { window.statusBar()->showMessage("Transfer in progress\xE2\x80\xA6 please wait"); return true; }
     return false;
@@ -523,7 +560,8 @@ int main(int argc, char ** argv)
         btnCancel->setEnabled(false);
         to->refresh(); if (isMove) from->refresh();
         window.statusBar()->showMessage(QString("Transferred %1/%2 item(s)").arg(ok).arg(total));
-        if (ok < total) appMessage(&window, "Transfer",
+        if (ok < total && engine::sessionLost()) offerReconnect();     // the reason they failed
+        else if (ok < total) appMessage(&window, "Transfer",
           QString("%1 of %2 item(s) failed. See the Transfer queue for the error.").arg(total - ok).arg(total));
       }, Qt::QueuedConnection);
     }).detach();
@@ -576,7 +614,8 @@ int main(int argc, char ** argv)
       QMetaObject::invokeMethod(&window, [&, ok, total, dest]{
         engine::setProgressSink(nullptr); gTransferRunning = false; btnCancel->setEnabled(false);
         dest->refresh(); window.statusBar()->showMessage(QString("Imported %1/%2 item(s)").arg(ok).arg(total));
-        if (ok < total) appMessage(&window, "Import",
+        if (ok < total && engine::sessionLost()) offerReconnect();
+        else if (ok < total) appMessage(&window, "Import",
           QString("%1 of %2 item(s) failed. See the Transfer queue for the error.").arg(total - ok).arg(total));
       }, Qt::QueuedConnection);
     }).detach();
@@ -588,6 +627,8 @@ int main(int argc, char ** argv)
   auto listError = [&](const QString & msg) {
     window.statusBar()->showMessage("Error listing directory");
     log("Error listing directory: " + msg);
+    // not from inside the panel's own navigation: it would overwrite the listing we come back with
+    if (engine::sessionLost() && !reconnecting) { QTimer::singleShot(0, &window, [&]{ offerReconnect(); }); return; }
     appMessage(&window, "Error", msg);
   };
   left->onListError = listError; right->onListError = listError;
@@ -1992,6 +2033,7 @@ int main(int argc, char ** argv)
     }
     fprintf(stdout, "[icons] %d blank=%d\n", (int)names.size(), blank); fflush(stdout);
   };
+  uiCmd["dropsession"] = [&](const QStringList &) { engine::debugDropConnection(); };   // the connection is gone, the tab stays
   uiCmd["nav"] = [&](const QStringList & a) { (a.value(0) == "right" ? right : left)->navigate(a.value(1)); };
   uiCmd["activate"] = [&](const QStringList & a) { (a.value(0) == "right" ? right : left)->onActivated(); };
   uiCmd["select"] = [&](const QStringList & a) {   // select|left|*.txt  (replaces the selection)

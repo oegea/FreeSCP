@@ -652,6 +652,39 @@ void setProgressSink(const std::function<bool(const TransferProgress &)> & cb) {
 void setConfirmCallback(const std::function<bool(const std::string &)> & cb) { g_confirmCb = cb; }
 
 bool remoteConnected() { ENGINE_LOCK; return g_terminal && g_terminal->Active; }
+
+bool sessionLost()
+{
+  ENGINE_LOCK;
+  return g_active >= 0 && g_active < (int)g_sess.size() && AS().params.valid && !(g_terminal && g_terminal->Active);
+}
+
+ConnectResult reconnect()
+{
+  ENGINE_LOCK;
+  ConnectResult r;
+  const int slot = g_active;
+  if (slot < 0 || slot >= (int)g_sess.size()) { r.error = "There is no session to reconnect."; return r; }
+  const ConnectOptions o = g_sess[slot]->params.o;   // includes a password typed at the prompt
+  const size_t before = g_sess.size();
+  LogLine("reconnect: session " + std::to_string(slot));
+  r = connect(o);     // adds a session at the end and makes it active (and removes it again on failure)
+  if (r.ok && g_sess.size() == before + 1)
+  {
+    std::unique_ptr<Sess> fresh = std::move(g_sess.back());
+    g_sess.pop_back();
+    try { g_sess[slot] = std::move(fresh); }     // the lost session's terminal is destroyed here
+    catch (...) { LogLine("reconnect: the old session did not close cleanly"); }
+  }
+  g_active = slot;
+  return r;
+}
+
+void debugDropConnection()
+{
+  ENGINE_LOCK;
+  try { if (g_terminal && g_terminal->Active) g_terminal->Close(); } catch (...) {}
+}
 std::string remoteCurrentDir() { ENGINE_LOCK; return remoteConnected() ? ToU8(g_terminal->CurrentDirectory) : std::string(); }
 
 std::vector<DirEntry> listRemoteDir(const std::string & utf8Path, std::string * error)

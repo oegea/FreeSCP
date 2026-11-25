@@ -131,6 +131,14 @@ ConnectResult connectSftp(const std::string & host, int port,
                           const std::string & keyFile = "");   // private key path (SSH); password = its passphrase
 bool remoteConnected();
 std::string remoteCurrentDir();
+// The active session was open and its connection is gone (dropped by the server, the network, a
+// sleeping laptop): every remote call now fails with "not connected".
+bool sessionLost();
+// Open the active session again with the options (and the credentials typed at its prompts) it was
+// opened with, in the same tab. On failure the lost session stays, so it can be retried or closed.
+ConnectResult reconnect();
+// Test hook: close the active session's connection without removing the session.
+void debugDropConnection();
 
 // Richer transfer progress, reported during upload/download.
 struct TransferProgress
