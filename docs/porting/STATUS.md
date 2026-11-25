@@ -1154,6 +1154,8 @@ in, found by `e2e-ssh.sh` and fixed with a guarded patch - see UPSTREAM-PATCHES.
 - **Internal editor** rewritten (`editor.cpp`, `editorlogic.h`): keeps the file's encoding,
   byte-order mark and line endings; refuses binary files; find / replace bar, Find Next, Go to
   Line, Reload, word wrap; status bar with position, encoding and line endings.
+- **Master password** (Preferences > Security; `secrets.cpp`): saved site / tunnel / proxy
+  passwords stored encrypted with the engine's AES-256 scheme; opt-in, nothing changes without it.
 
 ### Bugs found by testing the new operations on every protocol (all fixed)
 - **S3: no folder could be deleted from the panel** (present in 0.3.2): the key went out as `dir//`.
@@ -1168,6 +1170,9 @@ in, found by `e2e-ssh.sh` and fixed with a guarded patch - see UPSTREAM-PATCHES.
 - **Synchronize took a directory it could not read for an empty one**: an unreadable or missing
   remote directory compared as empty (mirror to local "with delete" would have listed every local
   file for deletion), a missing local directory likewise. Both are errors now.
+- **Engine: password encryption crashed on 64-bit Unix** (`Cryptography.cpp`, an `unsigned long *`
+  that is 32 bits only on Windows) and **`HexToBytes()` always returned an empty string**
+  (`towupper()` returns `int` here): both latent since the port began, found by the master password.
 - Upstream merge: an unwritable engine cache ended the connection ("Can't create file").
 - Linux: "Open diagnostics log file" called macOS's `open`.
 
@@ -1184,6 +1189,8 @@ entries carry owner, group, link flag and link target. `freescp-bridge-cli` has 
   reconnect - every refusal text included) and **panels** (the app driven offscreen through the real
   dialogs: columns, status lines, filter, selection, sorting, navigation, bookmarks, Properties,
   links, duplicate / move, reconnect, server information, icons).
+- Section **security** (27 checks: the encryption against an independent computation, saved sites
+  with and without the master password, set / change / remove, every refusal).
 - Section **editor** (16 checks: byte-identical round trips per encoding, binary refusal, find /
   replace, reload, remote files) and keep-up-to-date / safer-synchronize checks in **panels** / **sync**.
 - **Linux in Docker from a Mac**: `native/scripts/linux-docker.sh <arm64|amd64> build|ssh|features`

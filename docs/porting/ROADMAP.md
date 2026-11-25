@@ -29,7 +29,8 @@ mask · Select / Unselect dialog, select all, invert · **Open Directory** with 
 directories** (persisted) · Tabs > **Sites** · **Server and Protocol Information** (with free space) ·
 **reconnect** a lost session in the same tab · Login dialog arranged like WinSCP's (Manage > Rename / Delete) ·
 **Keep Remote Directory up to Date** (watch a local directory, upload every change) · **internal editor**
-that keeps the file's encoding / byte-order mark / line endings, with find & replace, go to line, reload.
+that keeps the file's encoding / byte-order mark / line endings, with find & replace, go to line, reload ·
+**master password** (saved passwords encrypted with the engine's AES-256 scheme).
 
 ## High value, next
 - 🟡 **Drag OUT of folders** — drag-out works for files; remote *directories* aren't exported yet
@@ -46,8 +47,10 @@ that keeps the file's encoding / byte-order mark / line endings, with find & rep
 - ⬜ **ssh-agent** (Unix `SSH_AUTH_SOCK` client; 6.7 added an agent-implementation switch upstream), multiple keys.
 - ⬜ GSSAPI/Kerberos (engine has it stubbed: NO_GSSAPI).
 - ⬜ S3: region/endpoint/session-token/path-style UI; ACLs.
-- ⬜ Site folders, per-site color/notes, **master password** for stored credentials (site, tunnel and proxy
-  passwords are stored as typed).
+- 🟡 **Master password**: done, opt-in (Preferences > Security). Without it site, tunnel and proxy
+  passwords are still stored as typed - WinSCP obfuscates them by default; the system keychain
+  (macOS Keychain / libsecret) would be the better default. No "remember the master password".
+- ⬜ Site folders, per-site color/notes.
 
 ## Transfer
 - 🟡 Transfer settings: done globally; **presets** and per-site / per-transfer settings still to do.

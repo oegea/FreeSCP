@@ -541,3 +541,12 @@ same for the panel listing).
 **k. Two test runs at once need two of everything.** `E2E_WORK` (work directory) and
 `WINSCP_SETTINGS_ORG` (settings store) let a second run go beside a long one; the remote test
 directories are still shared, so only sections with their own directories can overlap.
+
+**l. Windows is LLP64, we are LP64 - and `wint_t` is not a character.** Two bugs that had been in
+the port from the start, in code nothing had called until the master password did:
+`((unsigned long *)key)[i] ^= pad` for 16 words (64 bytes on Windows, 128 here: a smashed stack and
+a wrong HMAC), and `Digits.Pos(towupper(c))`, where `towupper` returns a 16-bit `wint_t` on Windows
+(-> a one-character string) and an `int` here (-> `UnicodeString(int)`, the number as text), so
+`HexToBytes()` never decoded anything. When wiring up engine code for the first time, look for
+`long` used as "32 bits" and for `wint_t` results used as characters - and prove crypto against an
+independent implementation, not against itself (a wrong HMAC still round-trips).
