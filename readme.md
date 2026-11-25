@@ -76,6 +76,18 @@ auto-converted) · host-key verification · drag &amp; drop (incl. from Finder) 
 built-in editor · directory **tree** · **session tabs** · synchronized browsing · bookmarks ·
 overwrite confirmation · recursive chmod · file masks · Open Terminal.
 
+New in **0.4** — the window is laid out like WinSCP's Commander (per-panel toolbars, path caption,
+WinSCP's columns and status lines, menus in WinSCP's order, own icon set), plus:
+
+- **Keep Remote Directory up to Date** — watch a local folder and upload every change.
+- **Properties** with owner / group / special bits, for several files and recursively; **links**;
+  **Duplicate** and **Move To** on the server; panel **filter**; **Open Directory** with bookmarks
+  and recent directories; **Server and Protocol Information**.
+- **Reconnect** a lost session in the same tab · optional **master password** (saved passwords
+  encrypted with AES-256).
+- The **internal editor** keeps a file's encoding and line endings, and has find / replace, go to
+  line and reload.
+
 New in **0.3**:
 
 - **Connect anywhere** — SSH **tunnel** through a jump host, **proxies** (SOCKS4, SOCKS5, HTTP),
