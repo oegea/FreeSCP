@@ -20,6 +20,8 @@
 #            up to Date
 #   editor   the internal editor: encodings, byte-order marks and line endings survive a save,
 #            binary files are refused, find / replace / go to line / reload, remote files
+#   security the master password: the engine's encryption (checked against an independent
+#            computation), saved sites encrypted / decrypted, set / change / remove, the refusals
 #
 # Usage:  native/scripts/e2e/servers.sh up <data-dir>
 #         native/scripts/e2e-features.sh <build-dir> <data-dir> [section ...]     (default: all)
@@ -31,7 +33,7 @@
 set -uo pipefail
 
 BUILD="$(cd "${1:?build dir}" && pwd)"; DATA="$(cd "${2:?data dir (servers.sh up)}" && pwd)"; shift 2
-SECTIONS="${*:-conn auth tunnel proxy ftps xfer resume find sync gui ops panels editor}"
+SECTIONS="${*:-conn auth tunnel proxy ftps xfer resume find sync gui ops panels editor security}"
 . "$DATA/env.sh"
 C="$BUILD/ui-qt/freescp-bridge-cli"
 if [ -x "$BUILD/ui-qt/winscp-qt.app/Contents/MacOS/winscp-qt" ]; then APP="$BUILD/ui-qt/winscp-qt.app/Contents/MacOS/winscp-qt"
@@ -964,6 +966,103 @@ if want editor; then
   gui WINSCP_UITEST="nav|left|$ED;select|left|utf8.txt;edit|left;editshot|$SH/editor.png;editclose"
   chk "editor window renders (with the find / replace bar)" "[ -s $SH/editor.png ]"
   rm -rf "$HE"
+  unset QT_QPA_PLATFORM WINSCP_NO_AUTOLOGIN
+fi
+
+#==============================================================================================
+if want security; then
+  echo "== security: password protection (engine)"
+  CO() { tmo 60 "$C" offline=1 -- "$@" > "$OUT" 2>&1; RC=$?; }
+  CO "protect|s3cret ñ pw|master-1"; H1="$(awk '/^PROTECTED/{print $2}' "$OUT")"
+  CO "protect|s3cret ñ pw|master-1"; H2="$(awk '/^PROTECTED/{print $2}' "$OUT")"
+  chk "a protected value is hex, salted (two runs differ) and does not show the password" \
+      "[ ${#H1} -ge 60 ] && [ \"$H1\" != \"$H2\" ] && echo \"$H1\" | grep -Eq '^[0-9a-f]+\$'"
+  CO "unprotect|$H1|master-1" "unprotect|$H2|master-1"
+  chk "the right master password gives the password back" "[ $RC -eq 0 ] && [ \$(grep -c 'ok=1 plain=s3cret ñ pw' $OUT) = 2 ]"
+  T="${H1%?}"; [ "${H1: -1}" = 0 ] && T="${T}1" || T="${T}0"
+  CO "unprotect|$H1|master-2" "unprotect|$T|master-1" "unprotect|${H1:0:20}|master-1" "unprotect|zz|master-1" "unprotect||master-1" "unprotect|$H1|"
+  chk "a wrong master password, a changed, cut, non-hex or empty value: refused, nothing comes out" "[ $RC -eq 2 ] && [ \$(grep -c 'ok=0 plain=\$' $OUT) = 6 ]"
+  CO "verifier|master-1"; V="$(awk '/^VERIFIER/{print $2}' "$OUT")"
+  CO "verify|master-1|$V"; R1=$RC; CO "verify|master-2|$V" "verify||$V" "verify|master-1|abcd" "verify|master-1|"
+  chk "the stored verifier recognises the master password and nothing else" "[ $R1 -eq 0 ] && [ $RC -eq 2 ] && [ \$(grep -c 'VERIFY ok=0' $OUT) = 4 ] && ! echo \"$V\" | grep -q master"
+  # The same value computed without the engine: PBKDF2-HMAC-SHA1 (1000 rounds) -> AES-256 key + HMAC
+  # key, AES-256-CTR with a little-endian counter from 1, HMAC-SHA1 cut to 10 bytes. This is what
+  # WinSCP on Windows produces; on 64-bit Unix the engine's HMAC was wrong before it was patched.
+  if command -v python3 >/dev/null 2>&1 && command -v openssl >/dev/null 2>&1; then
+    CO "protect|abc DEF 123|independent"; HI="$(awk '/^PROTECTED/{print $2}' "$OUT")"
+    PYO="$(python3 - "$HI" <<'PY'
+import sys, hashlib, hmac, subprocess
+h = bytes.fromhex(sys.argv[1]); salt, ct, mac = h[:16], h[16:-10], h[-10:]
+dk = hashlib.pbkdf2_hmac('sha1', b'independent', salt, 1000, 66)
+ks = subprocess.run(['openssl', 'enc', '-aes-256-ecb', '-K', dk[:32].hex(), '-nopad'], input=(1).to_bytes(16, 'little'), capture_output=True).stdout
+print(bytes(a ^ b for a, b in zip(ct, ks)).decode(), hmac.new(dk[32:64], ct, hashlib.sha1).digest()[:10] == mac)
+PY
+)"
+    chk "the encryption is the standard one (checked with an independent PBKDF2 / AES-CTR / HMAC computation)" "[ \"$PYO\" = 'abc DEF 123 True' ]"
+  else skip "independent check of the encryption (python3 + openssl needed)"; fi
+
+  echo "== security: master password (offscreen)"
+  SH="$W/shots"; GO="$W/gui.out"; mkdir -p "$SH"
+  export QT_QPA_PLATFORM=offscreen WINSCP_NO_AUTOLOGIN=1
+  gui() { tmo 120 env "$@" "$APP" > "$GO" 2>&1; RC=$?; cp "$GO" "$OUT"; }
+  ghas() { grep -aq -- "$1" "$GO"; }
+  ORG="${WINSCP_SETTINGS_ORG:-WinSCP-native-port-test}"; DOM="com.$(echo "$ORG" | tr 'A-Z' 'a-z').WinSCP"; CONF="$HOME/.config/$ORG/WinSCP.conf"
+  sdump() { if [ "$(uname)" = Darwin ]; then defaults read "$DOM" 2>/dev/null; else cat "$CONF" 2>/dev/null; fi; }
+  sclean() { defaults delete "$DOM" >/dev/null 2>&1; rm -rf "$HOME/.config/$ORG" 2>/dev/null; true; }
+  sclean
+  M1='M-one ñ'
+  gui WINSCP_UITEST="savesite|e2e-sec|127.0.0.1:2223:winscp:winscp123|proxy-s3cret-π|tunnel-s3cret-π;siteinfo|e2e-sec;master|state"
+  chk "without a master password a site's passwords are stored as typed (as before)" \
+      "ghas 'pass=<winscp123> proxypass=<proxy-s3cret-π> tunnelpass=<tunnel-s3cret-π>' && ghas 'enabled=0 unlocked=1' && sdump | grep -q winscp123"
+  gui WINSCP_UITEST="master|set|$M1;siteinfo|e2e-sec"
+  chk "setting a master password encrypts every stored password" \
+      "ghas 'set ok=1 enabled=1 unlocked=1' && ! sdump | grep -q 'winscp123\\|proxy-s3cret\\|tunnel-s3cret' && [ \$(sdump | grep -c 'enc:') = 3 ] && ghas 'pass=<winscp123> proxypass=<proxy-s3cret-π> tunnelpass=<tunnel-s3cret-π>'"
+  chk "the master password itself is not stored" "! sdump | grep -q 'M-one'"
+  gui WINSCP_UITEST="siteinfo|e2e-sec;master|state"
+  chk "a new start without the master password: the saved passwords are not available" "ghas 'pass=<> proxypass=<> tunnelpass=<>' && ghas 'enabled=1 unlocked=0' && ghas 'master password is needed'"
+  gui WINSCP_MASTER_PASSWORD="$M1" WINSCP_UITEST="siteinfo|e2e-sec;connectsite|e2e-sec;print|right;mainstatus"
+  chk "with it they are decrypted and the saved site connects" "ghas 'pass=<winscp123>' && ghas '^\\[panel right\\] /config' && ghas \"protocol='SFTP\""
+  gui WINSCP_MASTER_PASSWORD=wrong WINSCP_UITEST="siteinfo|e2e-sec"
+  chk "a wrong master password opens nothing" "ghas 'master password given is wrong' && ghas 'pass=<> proxypass=<> tunnelpass=<>'"
+  gui WINSCP_MASTER_PASSWORD="$M1" WINSCP_UITEST="savesite|e2e-sec2|127.0.0.1:2223:winscp:other-pw-456;siteinfo|e2e-sec2"
+  chk "a site saved while a master password is set is stored encrypted" "ghas 'savesite\\] e2e-sec2 ok=1' && ghas 'pass=<other-pw-456>' && ! sdump | grep -q other-pw-456"
+  gui WINSCP_UITEST="savesite|e2e-sec3|127.0.0.1:2223:winscp:third-pw-789;siteinfo|e2e-sec3"
+  chk "without the master password a site with a password is NOT saved (never as plain text)" "ghas 'savesite\\] e2e-sec3 ok=0' && ghas 'site\\] e2e-sec3 ok=0' && ! sdump | grep -q 'third-pw-789\\|e2e-sec3'"
+  gui WINSCP_UITEST="savesite|e2e-sec4|127.0.0.1:2223:winscp:;siteinfo|e2e-sec4"
+  chk "a site without a password can be saved without the master password" "ghas 'savesite\\] e2e-sec4 ok=1' && ghas 'site\\] e2e-sec4 ok=1 user=winscp pass=<>'"
+  gui WINSCP_UITEST="master|set|M-two|wrong-current;master|set|M-two|$M1;siteinfo|e2e-sec;siteinfo|e2e-sec2"
+  chk "changing it needs the current one; afterwards everything opens with the new one" \
+      "ghas 'set ok=0 .*current master password is wrong' && ghas 'set ok=1' && ghas 'e2e-sec ok=1 user=winscp pass=<winscp123>' && ghas 'pass=<other-pw-456>'"
+  gui WINSCP_MASTER_PASSWORD="$M1" WINSCP_UITEST="siteinfo|e2e-sec";      chk "the old master password no longer works" "ghas 'pass=<> '"
+  gui WINSCP_MASTER_PASSWORD=M-two WINSCP_UITEST="siteinfo|e2e-sec;master|lock;master|state;siteinfo|e2e-sec2"
+  chk "the new one does; locking forgets it again (scripted runs take it from the environment once more)" "ghas 'e2e-sec ok=1 user=winscp pass=<winscp123>' && ghas 'lock ok=1 enabled=1 unlocked=0' && ghas 'pass=<other-pw-456>'"
+  MD="WINSCP_DIALOG_ACCEPT=masterpassword"
+  gui WINSCP_DIALOG_SHOTS=$SH WINSCP_DIALOG_SET="masterpassword.current=M-two;masterpassword.new=M-3;masterpassword.confirm=M-x" $MD WINSCP_UITEST="master|dialog"
+  chk "dialog: the two new passwords must be the same" "[ -s $SH/masterpassword.png ] && ghas 'not the same' && ghas 'dialog ok=0'"
+  gui WINSCP_DIALOG_SET="masterpassword.current=nope;masterpassword.new=M-3;masterpassword.confirm=M-3" $MD WINSCP_UITEST="master|dialog"
+  chk "dialog: the current master password is checked" "ghas 'current master password is wrong' && ghas 'dialog ok=0'"
+  gui WINSCP_DIALOG_SET="masterpassword.current=M-two;masterpassword.new=;masterpassword.confirm=" $MD WINSCP_UITEST="master|dialog"
+  chk "dialog: an empty master password is refused" "ghas 'Enter the new master password' && ghas 'dialog ok=0'"
+  gui WINSCP_DIALOG_SET="masterpassword.current=M-two;masterpassword.new=M-3;masterpassword.confirm=M-3" $MD WINSCP_UITEST="master|dialog;siteinfo|e2e-sec"
+  chk "dialog: change the master password" "ghas 'dialog ok=1 enabled=1' && ghas 'pass=<winscp123>'"
+  # a stored value that does not belong to this master password: nothing must be half-converted
+  BAD="enc:00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"
+  if [ "$(uname)" = Darwin ]; then defaults write "$DOM" "sites.e2e-sec2.pass" -string "$BAD"; else sed -i "s|^e2e-sec2\\\\pass=.*|e2e-sec2\\\\pass=$BAD|" "$CONF"; fi
+  gui WINSCP_MASTER_PASSWORD=M-3 WINSCP_UITEST="siteinfo|e2e-sec2;master|remove|M-3;master|state;siteinfo|e2e-sec"
+  chk "a stored value that cannot be decrypted: reads as no password; removing the master password changes nothing at all" \
+      "ghas 'e2e-sec2 ok=1 user=winscp pass=<>' && ghas 'cannot be decrypted' && ghas 'state ok=1 enabled=1' && [ \$(sdump | grep -c 'enc:') = 4 ] && ghas 'e2e-sec ok=1 user=winscp pass=<winscp123>'"
+  gui WINSCP_MASTER_PASSWORD=M-3 WINSCP_UITEST="savesite|e2e-sec2|127.0.0.1:2223:winscp:other-pw-456"
+  gui WINSCP_DIALOG_SET="masterpassword.current=M-3;masterpassword.remove=1" $MD WINSCP_UITEST="master|dialog;master|state"
+  chk "dialog: remove the master password: the passwords are stored as typed again" \
+      "ghas 'dialog ok=1 enabled=0' && sdump | grep -q winscp123 && sdump | grep -q other-pw-456 && ! sdump | grep -q 'enc:\\|masterVerifier'"
+  gui WINSCP_UITEST="siteinfo|e2e-sec;siteinfo|e2e-sec2;savesite|e2e-sec5|h:22:u:enc:abcd;savesite|e2e-sec6|h:22:u:plain:x;siteinfo|e2e-sec5;siteinfo|e2e-sec6"
+  chk "afterwards everything is readable without a master password" "ghas 'e2e-sec ok=1 user=winscp pass=<winscp123> proxypass=<proxy-s3cret-π> tunnelpass=<tunnel-s3cret-π>' && ghas 'pass=<other-pw-456>'"
+  chk "a password that itself starts with 'enc:' or 'plain:' is kept as it is" "ghas 'e2e-sec5 ok=1 user=u pass=<enc:abcd>' && ghas 'e2e-sec6 ok=1 user=u pass=<plain:x>'"
+  gui WINSCP_UITEST="master|set|M-9;siteinfo|e2e-sec5;siteinfo|e2e-sec6;master|remove|M-9;siteinfo|e2e-sec5;siteinfo|e2e-sec6"
+  chk "...also through setting and removing a master password" "[ \$(grep -ac 'pass=<enc:abcd>' $GO) = 2 ] && [ \$(grep -ac 'pass=<plain:x>' $GO) = 2 ]"
+  gui WINSCP_DIALOG_SHOTS=$SH WINSCP_PREFS_TAB=3 WINSCP_UITEST="prefs"
+  chk "Preferences > Security renders" "[ -s $SH/preferences.png ]"
+  sclean
   unset QT_QPA_PLATFORM WINSCP_NO_AUTOLOGIN
 fi
 

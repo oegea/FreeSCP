@@ -80,4 +80,16 @@ unsigned long winscp_wcstoul(const wchar_t * s, wchar_t ** end, int base);
 #define wcstol(s, e, b)  winscp_wcstol((s), (e), (b))
 #define wcstoul(s, e, b) winscp_wcstoul((s), (e), (b))
 
+#ifdef __cplusplus
+// towupper() / towlower() return wint_t. On Windows that is a 16-bit character type, so the engine
+// passes the result where a character is expected - `Digits.Pos(towupper(Hex[i]))` in HexToBytes().
+// Here wint_t is `int`, which picked UnicodeString(int): the NUMBER as text ("65" for 'A'). Nothing
+// was ever found, HexToBytes() returned an empty string for every input, and with it every
+// hex-encoded value of the configuration read back as empty. These return wchar_t.
+inline wchar_t winscp_towupper(wchar_t c) { return static_cast<wchar_t>(::towupper(static_cast<wint_t>(c))); }
+inline wchar_t winscp_towlower(wchar_t c) { return static_cast<wchar_t>(::towlower(static_cast<wint_t>(c))); }
+#define towupper(c) winscp_towupper(static_cast<wchar_t>(c))
+#define towlower(c) winscp_towlower(static_cast<wchar_t>(c))
+#endif
+
 #endif

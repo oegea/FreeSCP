@@ -158,6 +158,16 @@ void setConfirmCallback(const std::function<bool(const std::string &)> & cb);
 // and sets `error` to the engine's message; the session stays in its previous directory.
 std::vector<DirEntry> listRemoteDir(const std::string & utf8Path, std::string * error = nullptr);
 
+//--- protecting stored passwords with a master password ---
+// WinSCP's own scheme (Cryptography.cpp): AES-256 with a key derived from the master password and a
+// random salt, plus a MAC. The result is text (hex) for the settings store.
+std::string protectSecret(const std::string & plainUtf8, const std::string & masterPassword);
+// False if the master password is wrong or the value is damaged; `plain` is then left alone.
+bool unprotectSecret(const std::string & hex, const std::string & masterPassword, std::string & plainUtf8);
+// A value that tells whether a master password is the right one without storing it.
+std::string masterVerifier(const std::string & masterPassword);
+bool masterVerify(const std::string & masterPassword, const std::string & verifierHex);
+
 //--- transfer settings (WinSCP "Transfer Settings": TCopyParamType) ---
 // Apply to every upload, download and synchronization started after they are set.
 struct TransferSettings

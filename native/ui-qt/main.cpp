@@ -96,6 +96,7 @@
 #include "localops.h"
 #include "keepuptodate.h"
 #include "editor.h"
+#include "secrets.h"
 
 #ifndef FREESCP_VERSION
 #define FREESCP_VERSION "dev"
@@ -1506,6 +1507,27 @@ int main(int argc, char ** argv)
     pnLay->addWidget(cbAlt); pnLay->addWidget(cmpBox); pnLay->addStretch(1);
     tabs->addTab(pnTab, "Panels");
 
+    // --- Security: the master password protecting the saved sites' passwords ---
+    auto * secTab = new QWidget; auto * secLay = new QVBoxLayout(secTab);
+    auto * secState = new QLabel; secState->setWordWrap(true);
+    auto * secBtn = new QPushButton; secBtn->setObjectName("masterButton");
+    auto * secHint = new QLabel("With a master password the passwords of saved sites (also tunnel and proxy passwords) are stored "
+                                "encrypted (AES-256). You are asked for it once per start, when a saved password is first needed.");
+    secHint->setWordWrap(true); secHint->setStyleSheet("color: gray;");
+    auto refreshSec = [secState, secBtn] {
+      const bool on = secrets::masterEnabled();
+      secState->setText(on ? "A master password is set: the saved passwords are stored encrypted."
+                           : "No master password is set: the saved passwords are stored unprotected, as typed.");
+      secBtn->setText(on ? "Change or remove the &master password\xE2\x80\xA6" : "Set a &master password\xE2\x80\xA6");
+    };
+    refreshSec();
+    QObject::connect(secBtn, &QPushButton::clicked, &d, [&d, refreshSec] { secrets::showMasterPasswordDialog(&d); refreshSec(); });
+    auto * secBtnRow = new QHBoxLayout; secBtnRow->addWidget(secBtn); secBtnRow->addStretch(1);
+    secLay->addWidget(secState); secLay->addLayout(secBtnRow); secLay->addSpacing(8); secLay->addWidget(secHint); secLay->addStretch(1);
+    tabs->addTab(secTab, "Security");
+    { bool okIdx = false; const int forced = qEnvironmentVariable("WINSCP_PREFS_TAB").toInt(&okIdx);   // dev: render a given page
+      if (okIdx && forced >= 0 && forced < tabs->count()) tabs->setCurrentIndex(forced); }
+
     auto * bb = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
     outer->addWidget(bb);
     QObject::connect(bb, &QDialogButtonBox::accepted, &d, &QDialog::accept);
@@ -2049,6 +2071,33 @@ int main(int argc, char ** argv)
   };
   uiCmd["editshot"] = [&](const QStringList & a) { if (EditorWindow * e = lastEditor()) { e->showFindBar(true); QApplication::processEvents(); e->grab().save(a.value(0)); } };
   uiCmd["editclose"] = [&](const QStringList &) { if (EditorWindow * e = lastEditor()) { e->close(); QApplication::processEvents(); } };
+  // --- master password ---
+  uiCmd["master"] = [&](const QStringList & a) {      // master|set|<new>[|<current>]  master|remove|<current>  master|dialog  master|lock  master|state
+    QString err; bool ok = true;
+    if (a.value(0) == "set") ok = secrets::setMaster(a.value(2), a.value(1), &err);
+    else if (a.value(0) == "remove") ok = secrets::removeMaster(a.value(1), &err);
+    else if (a.value(0) == "dialog") ok = secrets::showMasterPasswordDialog(&window);
+    else if (a.value(0) == "lock") secrets::lock();
+    fprintf(stdout, "[master] %s ok=%d enabled=%d unlocked=%d %s\n", a.value(0).toUtf8().constData(), ok ? 1 : 0,
+            secrets::masterEnabled() ? 1 : 0, secrets::unlocked() ? 1 : 0, err.toUtf8().constData());
+    fflush(stdout);
+  };
+  uiCmd["savesite"] = [&](const QStringList & a) {    // savesite|<name>|host:port:user:pass[|proxypass|tunnelpass]
+    const QStringList p = a.value(1).split(':');
+    engine::ConnectOptions o; o.host = s8(p.value(0)); o.port = p.value(1).toInt(); o.user = s8(p.value(2)); o.password = s8(p.mid(3).join(':'));
+    o.proxyPassword = s8(a.value(2)); o.tunnelPassword = s8(a.value(3));
+    const bool ok = saveSite(a.value(0), o);
+    fprintf(stdout, "[savesite] %s ok=%d\n", a.value(0).toUtf8().constData(), ok ? 1 : 0); fflush(stdout);
+  };
+  uiCmd["siteinfo"] = [&](const QStringList & a) {    // siteinfo|<name> : what loading the site gives (test data only)
+    engine::ConnectOptions o; const bool ok = loadSite(a.value(0), o);
+    fprintf(stdout, "[site] %s ok=%d user=%s pass=<%s> proxypass=<%s> tunnelpass=<%s>\n", a.value(0).toUtf8().constData(), ok ? 1 : 0,
+            o.user.c_str(), o.password.c_str(), o.proxyPassword.c_str(), o.tunnelPassword.c_str());
+    fflush(stdout);
+  };
+  uiCmd["connectsite"] = [&](const QStringList & a) { // connectsite|<name> : as Tabs > Sites
+    engine::ConnectOptions o; if (loadSite(a.value(0), o)) connectWith(o);
+  };
   uiCmd["keepuptodate"] = [&](const QStringList &) { doKeepUpToDate(); };   // with WINSCP_KEEP_MS: watch for that long
   uiCmd["dropsession"] = [&](const QStringList &) { engine::debugDropConnection(); };   // the connection is gone, the tab stays
   uiCmd["nav"] = [&](const QStringList & a) { (a.value(0) == "right" ? right : left)->navigate(a.value(1)); };

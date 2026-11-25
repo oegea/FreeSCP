@@ -16,6 +16,7 @@
 #include "RemoteFiles.h"
 #include "Exceptions.h"
 #include "TextsCore.h"        // TUNNEL_INSTRUCTION2 (recognizing prompts asked by the tunnel)
+#include "Cryptography.h"     // AES256EncyptWithMAC & co. (master password)
 #include <algorithm>
 #include <cstdio>
 #include <ctime>
@@ -624,6 +625,65 @@ bool validateFileMask(const std::string & mask, std::string * error)
   try { TFileMasks m; m.Masks = FromU8(mask); return true; }
   catch (Exception & E) { if (error) *error = ExceptionToU8(E); return false; }
   catch (...) { if (error) *error = "invalid mask"; return false; }
+}
+
+//--- master password ---
+namespace {
+bool IsHex(const std::string & s)
+{
+  if (s.empty() || (s.size() % 2) != 0) return false;
+  for (char c : s) if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F'))) return false;
+  return true;
+}
+} // namespace
+
+std::string protectSecret(const std::string & plainUtf8, const std::string & masterPassword)
+{
+  ENGINE_LOCK;
+  EnsureEngineInited();
+  RawByteString out;
+  AES256EncyptWithMAC(RawByteString(plainUtf8.c_str(), static_cast<int>(plainUtf8.size())), FromU8(masterPassword), out);
+  return ToU8(BytesToHex(out, false));
+}
+
+bool unprotectSecret(const std::string & hex, const std::string & masterPassword, std::string & plainUtf8)
+{
+  ENGINE_LOCK;
+  EnsureEngineInited();
+  if (!IsHex(hex)) return false;
+  try
+  {
+    const RawByteString in = HexToBytes(FromU8(hex));
+    if (in.Length() < 16) return false;        // shorter than salt + MAC: not something we wrote
+    RawByteString out;
+    if (!AES256DecryptWithMAC(in, FromU8(masterPassword), out)) return false;
+    plainUtf8.assign(out.c_str(), static_cast<size_t>(out.Length()));
+    return true;
+  }
+  catch (...) { return false; }
+}
+
+std::string masterVerifier(const std::string & masterPassword)
+{
+  ENGINE_LOCK;
+  EnsureEngineInited();
+  RawByteString v;
+  AES256CreateVerifier(FromU8(masterPassword), v);
+  return ToU8(BytesToHex(v, false));
+}
+
+bool masterVerify(const std::string & masterPassword, const std::string & verifierHex)
+{
+  ENGINE_LOCK;
+  EnsureEngineInited();
+  if (!IsHex(verifierHex)) return false;
+  try
+  {
+    const RawByteString v = HexToBytes(FromU8(verifierHex));
+    if (v.Length() < 20) return false;
+    return AES256Verify(FromU8(masterPassword), v);
+  }
+  catch (...) { return false; }
 }
 
 bool matchFileMask(const std::string & mask, const std::vector<DirEntry> & entries, std::vector<bool> & matches, std::string * error)

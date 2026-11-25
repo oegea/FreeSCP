@@ -25,7 +25,8 @@ LoginParams showLoginDialog(QWidget * parent, const engine::ConnectOptions * pre
 // Saved sites (QSettings group "sites/<name>").
 QStringList savedSiteNames();
 bool loadSite(const QString & name, engine::ConnectOptions & o);
-void saveSite(const QString & name, const engine::ConnectOptions & o);
+// False if the site was not saved (a master password is set and was not given: see secrets.h).
+bool saveSite(const QString & name, const engine::ConnectOptions & o);
 void deleteSite(const QString & name);
 
 // "SFTP", "SCP", "FTP", "WebDAV", "S3".

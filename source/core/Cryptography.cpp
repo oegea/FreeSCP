@@ -65,6 +65,15 @@
 #define OUT_BLOCK_LENGTH    20
 #define HMAC_IN_DATA        0xffffffff
 
+#ifndef _WIN32
+// WINSCP-NATIVE-PORT: the key is xor-ed with the pads 32 bits at a time through an
+// `unsigned long *`. That is 32 bits on Windows, but 64 on Linux and macOS, where the loop ran
+// over twice the key (64 bytes past its end: a smashed stack) and left every other word un-padded.
+typedef unsigned int hmac_pad_word;
+#else
+typedef unsigned long hmac_pad_word;
+#endif
+
 struct hmac_ctx
 {   unsigned char   key[IN_BLOCK_LENGTH];
     ssh_hash       *ctx;
@@ -137,7 +146,7 @@ static void hmac_sha1_data(const unsigned char data[], unsigned long data_len, h
 
         /* xor ipad into key value  */
         for(i = 0; i < (IN_BLOCK_LENGTH >> 2); ++i)
-            ((unsigned long*)cx->key)[i] ^= 0x36363636;
+            ((hmac_pad_word*)cx->key)[i] ^= 0x36363636;
 
         /* and start hash operation */
         sha1_begin(cx->ctx);
@@ -165,7 +174,7 @@ static void hmac_sha1_end(unsigned char mac[], unsigned long mac_len, hmac_ctx c
 
     /* set outer key value using opad and removing ipad */
     for(i = 0; i < (IN_BLOCK_LENGTH >> 2); ++i)
-        ((unsigned long*)cx->key)[i] ^= 0x36363636 ^ 0x5c5c5c5c;
+        ((hmac_pad_word*)cx->key)[i] ^= 0x36363636 ^ 0x5c5c5c5c;
 
     /* perform the outer hash operation */
     sha1_begin(cx->ctx);

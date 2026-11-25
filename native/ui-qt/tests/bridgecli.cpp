@@ -102,6 +102,26 @@ int main(int argc, char ** argv)
     return true;
   });
 
+  // offline=1: only commands that need no session (password protection)
+  if (opt.count("offline"))
+  {
+    int bad = 0;
+    for (const std::string & c : commands)
+    {
+      std::vector<std::string> a = split(c, '|');
+      bool ok = true;
+      if (a[0] == "protect") std::printf("PROTECTED %s\n", engine::protectSecret(arg(a, 1), arg(a, 2)).c_str());        // protect|plain|master
+      else if (a[0] == "unprotect")                                                                                     // unprotect|hex|master
+      { std::string plain; ok = engine::unprotectSecret(arg(a, 1), arg(a, 2), plain); std::printf("UNPROTECTED ok=%d plain=%s\n", ok ? 1 : 0, plain.c_str()); }
+      else if (a[0] == "verifier") std::printf("VERIFIER %s\n", engine::masterVerifier(arg(a, 1)).c_str());             // verifier|master
+      else if (a[0] == "verify") { ok = engine::masterVerify(arg(a, 1), arg(a, 2)); std::printf("VERIFY ok=%d\n", ok ? 1 : 0); }   // verify|master|verifier
+      else { std::fprintf(stderr, "unknown offline command: %s\n", a[0].c_str()); return 3; }
+      std::printf("%s %s\n", ok ? "OK  " : "FAIL", a[0].c_str());
+      if (!ok) bad = 1;
+    }
+    return bad ? 2 : 0;
+  }
+
   engine::ConnectResult r = engine::connect(o);
   if (!r.ok) { std::printf("CONNECT FAILED: %s\n", r.error.c_str()); engine::shutdown(3000); return 1; }
   std::printf("CONNECTED cwd=%s\n", r.currentDir.c_str());

@@ -9,9 +9,11 @@
 #include "logindialog.h"
 #include "uicommon.h"
 #include "icons.h"
+#include "secrets.h"
 
 #include <QCheckBox>
 #include <QComboBox>
+#include <QApplication>
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QDir>
@@ -257,7 +259,10 @@ bool loadSite(const QString & name, engine::ConnectOptions & o)
   o.host = s8(s.value("host").toString());
   o.port = s.value("port", 22).toInt();
   o.user = s8(s.value("user").toString());
-  o.password = s8(s.value("pass").toString());
+  // encrypted values need the master password: asked for once per run; without it the password is
+  // simply not filled in (the connection then asks for it, as for a site saved without one)
+  QWidget * top = QApplication::activeWindow();
+  o.password = s8(secrets::fromStored(s.value("pass").toString(), top, nullptr));
   o.keyFile = s8(s.value("keyFile").toString());
   // Sites saved before 0.3 have no "tls" key (the Encryption choice was not stored): an HTTP-based
   // site on port 443 was necessarily meant as HTTPS.
@@ -271,19 +276,27 @@ bool loadSite(const QString & name, engine::ConnectOptions & o)
   o.proxyHost = s8(s.value("proxyHost").toString());
   o.proxyPort = s.value("proxyPort", 0).toInt();
   o.proxyUser = s8(s.value("proxyUser").toString());
-  o.proxyPassword = s8(s.value("proxyPass").toString());
+  o.proxyPassword = s8(secrets::fromStored(s.value("proxyPass").toString(), top, nullptr));
   o.tunnel = s.value("tunnel", false).toBool();
   o.tunnelHost = s8(s.value("tunnelHost").toString());
   o.tunnelPort = s.value("tunnelPort", 22).toInt();
   o.tunnelUser = s8(s.value("tunnelUser").toString());
-  o.tunnelPassword = s8(s.value("tunnelPass").toString());
+  o.tunnelPassword = s8(secrets::fromStored(s.value("tunnelPass").toString(), top, nullptr));
   o.tunnelKeyFile = s8(s.value("tunnelKeyFile").toString());
   s.endGroup();
   return true;
 }
 
-void saveSite(const QString & name, const engine::ConnectOptions & o)
+bool saveSite(const QString & name, const engine::ConnectOptions & o)
 {
+  // With a master password the passwords are stored encrypted - never as plain text because the
+  // master password was not given: then the site is not saved at all.
+  QWidget * top = QApplication::activeWindow();
+  bool ok1 = true, ok2 = true, ok3 = true;
+  const QString pass = secrets::toStored(u8(o.password), top, &ok1);
+  const QString proxyPass = secrets::toStored(u8(o.proxyPassword), top, &ok2);
+  const QString tunnelPass = secrets::toStored(u8(o.tunnelPassword), top, &ok3);
+  if (!ok1 || !ok2 || !ok3) return false;
   QSettings s;
   s.remove("sites/" + name);                 // no stale keys from an earlier version of the site
   s.beginGroup("sites/" + name);
@@ -291,7 +304,7 @@ void saveSite(const QString & name, const engine::ConnectOptions & o)
   s.setValue("host", u8(o.host));
   s.setValue("port", o.port);
   s.setValue("user", u8(o.user));
-  s.setValue("pass", u8(o.password));        // stored as typed, like the rest of the site (no master password yet)
+  s.setValue("pass", pass);                  // as typed, or encrypted when a master password is set (secrets.h)
   s.setValue("keyFile", u8(o.keyFile));
   s.setValue("tls", o.tls);
   s.setValue("ftpExplicitTls", o.ftpExplicitTls);
@@ -302,15 +315,16 @@ void saveSite(const QString & name, const engine::ConnectOptions & o)
   s.setValue("proxyHost", u8(o.proxyHost));
   s.setValue("proxyPort", o.proxyPort);
   s.setValue("proxyUser", u8(o.proxyUser));
-  s.setValue("proxyPass", u8(o.proxyPassword));
+  s.setValue("proxyPass", proxyPass);
   s.setValue("tunnel", o.tunnel);
   s.setValue("tunnelHost", u8(o.tunnelHost));
   s.setValue("tunnelPort", o.tunnelPort);
   s.setValue("tunnelUser", u8(o.tunnelUser));
-  s.setValue("tunnelPass", u8(o.tunnelPassword));
+  s.setValue("tunnelPass", tunnelPass);
   s.setValue("tunnelKeyFile", u8(o.tunnelKeyFile));
   s.endGroup();
   s.sync();                                  // persist immediately (survives an abrupt close)
+  return true;
 }
 
 void deleteSite(const QString & name)
@@ -527,7 +541,8 @@ LoginParams showLoginDialog(QWidget * parent, const engine::ConnectOptions * pre
     if (savedSiteNames().contains(name)) { appMessage(&dlg, "Rename site", QString("A site named \"%1\" already exists.").arg(name)); return; }
     engine::ConnectOptions o;
     if (!loadSite(old, o)) return;
-    saveSite(name, o); deleteSite(old);
+    if (!saveSite(name, o)) { appMessage(&dlg, "Rename site", "The site was not renamed: the master password is needed to store its password."); return; }
+    deleteSite(old);
     reloadSites(); selectSite(name);
   });
   QObject::connect(saveBtn, &QPushButton::clicked, &dlg, [&] {
@@ -538,7 +553,7 @@ LoginParams showLoginDialog(QWidget * parent, const engine::ConnectOptions * pre
     QString name = QInputDialog::getText(&dlg, "Save session", "Site name:", QLineEdit::Normal, def, &okIn).trimmed();
     if (!okIn || name.isEmpty()) return;
     name.replace('/', '_');                  // '/' would nest the QSettings group
-    saveSite(name, o);
+    if (!saveSite(name, o)) { appMessage(&dlg, "Save session", "The site was not saved: the master password is needed to store its password."); return; }
     reloadSites();
     selectSite(name);
   });

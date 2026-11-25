@@ -218,3 +218,16 @@ section. The two new `source/` touches (plus the defs.h `_WIN32` tightening abov
   has not been received yet (`nGotTransferEndReply & 1`). Upstream sets it unconditionally; if the
   226 was already consumed, the reply to the NEXT command is skipped and the session stalls until
   the time-out. (The same race exists upstream; kept guarded so the Windows tree is unchanged.)
+
+## 2026-11-25 - password encryption on 64-bit Unix
+
+- **source/core/Cryptography.cpp** - `hmac_sha1_data()` / `hmac_sha1_end()` xor the HMAC pads into the
+  64-byte key through an `unsigned long *`, 16 words at a time. `unsigned long` is 32 bits on Windows
+  (LLP64) and 64 bits on Linux and macOS (LP64): there the loop wrote 64 bytes past the key (the
+  stack protector aborted the process) and the MAC was wrong. The pointer type is now the typedef
+  `hmac_pad_word` = `unsigned int` under `#ifndef _WIN32`, `unsigned long` on Windows (unchanged
+  there). This code is WinSCP's AES password protection (master password, `AES256EncyptWithMAC`) and
+  its file encryption (`TEncryption`); nothing in the port had called it before the master password
+  was added. The result is checked against an independent PBKDF2-HMAC-SHA1 / AES-256-CTR / HMAC-SHA1
+  computation in `e2e-features.sh` (section "security"), i.e. it matches what Windows produces.
+  Upstream `dev` still has the `unsigned long *`.
