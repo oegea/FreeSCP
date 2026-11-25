@@ -8,10 +8,10 @@ later upstream changes in safely.
 
 | | |
 |---|---|
-| **Upstream commit** | `82e192fff` — `Bumping devel version to 6.7.2` (= tag `6.7.1` + 6 post-release commits) |
-| Upstream version | WinSCP **6.7.1** (stable) plus the fixes for issues 2482–2485 |
-| Author / date | Martin Přikryl — 2026-11-11 |
-| Merged into the port | `8e38711ad` (2026-11-13), merge of `winscp/master` |
+| **Upstream commit** | `b56534410` — `Issue 2492 – Failure when SCP upload fails` (= tag `6.7.1` + 15 post-release commits) |
+| Upstream version | WinSCP **6.7.1** (stable) plus the fixes for issues 2482–2485, 2487, 2489, 2492 |
+| Author / date | Martin Přikryl — 2026-11-23 |
+| Merged into the port | 2026-11-25, merge of `winscp/master` (the previous one: `8e38711ad`, 2026-11-13) |
 | Bundled libraries at this base | PuTTY 0.85 · neon 0.37.1 · Expat 2.10.0 · OpenSSL 3.5.9 (vendored copy; the native build links the system/Homebrew OpenSSL 3) |
 | Upstream repo | https://github.com/winscp/winscp (official mirror) — remote `winscp` |
 
@@ -21,6 +21,8 @@ History of bases:
 |---|---|---|
 | `74a8c03f4` | 2026-06-17 | Original fork point. First FreeSCP commit on top: `bea2d9b5c`. |
 | `82e192fff` | 2026-11-13 | 737 upstream commits (6.5.x → 6.6 → 6.7.1). Triage and the port adaptation it needed are in the merge commit message of `8e38711ad`. |
+
+| `b56534410` | 2026-11-25 | 9 upstream commits, 3 of them in the engine: Issue 2492 (SCP upload failure), Issue 2487 (failed configuration save; replaced our destructor patch, needed a new guard - see UPSTREAM-PATCHES.md), a double free in `FtpControlSocket.cpp`. `winscp/dev` (6.8, unreleased) was NOT merged. |
 
 Everything in `source/`, `libs/`, `dotnet/`, `deployment/` is WinSCP's; the port lives in `native/` +
 `docs/porting/`. The only edits inside `source/`/`libs/` are the small guarded patches listed in
@@ -55,7 +57,7 @@ When asked to "update to the latest WinSCP", follow this:
    git remote add winscp https://github.com/winscp/winscp.git
    git fetch winscp
    ```
-2. **Pick the target** upstream commit/tag, call it `$NEW`. Record the old base: `OLD=82e192fff`.
+2. **Pick the target** upstream commit/tag, call it `$NEW`. Record the old base: `OLD=b56534410`.
 3. **Get the diff that matters** — only the parts the port compiles (engine + vendored libs), not the
    Windows GUI/IDE/build files we don't use:
    ```sh

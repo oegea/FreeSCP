@@ -208,8 +208,9 @@ __fastcall THierarchicalStorage::~THierarchicalStorage()
 {
 }
 //---------------------------------------------------------------------------
-void __fastcall THierarchicalStorage::Flush()
+bool THierarchicalStorage::Flush()
 {
+  return false;
 }
 //---------------------------------------------------------------------------
 void __fastcall THierarchicalStorage::SetAccessMode(TStorageAccessMode value)
@@ -1205,6 +1206,13 @@ UnicodeString __fastcall TCustomIniFileStorage::GetSource()
   return Storage;
 }
 //---------------------------------------------------------------------------
+bool TCustomIniFileStorage::Flush()
+{
+  return
+    (FMasterStorage.get() != nullptr) &&
+    FMasterStorage->Flush();
+}
+//---------------------------------------------------------------------------
 UnicodeString __fastcall TCustomIniFileStorage::GetCurrentSection()
 {
   return ExcludeTrailingBackslash(GetCurrentSubKeyMunged());
@@ -1760,22 +1768,20 @@ __fastcall TIniFileStorage::TIniFileStorage(const UnicodeString & AStorage, TCus
   ApplyOverrides();
 }
 //---------------------------------------------------------------------------
-void __fastcall TIniFileStorage::Flush()
+bool TIniFileStorage::Flush()
 {
-  if (FMasterStorage.get() != NULL)
-  {
-    FMasterStorage->Flush();
-  }
-  // This does not seem correct, if storage is written after it is flushed (though we probably never do that currently)
+  bool Result = TCustomIniFileStorage::Flush();
   if ((FOriginal != NULL) && !FIniFile->FileName.IsEmpty())
   {
-    std::unique_ptr<TStrings> Strings(new TStringList);
+    TStrings * Strings = new TStringList();
     std::unique_ptr<TStrings> Original(FOriginal);
-    FOriginal = NULL;
+    // even if saving fails, do not try again, unless contents is changes (what we never do anyway)
+    FOriginal = Strings;
 
-    dynamic_cast<TMemIniFile *>(FIniFile)->GetStrings(Strings.get());
+    dynamic_cast<TMemIniFile *>(FIniFile)->GetStrings(Strings);
     if (!Strings->Equals(Original.get()))
     {
+      Result = true;
       int Attr;
       // preserve attributes (especially hidden)
       bool Exists = FileExists(ApiPath(Storage));
@@ -1821,6 +1827,18 @@ void __fastcall TIniFileStorage::Flush()
         // "access denied" errors upon implicit saves to existing file are ignored
         if (Explicit || !Exists || (Error != ERROR_ACCESS_DENIED))
         {
+#ifndef _WIN32
+          // WINSCP-NATIVE-PORT: in the port this file is only the engine's cache (host keys,
+          // certificates, banners). Since Issue 2487 the code that writes it flushes explicitly, in
+          // the middle of connecting, so a cache that cannot be written (missing or read-only
+          // directory, full disk) ended the connection. An implicit save that fails is logged and
+          // dropped - the session then behaves as "connect once". Explicit saves still report.
+          if (!Explicit)
+          {
+            AppLogFmt(L"Error saving configuration to %s (system error %d)", (Storage, Error));
+            return Result;
+          }
+#endif
           throw EOSExtException(FMTLOAD((Exists ? WRITE_ERROR : CREATE_FILE_ERROR), (Storage)));
         }
       }
@@ -1840,32 +1858,33 @@ void __fastcall TIniFileStorage::Flush()
         }
         catch (Exception & E)
         {
+#ifndef _WIN32
+          // WINSCP-NATIVE-PORT: see above (e.g. disk full)
+          if (!Explicit)
+          {
+            AppLogFmt(L"Error writing configuration to %s: %s", (Storage, E.Message));
+            return Result;
+          }
+#endif
           throw ExtException(&E, FMTLOAD(WRITE_ERROR, (Storage)));
         }
       }
     }
   }
+  return Result;
 }
 //---------------------------------------------------------------------------
 __fastcall TIniFileStorage::~TIniFileStorage()
 {
-#ifndef _WIN32
-  // WINSCP-NATIVE-PORT: a standard C++ destructor is noexcept, so the exception Flush() raises
-  // when the INI file cannot be written (read-only/missing directory, full disk) would call
-  // std::terminate() and kill the application - e.g. while remembering a host key fingerprint in
-  // the middle of connecting. C++Builder lets it propagate; here an implicit save failure is
-  // logged and dropped instead. Explicit saves call Flush() directly and still report errors.
+  // Just in case we forgot to add Flush to some code that writes to storage, still try to preserve any such changes.
+  // But we want to know (hence the check), and we never want to abort due to an exception here
   try
   {
-    Flush();
+    DebugCheckNotEqual(Flush(), true);
   }
-  catch (Exception & E)
+  catch (...)
   {
-    AppLogFmt(L"Error saving configuration to %s: %s", (Storage, E.Message));
   }
-#else
-  Flush();
-#endif
 }
 //---------------------------------------------------------------------------
 void __fastcall TIniFileStorage::ApplyOverrides()

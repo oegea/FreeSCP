@@ -165,11 +165,17 @@ section. The two new `source/` touches (plus the defs.h `_WIN32` tightening abov
   Windows shell `IFileOperation` COM API, Issue 2020) are wrapped in `#ifdef _WIN32`. The class is
   still declared in RemoteFiles.h; nothing in the port instantiates it yet. A native implementation
   (plain recursive copy/delete) is the way to expose that feature later.
-- **source/core/HierarchicalStorage.cpp** — `TIniFileStorage::~TIniFileStorage()` calls `Flush()`,
-  which throws when the INI file cannot be written. C++Builder lets that propagate; a standard C++
-  destructor is `noexcept`, so it called `std::terminate()` (the app died while remembering a host
-  key during connect). Under `#ifndef _WIN32` the flush is wrapped in `try/catch (Exception &)` and
-  the failure goes to the application log. Explicit saves still report errors.
+- **source/core/HierarchicalStorage.cpp** — `TIniFileStorage::Flush()`: a failed *implicit* save
+  (the file cannot be created or written: missing/read-only directory, full disk) is logged and
+  dropped under `#ifndef _WIN32` instead of thrown. History: the destructor used to call `Flush()`
+  and a throwing destructor is `std::terminate()` in standard C++, so we wrapped it. Upstream fixed
+  that itself in Issue 2487 (2026-11-19: the destructor swallows, and every writer calls `Flush()`
+  explicitly) - our destructor patch is gone, but the explicit `Flush()` in `TSecureShell::StoreHostKey`
+  / `TTerminal::CacheCertificate` / `SetBannerData` now throws in the middle of connecting, which
+  ended the connection whenever the engine's cache file was not writable ("Can't create file ...
+  Authentication failed"). In the port that file is only a cache, so the session carries on as
+  "connect once". Explicit saves (`Explicit` storage) still throw. Covered by `e2e-ssh.sh`
+  ("unwritable INI does not abort the connection").
 - **source/core/Terminal.cpp** — the `LogEvent` `inline` guard is now `#if defined(_WIN32)` (was
   `_WIN32 || __APPLE__`): macOS Release builds do not keep the weak out-of-line copy either.
 - **libs/neon/src/ne_socket.c** — `ne_sock_sspi_init()` (new upstream entry point for delayed SSPI

@@ -8858,6 +8858,7 @@ void __fastcall TTerminal::CacheCertificate(
   {
     Storage->WriteString(SiteKey, CertificateData);
   }
+  Storage->Flush();
 }
 //---------------------------------------------------------------------------
 // Shared implementation for WebDAV and S3
