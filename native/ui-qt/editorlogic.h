@@ -18,6 +18,7 @@ struct FileKind
   Encoding encoding = Encoding::Utf8;
   Eol eol = Eol::Lf;
   bool binary = false;        // not a text file: the editor must not open (and rewrite) it
+  bool mixedEol = false;      // more than one kind of line ending: saving writes `eol` everywhere
   size_t bomSize = 0;         // bytes of byte-order mark at the start
 };
 
@@ -64,7 +65,8 @@ inline bool validUtf8(const std::string & s)
 }
 
 // The line ending used most ("\r\n" counted once, not as a CR and an LF); LF for a file without any.
-inline Eol dominantEol(const std::string & s, size_t from = 0, size_t unit = 1, bool bigEndian = false)
+// `mixed` (optional): the file has more than one kind.
+inline Eol dominantEol(const std::string & s, size_t from = 0, size_t unit = 1, bool bigEndian = false, bool * mixed = nullptr)
 {
   size_t lf = 0, crlf = 0, cr = 0;
   auto at = [&](size_t i) -> unsigned int {       // code unit i (bytes for 8-bit text, 16-bit units otherwise)
@@ -82,6 +84,7 @@ inline Eol dominantEol(const std::string & s, size_t from = 0, size_t unit = 1, 
     }
     else if (c == '\n') ++lf;
   }
+  if (mixed) *mixed = ((lf > 0) + (crlf > 0) + (cr > 0)) > 1;
   if (crlf > lf && crlf >= cr) return Eol::CrLf;
   if (cr > lf && cr > crlf) return Eol::Cr;
   return Eol::Lf;
@@ -102,7 +105,24 @@ inline FileKind detect(const std::string & s)
   if (k.encoding == Encoding::Utf16LE || k.encoding == Encoding::Utf16BE)
   {
     if ((n - k.bomSize) % 2 != 0) { k.binary = true; return k; }
-    k.eol = dominantEol(s, k.bomSize, 2, k.encoding == Encoding::Utf16BE);
+    // well-formed UTF-16 text: no NUL (also rules out UTF-32, whose mark starts the same way), every
+    // surrogate paired - a decoder would turn anything else into U+FFFD and the save would change it
+    const bool be = (k.encoding == Encoding::Utf16BE);
+    auto unit = [&](size_t i) -> unsigned int { const unsigned int a = b(i), c = b(i + 1); return be ? ((a << 8) | c) : ((c << 8) | a); };
+    for (size_t i = k.bomSize; i + 2 <= n; i += 2)
+    {
+      const unsigned int u = unit(i);
+      if (u == 0) { k.binary = true; return k; }
+      if (u >= 0xD800 && u <= 0xDBFF)
+      {
+        if (i + 4 > n) { k.binary = true; return k; }
+        const unsigned int lo = unit(i + 2);
+        if (lo < 0xDC00 || lo > 0xDFFF) { k.binary = true; return k; }
+        i += 2;
+      }
+      else if (u >= 0xDC00 && u <= 0xDFFF) { k.binary = true; return k; }
+    }
+    k.eol = dominantEol(s, k.bomSize, 2, be, &k.mixedEol);
     return k;
   }
   size_t control = 0;
@@ -115,7 +135,7 @@ inline FileKind detect(const std::string & s)
   if (n - k.bomSize > 0 && control * 20 > (n - k.bomSize)) { k.binary = true; return k; }     // more than 5 %
   if (k.encoding == Encoding::Utf8Bom) { if (!validUtf8(s.substr(3))) { k.binary = true; return k; } }
   else k.encoding = validUtf8(s) ? Encoding::Utf8 : Encoding::Latin1;
-  k.eol = dominantEol(s, k.bomSize);
+  k.eol = dominantEol(s, k.bomSize, 1, false, &k.mixedEol);
   return k;
 }
 

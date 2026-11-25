@@ -1173,6 +1173,18 @@ in, found by `e2e-ssh.sh` and fixed with a guarded patch - see UPSTREAM-PATCHES.
 - **Engine: password encryption crashed on 64-bit Unix** (`Cryptography.cpp`, an `unsigned long *`
   that is 32 bits only on Windows) and **`HexToBytes()` always returned an empty string**
   (`towupper()` returns `int` here): both latent since the port began, found by the master password.
+- **An upload over a file that could be neither overwritten nor deleted never returned** (present in
+  0.3.2): the engine's "delete and recreate?" was answered Yes for ever.
+- From an independent code review of this round (each with a regression check in section **review**):
+  the editor's Reload left the session listing another directory (the next Delete / Rename in the
+  panel acted there); a file opened from one tab could be saved to the server of another; a failed
+  upload still marked the text as saved; closing the main window discarded unsaved editor text;
+  saving a site without the master password erased its encrypted passwords; a relative target of
+  Duplicate / Move To meant "/"; a typed copy target ending in "/" was refused and a local one that
+  did not exist was silently replaced by the previous directory; an error while keeping a directory
+  up to date turned into a whole-tree synchronization (with delete); a tab could be changed in the
+  middle of a transfer; "New file" emptied an existing file of that name; copies of remote files
+  were kept in fixed, world-readable directories under /tmp (now a private directory per run).
 - Upstream merge: an unwritable engine cache ended the connection ("Can't create file").
 - Linux: "Open diagnostics log file" called macOS's `open`.
 

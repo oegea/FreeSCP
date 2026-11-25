@@ -255,6 +255,18 @@ static void testEditorLogic()
   { std::string ok(100, 'a'); ok[5] = '\x01'; ok[50] = '\x1B'; ok[60] = '\t'; ok[70] = '\f'; assert(!detect(ok).binary); }       // the odd one is fine
   { FileKind k = detect("tab\there\x1B[0m\n"); assert(!k.binary); }               // escape sequences of a log file
 
+  // mixed line endings are flagged (saving rewrites them), a uniform file is not
+  assert(detect("a\r\nb\r\nc\nd").mixedEol && detect("a\nb\rc").mixedEol && detect("a\r\nb\rc\r\n").mixedEol);
+  assert(!detect("a\nb\n").mixedEol && !detect("a\r\nb\r\n").mixedEol && !detect("a\rb\r").mixedEol && !detect("no line end").mixedEol);
+  // UTF-16: every surrogate paired, no NUL (UTF-32 starts with the same mark) - anything else is not text
+  { FileKind k = detect(std::string("\xFF\xFE\x3D\xD8\x00\xDE", 6)); assert(!k.binary && k.encoding == Encoding::Utf16LE); }     // U+1F600
+  assert(detect(std::string("\xFF\xFE\x00\xD8\x41\x00", 6)).binary);       // high surrogate + 'A'
+  assert(detect(std::string("\xFF\xFE\x00\xD8", 4)).binary);                // high surrogate at the end
+  assert(detect(std::string("\xFF\xFE\x00\xDC\x41\x00", 6)).binary);       // lone low surrogate
+  assert(detect(std::string("\xFF\xFE\x00\x00\x41\x00\x00\x00", 8)).binary);   // UTF-32 LE
+  assert(detect(std::string("\xFE\xFF\xD8\x3D\xDE\x00", 6)).binary == false);
+  assert(detect(std::string("\xFF\xFE" "a\0\r\0\n\0b\0\n\0", 12)).mixedEol);
+
   // --- line endings ---
   assert(withEol("a\nb\n", Eol::Lf) == "a\nb\n");
   assert(withEol("a\nb\n", Eol::CrLf) == "a\r\nb\r\n");

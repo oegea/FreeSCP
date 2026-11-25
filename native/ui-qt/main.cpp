@@ -64,6 +64,7 @@
 #include <QSettings>
 #include <QPainter>
 #include <QPointer>
+#include <QSaveFile>
 #include "updatecheck.h"
 #include <QProgressDialog>
 #include <QDesktopServices>
@@ -581,9 +582,17 @@ int main(int argc, char ** argv)
   // saving re-uploads it automatically — the classic WinSCP "edit remote in your editor" magic.
   auto * watcher = new QFileSystemWatcher(&window);
   auto * watchRemoteDir = new QHash<QString, QString>;   // localTempPath -> remote dir
-  auto reupload = [&, watcher, watchRemoteDir](const QString & localPath) {
+  auto * watchSession = new QHash<QString, int>;         // localTempPath -> the session (tab) it came from
+  auto reupload = [&, watcher, watchRemoteDir, watchSession](const QString & localPath) {
     auto it = watchRemoteDir->find(localPath);
     if (it == watchRemoteDir->end()) return;
+    // the same path may exist on the server of another tab: never upload there
+    if (watchSession->value(localPath) != engine::activeSessionId())
+    {
+      window.statusBar()->showMessage("Not uploaded: " + QFileInfo(localPath).fileName() + " belongs to another session. Switch to its tab and save again.");
+      if (QFileInfo::exists(localPath) && !watcher->files().contains(localPath)) watcher->addPath(localPath);
+      return;
+    }
     enqueueUpload(localPath, it.value(), "Edit-upload");   // shows in the transfer queue
     if (QFileInfo::exists(localPath) && !watcher->files().contains(localPath)) watcher->addPath(localPath);  // editors that save-by-rename drop the watch
   };
@@ -627,6 +636,13 @@ int main(int argc, char ** argv)
   };
   QObject::connect(tabBar, &QTabBar::currentChanged, [&](int i) {
     if (tabSwitching || i < 0) return;
+    // not while a batch runs: its remaining files (and a move's deletes) would go to the other server
+    if (gTransferRunning.load() && curTab >= 0 && curTab < tabBar->count() && i != curTab)
+    {
+      tabSwitching = true; tabBar->setCurrentIndex(curTab); tabSwitching = false;
+      window.statusBar()->showMessage("Transfer in progress\xE2\x80\xA6 the tab can be changed when it has finished");
+      return;
+    }
     if (curTab >= 0 && curTab < tabBar->count())                         // save outgoing tab's paths
       tabBar->setTabData(curTab, QStringList{ right->path(), left->path() });
     tabSwitching = true; activateTab(i); tabSwitching = false;
@@ -771,6 +787,14 @@ int main(int argc, char ** argv)
     if (!qEnvironmentVariableIsEmpty("WINSCP_COPY_TARGET")) edit->setText(qEnvironmentVariable("WINSCP_COPY_TARGET"));   // scripted runs
     return (execDialog(d, "copy") == QDialog::Accepted) ? edit->text() : QString();
   };
+  // A directory as typed in a dialog -> the path the panel will show for it: relative to the panel's
+  // directory if it does not start with "/", without repeated or trailing slashes.
+  auto resolveTarget = [&](FilePanel * panel, const QString & typed) -> QString {
+    QString t = typed.trimmed();
+    if (t.isEmpty()) return panel->path();
+    if (!t.startsWith('/')) t = panel->path() + (panel->path().endsWith('/') ? "" : "/") + t;
+    return u8(panellogic::normalizePath(s8(t)));
+  };
   auto doCopy = [&] {
     FilePanel * dst = (active == left) ? right : left;
     QStringList files = active->selectedItems();
@@ -780,12 +804,13 @@ int main(int argc, char ** argv)
     if (busy()) return;
     QString target = showCopyDialog("Copy", files.size(), dst->path());
     if (target.isEmpty()) return;
+    target = resolveTarget(dst, target);
     if (target != dst->path())
     {
       dst->navigate(target);
       // the typed directory could not be opened (the error was shown): do NOT transfer into
-      // whatever directory the panel fell back to
-      if (dst->isRemote() && dst->path() != target) { window.statusBar()->showMessage("Copy cancelled: cannot open " + target); return; }
+      // whatever directory the panel fell back to - local or remote
+      if (dst->path() != target) { window.statusBar()->showMessage("Copy cancelled: cannot open " + target); return; }
     }
     startTransfer(active, dst, files, false);
   };
@@ -798,12 +823,13 @@ int main(int argc, char ** argv)
     if (busy()) return;
     QString target = showCopyDialog("Move", files.size(), dst->path());
     if (target.isEmpty()) return;
+    target = resolveTarget(dst, target);
     if (target != dst->path())
     {
       dst->navigate(target);
       // the typed directory could not be opened (the error was shown): do NOT transfer into
-      // whatever directory the panel fell back to
-      if (dst->isRemote() && dst->path() != target) { window.statusBar()->showMessage("Move cancelled: cannot open " + target); return; }
+      // whatever directory the panel fell back to - local or remote
+      if (dst->path() != target) { window.statusBar()->showMessage("Move cancelled: cannot open " + target); return; }
     }
     startTransfer(active, dst, files, true);
   };
@@ -857,13 +883,16 @@ int main(int argc, char ** argv)
     bool okIn = false;
     QString name = QInputDialog::getText(&window, "Create file", "New file name:", QLineEdit::Normal, "", &okIn);
     if (!okIn || name.isEmpty()) return;
+    if (name.contains('/')) { appMessage(&window, "Create file", "The file name cannot contain \"/\"."); return; }
+    // creating it would empty the existing file
+    if (active->contains(name)) { appMessage(&window, "Create file", QString("\"%1\" already exists.").arg(name)); return; }
     bool ok; std::string err;
     if (active->isRemote()) {
-      QString tmp = QDir::tempPath() + "/winscp-new/" + name; QDir().mkpath(QDir::tempPath() + "/winscp-new");
+      QString tmp = privateTempDir("new") + "/" + name;
       { QFile f(tmp); f.open(QIODevice::WriteOnly); f.close(); }
       ok = engine::uploadToRemote(s8(tmp), s8(active->path()), &err, true);
     } else {
-      QFile f(active->path() + "/" + name); ok = f.open(QIODevice::WriteOnly); if (ok) f.close(); else err = "cannot create";
+      QFile f(active->path() + "/" + name); ok = !f.exists() && f.open(QIODevice::WriteOnly | QIODevice::NewOnly); if (ok) f.close(); else err = "cannot create";
     }
     active->refresh();
     window.statusBar()->showMessage(ok ? "Created " + name : "Create file failed — " + u8(err));
@@ -1015,7 +1044,7 @@ int main(int argc, char ** argv)
   // a remote panel (nothing is downloaded), on this machine for a local one.
   auto copyOrMoveWithin = [&](FilePanel * panel, bool move, const QStringList & names, const QString & targetDir, const QString & newName) -> bool {
     int ok = 0; QString lastErr;
-    const QString tdir = u8(panellogic::normalizePath(s8(targetDir)));
+    const QString tdir = resolveTarget(panel, targetDir);      // "archive" = a directory below this one, never "/"
     for (const QString & n : names)
     {
       const QString nn = (names.size() == 1 && !newName.isEmpty()) ? newName : n;
@@ -1072,8 +1101,8 @@ int main(int argc, char ** argv)
     QString localPath;
     if (active->isRemote())
     {
-      QString tmp = QDir::tempPath() + "/winscp-open";
-      QDir().mkpath(tmp);
+      static int openSeq = 0;      // one directory per opened file: same-named files of two directories stay apart
+      QString tmp = privateTempDir(QString("open/%1").arg(++openSeq));
       std::string err;
       window.statusBar()->showMessage("Opening " + f + "\xE2\x80\xA6");
       QApplication::processEvents();
@@ -1082,6 +1111,7 @@ int main(int argc, char ** argv)
       localPath = tmp + "/" + f;
       // watch the temp copy: any save (this app's editor or an external one) re-uploads it
       (*watchRemoteDir)[localPath] = active->path();
+      (*watchSession)[localPath] = engine::activeSessionId();
       if (!watcher->files().contains(localPath)) watcher->addPath(localPath);
     }
     else localPath = active->path() + "/" + f;
@@ -1103,8 +1133,7 @@ int main(int argc, char ** argv)
     {
       // one directory per editor: two files of the same name from different directories must not share a copy
       static int editSeq = 0;
-      QString tmp = QString("%1/winscp-edit/%2-%3").arg(QDir::tempPath()).arg(QCoreApplication::applicationPid()).arg(++editSeq);
-      QDir().mkpath(tmp);
+      QString tmp = privateTempDir(QString("edit/%1").arg(++editSeq));
       std::string err;
       if (!engine::downloadFromRemote(engine::joinPath(s8(remoteDir), s8(f)), s8(tmp), &err, true))
       { appMessage(&window, "Edit", "Could not download: " + u8(err)); return; }
@@ -1120,24 +1149,57 @@ int main(int argc, char ** argv)
     QString refusal;
     auto * ed = EditorWindow::create(&window, f + (remote ? "  \xE2\x80\x94  " + remoteDir + " (remote)" : "  \xE2\x80\x94  " + active->path()), bytes, &refusal);
     if (ed == nullptr) { appMessage(&window, "Edit", f + "\n\n" + refusal); return; }
-    ed->onSave = [localPath, remote, remoteDir, f, &window, &left, &right, enqueueUpload](const QByteArray & out) -> bool {
-      QFile o(localPath);
-      if (!o.open(QIODevice::WriteOnly | QIODevice::Truncate) || o.write(out) != out.size())
+    const int sessionId = remote ? engine::activeSessionId() : 0;      // the tab the file came from
+    auto sameSession = [sessionId, &window](const QString & what) -> bool {
+      if (engine::activeSessionId() == sessionId) return true;
+      appMessage(&window, what, "This file belongs to another session. Switch to its tab first:\nthe same path may exist on the server of the tab that is open now.");
+      return false;
+    };
+    ed->onSave = [=, &window, &left, &right](const QByteArray & out) -> bool {
+      if (remote && gTransferRunning.load()) { appMessage(&window, "Save", "A transfer is running. Save again when it has finished."); return false; }
+      if (remote && !sameSession("Save")) return false;
+      // a local file is replaced in one step (a full disk must not leave half a file); the copy of a
+      // remote file is ours alone
+      QSaveFile o(localPath);
+      o.setDirectWriteFallback(true);       // a file in a directory we cannot create files in
+      if (!o.open(QIODevice::WriteOnly) || o.write(out) != out.size() || !o.commit())
       { appMessage(&window, "Save", "Cannot write the file:\n" + o.errorString()); return false; }
-      o.close();
-      if (remote) enqueueUpload(localPath, remoteDir, "Edit-upload");   // shows in the transfer queue
-      else { window.statusBar()->showMessage("Saved " + f); for (FilePanel * p : { left, right }) if (!p->isRemote()) p->refresh(); }
+      if (!remote)
+      {
+        window.statusBar()->showMessage("Saved " + f);
+        for (FilePanel * p : { left, right }) if (!p->isRemote()) p->refresh();
+        return true;
+      }
+      // Upload now and report the result: the editor only marks the text as saved when it is on the server.
+      window.statusBar()->showMessage("Uploading " + f + "\xE2\x80\xA6");
+      QApplication::setOverrideCursor(Qt::BusyCursor);
+      std::string err;
+      const bool ok = engine::uploadToRemote(s8(localPath), s8(remoteDir), &err, true);
+      QApplication::restoreOverrideCursor();
+      if (!ok)
+      {
+        window.statusBar()->showMessage("Upload failed: " + f);
+        appMessage(&window, "Save", QString("The file was not uploaded:\n\n%1").arg(u8(err).trimmed()));
+        if (engine::sessionLost()) offerReconnect();
+        return false;
+      }
+      window.statusBar()->showMessage("Uploaded " + f);
+      for (FilePanel * p : { left, right }) if (p->isRemote()) p->refresh();
       return true;
     };
-    ed->onReload = [localPath, remote, remoteDir, f, &busy](QByteArray & out, QString * error) -> bool {
+    ed->onReload = [=, &right, &left](QByteArray & out, QString * error) -> bool {
       if (remote)
       {
         if (gTransferRunning.load()) { if (error) *error = "A transfer is running; try again when it has finished."; return false; }
+        if (engine::activeSessionId() != sessionId) { if (error) *error = "This file belongs to another session. Switch to its tab first."; return false; }
         std::string err;
-        // the session may be showing another directory by now: list the file's own directory first
+        // the session may be showing another directory by now: list the file's own directory first...
         engine::listRemoteDir(s8(remoteDir), &err);
-        if (!err.empty() || !engine::downloadFromRemote(engine::joinPath(s8(remoteDir), s8(f)), s8(QFileInfo(localPath).absolutePath()), &err, true))
-        { if (error) *error = u8(err); return false; }
+        const bool ok = err.empty() && engine::downloadFromRemote(engine::joinPath(s8(remoteDir), s8(f)), s8(QFileInfo(localPath).absolutePath()), &err, true);
+        // ...and give the session back to the panel: every panel operation works on the directory
+        // the session lists (a Delete in the panel must never act on the editor's directory)
+        for (FilePanel * p : { left, right }) if (p->isRemote()) p->refresh();
+        if (!ok) { if (error) *error = u8(err); return false; }
       }
       QFile in(localPath);
       if (!in.open(QIODevice::ReadOnly)) { if (error) *error = in.errorString(); return false; }
@@ -1327,8 +1389,7 @@ int main(int argc, char ** argv)
     auto materialize = [&](FilePanel * pn, const QString & name, const char * sideTag, DiffSide & side) -> bool {
       side.title = QString("%1 \xE2\x80\x94 %2 (%3)").arg(name, pn->path(), pn->isRemote() ? "remote" : "local");
       if (!pn->isRemote()) { side.path = pn->path() + (pn->path().endsWith('/') ? "" : "/") + name; return true; }
-      const QString tmp = QString("%1/freescp-compare/%2-%3-%4").arg(QDir::tempPath()).arg(QCoreApplication::applicationPid()).arg(++compareSeq).arg(sideTag);
-      QDir().mkpath(tmp);
+      const QString tmp = privateTempDir(QString("compare/%1-%2").arg(++compareSeq).arg(sideTag));
       window.statusBar()->showMessage("Downloading " + name + " to compare\xE2\x80\xA6");
       QApplication::processEvents();
       // downloadFromRemote looks the file up in the session's current listing = this panel's
@@ -1343,7 +1404,7 @@ int main(int argc, char ** argv)
     QString result = showFileComparison(&window, ls, rs);
     window.statusBar()->showMessage(result);
     for (const DiffSide * sd : { &ls, &rs })       // remove the temporary copies
-      if (sd->path.startsWith(QDir::tempPath() + "/freescp-compare/")) QDir(QFileInfo(sd->path).absolutePath()).removeRecursively();
+      if (sd->path.startsWith(privateTempDir() + "/compare/")) QDir(QFileInfo(sd->path).absolutePath()).removeRecursively();
     return result;
   };
 
@@ -1574,7 +1635,11 @@ int main(int argc, char ** argv)
       go->addSeparator();
       go->addAction(appIcon("parent"), "&Parent Directory\tBackspace", on([&]{ active->goUp(); }));
       go->addAction(appIcon("root"), "&Root Directory\tCtrl+\\", on([&]{ active->navigate("/"); }));
+#ifdef Q_OS_MACOS
+      go->addAction(appIcon("home"), "&Home Directory", on([&]{ if (active->onHome) active->onHome(); }));
+#else
       go->addAction(appIcon("home"), "&Home Directory\tCtrl+H", on([&]{ if (active->onHome) active->onHome(); }));
+#endif
       go->addSeparator();
       go->addAction(appIcon("back"), "&Back\tAlt+Left", on([&]{ active->goBack(); }));
       go->addAction(appIcon("forward"), "&Forward\tAlt+Right", on([&]{ active->goForward(); }));
@@ -1655,7 +1720,7 @@ int main(int argc, char ** argv)
       mSites->clear();
       const QStringList names = savedSiteNames();
       for (const QString & n : names)
-        mSites->addAction(appIcon("login"), n, [&, n]{ if (busy()) return; engine::ConnectOptions o; if (loadSite(n, o)) connectWith(o); });
+        mSites->addAction(appIcon("login"), n, [&, n]{ if (busy()) return; secrets::askAgain(); engine::ConnectOptions o; if (loadSite(n, o)) connectWith(o); });
       if (names.isEmpty()) mSites->addAction("(no saved sites)")->setEnabled(false);
       mSites->addSeparator();
       mSites->addAction("Site &Manager\xE2\x80\xA6", doConnect);
@@ -1795,7 +1860,9 @@ int main(int argc, char ** argv)
   shortcut(Qt::SHIFT | Qt::Key_F6, [&]{ doCopyOrMoveWithin(true); });        // move to
   shortcut(Qt::CTRL | Qt::ALT | Qt::Key_F6, doNewLink);                      // new link
   shortcut(Qt::CTRL | Qt::Key_Backslash, [&]{ active->navigate("/"); });     // root directory
+#ifndef Q_OS_MACOS      // Cmd+H hides the application there
   shortcut(Qt::CTRL | Qt::Key_H, [&]{ if (active->onHome) active->onHome(); });   // home directory
+#endif
   shortcut(Qt::CTRL | Qt::ALT | Qt::Key_I, doFilter);                        // filter
   shortcut(Qt::CTRL | Qt::Key_Asterisk, [&]{ active->invertSelection(); });  // invert selection
   shortcut(Qt::CTRL | Qt::Key_I, doSessionInfo);                             // server/protocol information
@@ -1807,6 +1874,28 @@ int main(int argc, char ** argv)
   right->navigate(u8(engine::homeDir()));
   updateStatuses();
   refreshPanelRoles();      // two local panels: the transfer buttons say "Copy"
+
+  // Closing the main window closes the editors first: each asks about unsaved changes, and a
+  // "Cancel" there keeps the application open (they are children of this window and would
+  // otherwise be destroyed with it, changes and all).
+  struct CloseGuard : QObject
+  {
+    std::function<bool()> canClose;
+    bool eventFilter(QObject *, QEvent * ev) override
+    {
+      if (ev->type() == QEvent::Close && canClose && !canClose()) { ev->ignore(); return true; }
+      return false;
+    }
+  };
+  auto * closeGuard = new CloseGuard; closeGuard->setParent(&window);
+  closeGuard->canClose = [&]() -> bool {
+    const QList<QPointer<EditorWindow>> open = editors;
+    for (const QPointer<EditorWindow> & e : open)
+      if (e) { e->close(); QApplication::processEvents(); if (e && e->isVisible()) { e->raise(); return false; } }
+    return true;
+  };
+  window.installEventFilter(closeGuard);
+  QObject::connect(&app, &QApplication::aboutToQuit, [] { removePrivateTemp(); });
 
   // Persist window geometry + splitter on quit.
   QObject::connect(&app, &QApplication::aboutToQuit, [&]{
@@ -2070,6 +2159,7 @@ int main(int argc, char ** argv)
     fprintf(stdout, "[editor] reloaded=%d\n", (e && e->reload()) ? 1 : 0); fflush(stdout);
   };
   uiCmd["editshot"] = [&](const QStringList & a) { if (EditorWindow * e = lastEditor()) { e->showFindBar(true); QApplication::processEvents(); e->grab().save(a.value(0)); } };
+  uiCmd["closewindow"] = [&](const QStringList &) { window.close(); QApplication::processEvents(); };   // as the window's close button / F10
   uiCmd["editclose"] = [&](const QStringList &) { if (EditorWindow * e = lastEditor()) { e->close(); QApplication::processEvents(); } };
   // --- master password ---
   uiCmd["master"] = [&](const QStringList & a) {      // master|set|<new>[|<current>]  master|remove|<current>  master|dialog  master|lock  master|state

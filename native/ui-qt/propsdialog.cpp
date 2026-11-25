@@ -189,7 +189,8 @@ PropsResult showPropertiesDialog(QWidget * parent, const PropsRequest & rq)
   res.ownerChanged = rq.canChangeOwner && !res.owner.isEmpty() && res.owner != rq.owner;
   res.groupChanged = rq.canChangeGroup && !res.group.isEmpty() && res.group != rq.group;
   // "recursively" with nothing edited re-applies what is shown, to the whole tree (WinSCP does the same)
-  if (res.recursive && !res.anything() && rq.canChangeRights) res.rightsChanged = true;
+  // - for one entry only: with several, the grid shows just the first one's permissions
+  if (res.recursive && !res.anything() && rq.canChangeRights && single) res.rightsChanged = true;
   return res;
 }
 

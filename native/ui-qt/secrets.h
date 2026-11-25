@@ -27,6 +27,9 @@ bool unlocked();
 bool unlock(QWidget * parent);
 // Forget the master password given in this run (the next use asks again).
 void lock();
+// After the user cancelled the prompt it is not shown again (clicking through the saved sites would
+// ask for every one of them) until this is called - at the start of an action the user asked for.
+void askAgain();
 
 // A password in the form it is stored in. `ok` = false (and an empty result) if the master password
 // is needed and was not obtained: the caller must NOT fall back to storing plain text.

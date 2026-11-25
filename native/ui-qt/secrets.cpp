@@ -21,6 +21,7 @@ namespace {
 
 QString gMaster;            // the master password given in this run
 bool gHaveMaster = false;
+bool gDeclined = false;     // the user cancelled the prompt: do not ask again until askAgain()
 
 const char * const kVerifierKey = "security/masterVerifier";
 const QStringList kPasswordKeys = { "pass", "proxyPass", "tunnelPass" };
@@ -79,7 +80,8 @@ namespace secrets {
 
 bool masterEnabled() { return !verifier().isEmpty(); }
 bool unlocked() { return !masterEnabled() || gHaveMaster; }
-void lock() { gMaster.clear(); gHaveMaster = false; }
+void lock() { gMaster.clear(); gHaveMaster = false; gDeclined = false; }
+void askAgain() { gDeclined = false; }
 bool isEncrypted(const QString & stored) { return stored.startsWith("enc:"); }
 
 bool unlock(QWidget * parent)
@@ -94,6 +96,7 @@ bool unlock(QWidget * parent)
     return false;
   }
   if (uiScripted()) { fprintf(stderr, "[master] the master password is needed and was not given\n"); return false; }
+  if (gDeclined) return false;
   for (int attempt = 0; attempt < 3; ++attempt)
   {
     bool okIn = false;
@@ -101,10 +104,11 @@ bool unlock(QWidget * parent)
       attempt == 0 ? QString("The passwords of the saved sites are protected.\n\n&Master password:")
                    : QString("That is not the master password.\n\n&Master password:"),
       QLineEdit::Password, QString(), &okIn);
-    if (!okIn) return false;
+    if (!okIn) { gDeclined = true; return false; }
     if (engine::masterVerify(s8(given), s8(v))) { gMaster = given; gHaveMaster = true; return true; }
   }
   appMessage(parent, "Master password", "The master password was wrong three times.");
+  gDeclined = true;
   return false;
 }
 

@@ -111,7 +111,12 @@ EditorWindow::EditorWindow(QWidget * parent, const QString & title) : QMainWindo
   connect(FEdit, &QPlainTextEdit::redoAvailable, redo, &QAction::setEnabled);
   tb->addSeparator();
   add("find", "Find", QKeySequence::Find, [this] { showFindBar(false); }, true);
-  add("replace", "Replace", QKeySequence(Qt::CTRL | Qt::Key_H), [this] { showFindBar(true); });
+#ifdef Q_OS_MACOS
+  const QKeySequence replaceKey(Qt::CTRL | Qt::ALT | Qt::Key_F);     // Cmd+H hides the application
+#else
+  const QKeySequence replaceKey(Qt::CTRL | Qt::Key_H);
+#endif
+  add("replace", "Replace", replaceKey, [this] { showFindBar(true); });
   add("forward", "Find Next", QKeySequence(Qt::Key_F3), [this, notFound] {
     if (FFindEdit->text().isEmpty()) showFindBar(false);
     else if (!findNext(FFindEdit->text(), FCase->isChecked())) notFound(FFindEdit->text());
@@ -123,7 +128,7 @@ EditorWindow::EditorWindow(QWidget * parent, const QString & title) : QMainWindo
   });
   tb->addSeparator();
   QAction * wrap = tb->addAction(appIcon("wrap"), "Word Wrap"); wrap->setCheckable(true);
-  wrap->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_W)); wrap->setToolTip("Word wrap"); wrap->setPriority(QAction::LowPriority);
+  wrap->setToolTip("Word wrap"); wrap->setPriority(QAction::LowPriority);     // no shortcut: Ctrl/Cmd+W closes windows
   connect(wrap, &QAction::toggled, this, [this](bool w) { FEdit->setLineWrapMode(w ? QPlainTextEdit::WidgetWidth : QPlainTextEdit::NoWrap); });
   auto * esc = new QAction(this); esc->setShortcut(Qt::Key_Escape);
   connect(esc, &QAction::triggered, this, [this] { if (FFindBar->isVisible()) { FFindBar->hide(); FEdit->setFocus(); } });
@@ -196,6 +201,14 @@ QByteArray EditorWindow::encoded(bool * cancelled)
       if (r != QMessageBox::Yes) { if (cancelled) *cancelled = true; return QByteArray(); }
       FKind.encoding = Encoding::Utf8;
     }
+  }
+  if (FKind.mixedEol)
+  {
+    // the file had several kinds of line ending; the editor works with one
+    const auto r = appMessage(this, "Save", QString("This file mixes different line endings. Saving writes %1 on every line.\n\nSave it?")
+                                              .arg(editorlogic::eolName(FKind.eol)), QMessageBox::Yes | QMessageBox::Cancel, QMessageBox::Yes);
+    if (r != QMessageBox::Yes) { if (cancelled) *cancelled = true; return QByteArray(); }
+    FKind.mixedEol = false;
   }
   if (FKind.eol == Eol::CrLf) t.replace("\n", "\r\n");
   else if (FKind.eol == Eol::Cr) t.replace('\n', '\r');
@@ -291,9 +304,9 @@ void EditorWindow::showFindBar(bool withReplace)
 QString EditorWindow::info() const
 {
   const QTextCursor c = FEdit->textCursor();
-  return QString("encoding=%1 eol=%2 lines=%3 modified=%4 line=%5 column=%6")
+  return QString("encoding=%1 eol=%2%7 lines=%3 modified=%4 line=%5 column=%6")
     .arg(editorlogic::encodingName(FKind.encoding), editorlogic::eolName(FKind.eol)).arg(FEdit->blockCount())
-    .arg(isModified() ? 1 : 0).arg(c.blockNumber() + 1).arg(c.positionInBlock() + 1);
+    .arg(isModified() ? 1 : 0).arg(c.blockNumber() + 1).arg(c.positionInBlock() + 1).arg(FKind.mixedEol ? "(mixed)" : "");
 }
 
 void EditorWindow::updateTitle() { setWindowTitle((isModified() ? "* " : "") + FBase); }
@@ -309,7 +322,7 @@ void EditorWindow::updateStatus()
     ch = QString("   Character: %1 (0x%2)").arg(cp).arg(QString::number(cp, 16).toUpper().rightJustified(2, QChar('0')));
   }
   FPos->setText(QString("Line: %1/%2   Column: %3%4").arg(c.blockNumber() + 1).arg(FEdit->blockCount()).arg(c.positionInBlock() + 1).arg(ch));
-  FEnc->setText(QString("Encoding: %1   %2").arg(editorlogic::encodingName(FKind.encoding), editorlogic::eolName(FKind.eol)));
+  FEnc->setText(QString("Encoding: %1   %2%3").arg(editorlogic::encodingName(FKind.encoding), editorlogic::eolName(FKind.eol), FKind.mixedEol ? " (mixed)" : ""));
 }
 
 void EditorWindow::closeEvent(QCloseEvent * e)

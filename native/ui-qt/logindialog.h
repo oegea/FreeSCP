@@ -26,7 +26,9 @@ LoginParams showLoginDialog(QWidget * parent, const engine::ConnectOptions * pre
 QStringList savedSiteNames();
 bool loadSite(const QString & name, engine::ConnectOptions & o);
 // False if the site was not saved (a master password is set and was not given: see secrets.h).
-bool saveSite(const QString & name, const engine::ConnectOptions & o);
+// `carryFrom`: while the master password has not been given, an EMPTY password in `o` means "could
+// not be decrypted", not "none": the encrypted value stored for that site is kept as it is.
+bool saveSite(const QString & name, const engine::ConnectOptions & o, const QString & carryFrom = QString());
 void deleteSite(const QString & name);
 
 // "SFTP", "SCP", "FTP", "WebDAV", "S3".

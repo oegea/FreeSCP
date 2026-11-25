@@ -22,6 +22,9 @@
 #            binary files are refused, find / replace / go to line / reload, remote files
 #   security the master password: the engine's encryption (checked against an independent
 #            computation), saved sites encrypted / decrypted, set / change / remove, the refusals
+#   review   regressions found by code review: editor vs. panel directory / other tabs / failed
+#            uploads / closing the window, relative and typed targets, tab changes during a
+#            transfer, saving a site without the master password, keep-up-to-date after an error
 #
 # Usage:  native/scripts/e2e/servers.sh up <data-dir>
 #         native/scripts/e2e-features.sh <build-dir> <data-dir> [section ...]     (default: all)
@@ -33,7 +36,7 @@
 set -uo pipefail
 
 BUILD="$(cd "${1:?build dir}" && pwd)"; DATA="$(cd "${2:?data dir (servers.sh up)}" && pwd)"; shift 2
-SECTIONS="${*:-conn auth tunnel proxy ftps xfer resume find sync gui ops panels editor security}"
+SECTIONS="${*:-conn auth tunnel proxy ftps xfer resume find sync gui ops panels editor security review}"
 . "$DATA/env.sh"
 C="$BUILD/ui-qt/freescp-bridge-cli"
 if [ -x "$BUILD/ui-qt/winscp-qt.app/Contents/MacOS/winscp-qt" ]; then APP="$BUILD/ui-qt/winscp-qt.app/Contents/MacOS/winscp-qt"
@@ -1063,6 +1066,86 @@ PY
   gui WINSCP_DIALOG_SHOTS=$SH WINSCP_PREFS_TAB=3 WINSCP_UITEST="prefs"
   chk "Preferences > Security renders" "[ -s $SH/preferences.png ]"
   sclean
+  unset QT_QPA_PLATFORM WINSCP_NO_AUTOLOGIN
+fi
+
+#==============================================================================================
+# Regressions found by the code review of the 0.4 round (each was a way to lose or misplace data).
+if want review; then
+  echo "== review (offscreen)"
+  SH="$W/shots"; GO="$W/gui.out"; mkdir -p "$SH"
+  export QT_QPA_PLATFORM=offscreen WINSCP_NO_AUTOLOGIN=1
+  AC="WINSCP_AUTOCONNECT=127.0.0.1:2223:winscp:winscp123:sftp"
+  gui() { tmo 120 env "$@" "$APP" > "$GO" 2>&1; RC=$?; cp "$GO" "$OUT"; }
+  ghas() { grep -aq -- "$1" "$GO"; }
+  ORG="${WINSCP_SETTINGS_ORG:-WinSCP-native-port-test}"; DOM="com.$(echo "$ORG" | tr 'A-Z' 'a-z').WinSCP"; CONF="$HOME/.config/$ORG/WinSCP.conf"
+  sdump() { if [ "$(uname)" = Darwin ]; then defaults read "$DOM" 2>/dev/null; else cat "$CONF" 2>/dev/null; fi; }
+  defaults delete "$DOM" >/dev/null 2>&1; rm -rf "$HOME/.config/$ORG" 2>/dev/null
+  RL="$W/rv"; rm -rf "$RL"; mkdir -p "$RL/sub"; echo one > "$RL/a.txt"; echo two > "$RL/b.txt"
+  RR=/config/e2e-rv; HR="$DATA/sshhome/e2e-rv"; rm -rf "$HR"; mkdir -p "$HR/a" "$HR/b" "$HR/sub"; chmod -R 777 "$HR"
+  echo in-a > "$HR/a/same.txt"; echo in-b > "$HR/b/same.txt"; echo r > "$HR/r.txt"; chmod 666 "$HR"/*/same.txt "$HR/r.txt"
+
+  # an upload over a file that can be neither overwritten nor deleted must fail, not loop for ever
+  mkdir -p "$HR/ro"; echo old > "$HR/ro/x.txt"; chmod 444 "$HR/ro/x.txt"; chmod 555 "$HR/ro"; echo new > "$RL/x.txt"
+  TMO=40 run $SSH -- "ls|$RR/ro" "putplain|$RL/x.txt|$RR/ro" "put|$RL/x.txt|$RR/ro" "ls|/config"
+  chmod 777 "$HR/ro"; chmod 666 "$HR/ro/x.txt"
+  chk "upload over a read-only file in a read-only directory: a failure, not an endless loop; the session keeps working" \
+      "[ $RC -eq 2 ] && [ \$(grep -c '^FAIL put' $OUT) = 2 ] && has '^OK   ls|/config' && [ \"\$(cat $HR/ro/x.txt)\" = old ]"
+
+  # the editor's Reload lists the file's own directory: the panel must get its directory back
+  gui $AC WINSCP_UITEST="nav|right|$RR/a;select|right|same.txt;edit|right;nav|right|$RR/b;editreload;select|right|same.txt;delete|right;print|right;editclose"
+  chk "after Reload in the editor, Delete in the panel deletes the panel's file, not the editor's" "ghas 'reloaded=1' && [ -f $HR/a/same.txt ] && [ ! -e $HR/b/same.txt ]"
+  echo in-b > "$HR/b/same.txt"; chmod 666 "$HR/b/same.txt"
+  gui $AC WINSCP_UITEST="nav|right|$RR/a;select|right|same.txt;edit|right;connect|127.0.0.1:2224:jumper:jump456:sftp;editappend|X;editsave;editreload;tab|0;editsave;editclose"
+  chk "a file opened from one tab is not saved to (or reloaded from) the server of another tab" \
+      "[ \$(grep -ac 'belongs to another session' $GO) -ge 2 ] && ghas 'saved=0' && ghas 'reloaded=0' && ghas 'saved=1' && [ \"\$(tr -d '\\n' < $HR/a/same.txt)\" = in-aX ] && [ ! -e $DATA/jumphome/e2e-rv ]"
+  echo in-a > "$HR/a/same.txt"; chmod 444 "$HR/a/same.txt"; chmod 555 "$HR/a"
+  gui $AC WINSCP_UITEST="nav|right|$RR/a;select|right|same.txt;edit|right;editappend|Y;editsave;editinfo;editclose"
+  chmod 777 "$HR/a"; chmod 666 "$HR/a/same.txt"
+  chk "an upload that fails leaves the editor's text marked as not saved, and says so" "ghas 'was not uploaded' && ghas 'saved=0' && ghas 'modified=1' && [ \"\$(cat $HR/a/same.txt)\" = in-a ]"
+  cp "$RL/a.txt" "$RL/close.txt"
+  gui WINSCP_UITEST="nav|left|$RL;select|left|close.txt;edit|left;editappend|unsaved;closewindow"
+  chk "closing the main window with unsaved text in an editor asks, and saves" "ghas 'was modified. Save the changes' && grep -q unsaved $RL/close.txt"
+  printf 'a\r\nb\r\nc\r\nd\n' > "$RL/mixed.txt"
+  gui WINSCP_UITEST="nav|left|$RL;select|left|mixed.txt;edit|left;editinfo;editappend|x;editsave;editclose"
+  chk "a file with mixed line endings: shown as such, saving asks first" "ghas 'eol=CR/LF(mixed)' && ghas 'mixes different line endings' && ghas 'saved=1' && [ \"\$(od -An -c $RL/mixed.txt | tr -d ' \\n')\" = 'a\\r\\nb\\r\\nc\\r\\nd\\r\\nx' ]"
+
+  # a relative target of Duplicate / Move To is below the panel's directory, never "/"
+  gui $AC WINSCP_DIALOG_SET="duplicate.target=sub" WINSCP_DIALOG_ACCEPT=duplicate WINSCP_UITEST="nav|right|$RR;select|right|r.txt;duplicate|right"
+  chk "Duplicate with a relative target directory" "cmp -s $HR/r.txt $HR/sub/r.txt && [ ! -e $DATA/sshhome/r.txt ]"
+  gui WINSCP_DIALOG_SET="moveto.target=sub" WINSCP_DIALOG_ACCEPT=moveto WINSCP_UITEST="nav|left|$RL;select|left|b.txt;moveto|left"
+  chk "Move To with a relative target directory (local)" "[ -f $RL/sub/b.txt ] && [ ! -e $RL/b.txt ] && [ ! -e /b.txt ]"
+  # a typed copy target: trailing slash is fine; a directory that cannot be opened cancels (also locally)
+  gui $AC WINSCP_COPY_TARGET="$RR/sub/" WINSCP_DIALOG_ACCEPT=copy WINSCP_UITEST="nav|left|$RL;nav|right|$RR;select|left|a.txt;copy|left;waitidle"
+  chk "F5 with a typed target ending in '/'" "cmp -s $RL/a.txt $HR/sub/a.txt"
+  gui $AC WINSCP_COPY_TARGET="$RL/e2e-nope" WINSCP_DIALOG_ACCEPT=copy WINSCP_UITEST="nav|left|$RL;nav|right|$RR;select|right|r.txt;copy|right;waitidle"
+  chk "F5 into a local directory that does not exist is cancelled, not redirected to the previous directory" "[ ! -e $RL/r.txt ] && [ ! -e $RL/e2e-nope ]"
+  gui $AC WINSCP_UITEST="nav|left|$RL;nav|right|$RR;select|right|a;props|right"
+  touch "$RL/exists.txt"; echo keep > "$RL/exists.txt"
+  # synchronized browsing: a panel that could not move does not drag the other one along
+  # a tab cannot be changed while a transfer batch runs
+  head -c 6000000 /dev/urandom > "$HR/big.bin"; chmod 666 "$HR/big.bin"
+  gui $AC WINSCP_UITEST="connect|127.0.0.1:2224:jumper:jump456:sftp;tab|0;nav|left|$RL;nav|right|$RR;setxfer|speed=1500;select|right|big.bin;xfer|right;tab|1;tabs;waitidle;setxfer|defaults=1;tabs"
+  chk "the tab cannot be changed while a transfer runs; the transfer completes from the right server" "ghas 'tabs\\] count=2 current=0 engine-active=0' && cmp -s $HR/big.bin $RL/big.bin"
+
+  # master password not given: saving a site keeps its encrypted passwords
+  gui WINSCP_UITEST="savesite|e2e-rv|127.0.0.1:2223:winscp:winscp123|proxy-pw|tunnel-pw;master|set|M-rv"
+  E0="$(sdump | grep -c 'enc:')"
+  gui WINSCP_LOGIN_SELECT_SITE=e2e-rv WINSCP_LOGIN_SAVE_AS=e2e-rv WINSCP_UITEST="login"
+  gui WINSCP_MASTER_PASSWORD=M-rv WINSCP_UITEST="siteinfo|e2e-rv"
+  chk "a site saved again without the master password keeps its encrypted passwords" "[ \"$E0\" = 3 ] && [ \$(sdump | grep -c 'enc:') = 3 ] && ghas 'pass=<winscp123> proxypass=<proxy-pw> tunnelpass=<tunnel-pw>'"
+  gui WINSCP_MASTER_PASSWORD=M-rv WINSCP_UITEST="master|remove|M-rv"
+
+  # keep up to date: an error in one directory never becomes "synchronize everything" (with delete)
+  KL="$W/keep"; HK="$DATA/sshhome/e2e-keep"; rm -rf "$KL" "$HK"; mkdir -p "$KL/sub" "$KL/pre/deep" "$HK/sub"; chmod -R 777 "$HK"
+  echo a > "$KL/a.txt"; cp "$KL/a.txt" "$HK/"; echo s > "$KL/sub/s.txt"; cp "$KL/sub/s.txt" "$HK/sub/"; echo p > "$KL/pre/deep/p.txt"
+  echo remote-only > "$HK/sub/remote-only.txt"; echo remote-top > "$HK/remote-top.txt"; chmod 666 "$HK"/*.txt "$HK"/sub/*.txt
+  ( sleep 4; echo p2 >> "$KL/pre/deep/p.txt" ) &
+  gui $AC WINSCP_KEEP_MS=14000 WINSCP_DIALOG_SET="keepuptodate.delete=1;keepuptodate.initial=0" WINSCP_UITEST="nav|left|$KL;nav|right|/config/e2e-keep;keepuptodate"
+  wait
+  chk "a change in a local directory missing on the server uploads that directory; remote files elsewhere are not deleted" \
+      "[ -f $HK/pre/deep/p.txt ] && grep -q p2 $HK/pre/deep/p.txt && [ -f $HK/sub/remote-only.txt ] && [ -f $HK/remote-top.txt ] && ! ghas 'Delete remote'"
+  rm -rf "$HK" "$HR"
   unset QT_QPA_PLATFORM WINSCP_NO_AUTOLOGIN
 fi
 

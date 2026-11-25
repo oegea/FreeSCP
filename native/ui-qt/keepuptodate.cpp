@@ -26,6 +26,7 @@
 #include <QSettings>
 #include <QTimer>
 #include <QVBoxLayout>
+#include <algorithm>
 #include <memory>
 #include <thread>
 
@@ -192,23 +193,49 @@ private:
     QElapsedTimer t; t.start();
     keeplogic::Snapshot now = takeSnapshot(FRoot, FSubdirs->isChecked(), nullptr);
     FTimer->setInterval(qBound(1000, int(t.elapsed()) * 20, 30000));     // a big tree is scanned less often
-    const std::vector<std::string> roots = keeplogic::changedRoots(FSnapshot, now);
+    std::vector<std::string> roots = keeplogic::changedRoots(FSnapshot, now);
+    if (!roots.empty())
+    {
+      // A file still being written changes again at the next poll: wait until two polls agree.
+      if (!(now == FPending)) { FPending = now; return; }
+      FPending.clear();
+      FSnapshot = now;
+    }
+    // Directories whose synchronization failed are tried again - those only, never "everything"
+    // (with "Delete files" that would remove remote files in directories that never changed) -
+    // and not more often than every ten seconds.
+    if (!FRetry.empty() && (!roots.empty() || FRetryTimer.elapsed() >= 10000))
+    {
+      for (const std::string & r : FRetry)
+      {
+        std::string d = r;      // a directory that is gone meanwhile: its nearest ancestor that exists
+        while (!d.empty() && !QFileInfo(FRoot + "/" + u8(d)).isDir()) d = keeplogic::parentOf(d);
+        roots.push_back(d);
+      }
+      FRetry.clear();
+      std::sort(roots.begin(), roots.end());
+      roots.erase(std::unique(roots.begin(), roots.end()), roots.end());
+      std::vector<std::string> minimal;
+      for (const std::string & d : roots)
+      {
+        bool covered = false;
+        for (const std::string & o : roots) if (o != d && keeplogic::covers(o, d)) { covered = true; break; }
+        if (!covered) minimal.push_back(d);
+      }
+      roots = minimal;
+    }
     if (roots.empty()) return;
-    // A file still being written changes again at the next poll: wait until two polls agree.
-    if (!(now == FPending)) { FPending = now; return; }
-    FPending.clear();
-    FSnapshot = now;
     synchronize(roots);
   }
 
   void synchronize(const std::vector<std::string> & roots)
   {
-    if (!FCtx.acquire || !FCtx.acquire()) { line("Another operation is running: will retry."); FSnapshot.clear(); return; }
+    if (!FCtx.acquire || !FCtx.acquire()) { line("Another operation is running: will retry."); FRetry = roots; FRetryTimer.start(); return; }
     FBusy = true;
     FStatus->setText("Synchronizing\xE2\x80\xA6");
     const std::string local = s8(FRoot), remote = s8(FRemoteRoot);
     const bool del = FDelete->isChecked(), subdirs = FSubdirs->isChecked();
-    struct Result { QStringList lines; int done = 0, errors = 0; };
+    struct Result { QStringList lines; int done = 0, errors = 0; std::vector<std::string> failed; };
     auto result = std::make_shared<Result>();
     std::thread([this, roots, local, remote, del, subdirs, result] {
       for (const std::string & rel : roots)
@@ -217,8 +244,34 @@ private:
         const std::string r = rel.empty() ? remote : (remote == "/" ? "/" + rel : remote + "/" + rel);
         const QString where = rel.empty() ? QString() : u8(rel) + "/";
         std::string err;
+        // A local directory that is not on the server yet (it was there before watching started, or
+        // its upload failed): there is nothing to compare with - upload it, from the highest
+        // directory that is missing. Never fall back to synchronizing a parent: with "Delete
+        // files" that would remove remote files in directories nothing changed in.
+        if (!rel.empty())
+        {
+          std::string probe;
+          engine::listRemoteDir(r, &probe);
+          if (!probe.empty())
+          {
+            std::string child = rel, anc = keeplogic::parentOf(rel), ancRemote;
+            bool found = false;
+            for (;;)
+            {
+              ancRemote = anc.empty() ? remote : (remote == "/" ? "/" + anc : remote + "/" + anc);
+              std::string e2; engine::listRemoteDir(ancRemote, &e2);
+              if (e2.empty()) { found = true; break; }
+              if (anc.empty()) break;
+              child = anc; anc = keeplogic::parentOf(anc);
+            }
+            std::string upErr;
+            if (found && engine::uploadToRemote(local + "/" + child, ancRemote, &upErr)) { result->lines << "Upload  " + u8(child) + "/"; ++result->done; }
+            else { result->lines << "Error in " + where + ": " + u8(found ? upErr : probe).section('\n', 0, 0); ++result->errors; result->failed.push_back(rel); }
+            continue;
+          }
+        }
         const std::vector<engine::SyncItem> items = engine::synchronizeCollect(l, r, 0, del, &err, subdirs);
-        if (!err.empty()) { result->lines << "Error in " + (where.isEmpty() ? QString("the directory") : where) + ": " + u8(err).section('\n', 0, 0); ++result->errors; engine::synchronizeRelease(); continue; }
+        if (!err.empty()) { result->lines << "Error in " + (where.isEmpty() ? QString("the directory") : where) + ": " + u8(err).section('\n', 0, 0); ++result->errors; result->failed.push_back(rel); engine::synchronizeRelease(); continue; }
         if (!items.empty())
         {
           std::string applyErr;
@@ -226,7 +279,7 @@ private:
           for (const engine::SyncItem & it : items)
             result->lines << QString("%1  %2%3%4").arg(u8(it.action), where, u8(it.name), it.isDir ? "/" : "");
           if (ok) result->done += static_cast<int>(items.size());
-          else { result->lines << "Error: " + u8(applyErr).section('\n', 0, 0); ++result->errors; }
+          else { result->lines << "Error: " + u8(applyErr).section('\n', 0, 0); ++result->errors; result->failed.push_back(rel); }
         }
         engine::synchronizeRelease();
       }
@@ -235,8 +288,7 @@ private:
         for (const QString & l : result->lines) line(l);
         FDone += result->done; FErrors += result->errors;
         FBusy = false;
-        // after an error the next poll tries again (the snapshot no longer counts as synchronized)
-        if (result->errors > 0) FSnapshot.clear();
+        if (!result->failed.empty()) { FRetry = result->failed; FRetryTimer.start(); }
         setStatus();
         if (FStopping) stop();
       }, Qt::QueuedConnection);
@@ -252,6 +304,8 @@ private:
   QTimer * FTimer;
   QString FRoot, FRemoteRoot;
   keeplogic::Snapshot FSnapshot, FPending;
+  std::vector<std::string> FRetry;      // directories to synchronize again after an error
+  QElapsedTimer FRetryTimer;
   bool FWatching = false, FBusy = false, FStopping = false, FCloseWhenStopped = false;
   int FDone = 0, FErrors = 0;
 };

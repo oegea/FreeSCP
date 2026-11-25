@@ -287,17 +287,29 @@ bool loadSite(const QString & name, engine::ConnectOptions & o)
   return true;
 }
 
-bool saveSite(const QString & name, const engine::ConnectOptions & o)
+bool saveSite(const QString & name, const engine::ConnectOptions & o, const QString & carryFrom)
 {
+  secrets::askAgain();      // saving is something the user asked for: the prompt may come back
   // With a master password the passwords are stored encrypted - never as plain text because the
   // master password was not given: then the site is not saved at all.
   QWidget * top = QApplication::activeWindow();
   bool ok1 = true, ok2 = true, ok3 = true;
-  const QString pass = secrets::toStored(u8(o.password), top, &ok1);
-  const QString proxyPass = secrets::toStored(u8(o.proxyPassword), top, &ok2);
-  const QString tunnelPass = secrets::toStored(u8(o.tunnelPassword), top, &ok3);
+  QString pass = secrets::toStored(u8(o.password), top, &ok1);
+  QString proxyPass = secrets::toStored(u8(o.proxyPassword), top, &ok2);
+  QString tunnelPass = secrets::toStored(u8(o.tunnelPassword), top, &ok3);
   if (!ok1 || !ok2 || !ok3) return false;
   QSettings s;
+  // Locked (the master password was not given): the form was filled without the encrypted passwords.
+  // Saving it must not wipe them.
+  if (!secrets::unlocked())
+  {
+    const QString from = "sites/" + (carryFrom.isEmpty() ? name : carryFrom) + "/";
+    auto keep = [&](QString & value, const char * key) {
+      const QString stored = s.value(from + key).toString();
+      if (value.isEmpty() && secrets::isEncrypted(stored)) value = stored;
+    };
+    keep(pass, "pass"); keep(proxyPass, "proxyPass"); keep(tunnelPass, "tunnelPass");
+  }
   s.remove("sites/" + name);                 // no stale keys from an earlier version of the site
   s.beginGroup("sites/" + name);
   s.setValue("protocol", protocolIndex(o.protocol));
@@ -341,6 +353,7 @@ LoginParams showLoginDialog(QWidget * parent, const engine::ConnectOptions * pre
   engine::ConnectOptions adv;   // advanced settings of the site being edited (proxy / tunnel / FTP mode)
   if (preset != nullptr) adv = *preset;
 
+  secrets::askAgain();
   QDialog dlg(parent);
   dlg.setWindowTitle("Login");
   dlg.resize(720, 430);
@@ -541,19 +554,20 @@ LoginParams showLoginDialog(QWidget * parent, const engine::ConnectOptions * pre
     if (savedSiteNames().contains(name)) { appMessage(&dlg, "Rename site", QString("A site named \"%1\" already exists.").arg(name)); return; }
     engine::ConnectOptions o;
     if (!loadSite(old, o)) return;
-    if (!saveSite(name, o)) { appMessage(&dlg, "Rename site", "The site was not renamed: the master password is needed to store its password."); return; }
+    if (!saveSite(name, o, old)) { appMessage(&dlg, "Rename site", "The site was not renamed: the master password is needed to store its password."); return; }
     deleteSite(old);
     reloadSites(); selectSite(name);
   });
   QObject::connect(saveBtn, &QPushButton::clicked, &dlg, [&] {
     engine::ConnectOptions o = getForm();
     QString def = sites->currentItem() ? sites->currentItem()->data(0, Qt::UserRole).toString() : QString();
+    const QString loadedFrom = def;          // the saved site the form was filled from, if any
     if (def.isEmpty()) def = u8(o.user) + "@" + u8(o.host);
     bool okIn = false;
     QString name = QInputDialog::getText(&dlg, "Save session", "Site name:", QLineEdit::Normal, def, &okIn).trimmed();
     if (!okIn || name.isEmpty()) return;
     name.replace('/', '_');                  // '/' would nest the QSettings group
-    if (!saveSite(name, o)) { appMessage(&dlg, "Save session", "The site was not saved: the master password is needed to store its password."); return; }
+    if (!saveSite(name, o, loadedFrom)) { appMessage(&dlg, "Save session", "The site was not saved: the master password is needed to store its password."); return; }
     reloadSites();
     selectSite(name);
   });

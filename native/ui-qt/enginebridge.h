@@ -300,6 +300,9 @@ void disconnectSftp();   // closes + removes the active session (tab)
 //--- session tabs (multiple concurrent connections) ---
 int sessionCount();                 // number of open sessions
 int activeSession();                // index of the active session (-1 if none)
+// A number that identifies the active session for as long as its tab exists (the index changes when
+// another tab is closed; a reconnect keeps the id). 0 if there is no session.
+int activeSessionId();
 std::string sessionLabel(int i);    // "user@host" for tab i
 void switchSession(int i);          // make session i active (subsequent remote calls target it)
 void closeSession(int i);           // close + remove session i

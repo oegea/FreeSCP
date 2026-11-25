@@ -54,6 +54,7 @@
 #include "uicommon.h"
 #include "icons.h"
 #include "panellogic.h"
+#include "localops.h"
 
 // Flat toolbar buttons (WinSCP's toolbars are flat; the platform styles frame every button).
 inline const char * const kFlatButtons =
@@ -451,8 +452,16 @@ public:
   bool isActive() const { return FActive; }
   void editPath() { FCaption->startEdit(); }
 
-  void goBack()    { if (FHistIdx > 0) { FNav = true; navigate(FHistory[--FHistIdx]); FNav = false; } }
-  void goForward() { if (FHistIdx + 1 < FHistory.size()) { FNav = true; navigate(FHistory[++FHistIdx]); FNav = false; } }
+  void goBack()    { if (FHistIdx > 0) historyGo(FHistIdx - 1); }
+  void goForward() { if (FHistIdx + 1 < FHistory.size()) historyGo(FHistIdx + 1); }
+  // Move to another entry of the history; the position only changes if the directory really opened.
+  void historyGo(int index)
+  {
+    const int was = FHistIdx; const QString target = FHistory[index];
+    FHistIdx = index; FNav = true; navigate(target); FNav = false;
+    if (FPath != target) FHistIdx = was;
+    updateNavButtons();
+  }
 
   void navigate(const QString & pathIn)
   {
@@ -749,7 +758,8 @@ public:
     sm->setCurrentIndex(FModel->index(next, 0), QItemSelectionModel::NoUpdate);
     FView->scrollTo(FModel->index(next, 0));
   }
-  void goUp() { if (FPath == "/") return; navigate(u8(engine::parentDir(s8(FPath)))); if (onLeaveDir) onLeaveDir(); }
+  // (the other panel follows - synchronized browsing - only if this one really moved)
+  void goUp() { if (FPath == "/") return; const QString before = FPath; navigate(u8(engine::parentDir(s8(FPath)))); if (FPath != before && onLeaveDir) onLeaveDir(); }
 
 protected:
   bool eventFilter(QObject * obj, QEvent * ev) override
@@ -786,7 +796,7 @@ protected:
           if (!FRemote) {
             for (const QString & f : selFiles) urls << QUrl::fromLocalFile(FPath + "/" + f);
           } else if (!selFiles.isEmpty() && !gTransferRunning.load()) {
-            QString tmp = QDir::tempPath() + "/freescp-dragout"; QDir().mkpath(tmp);
+            QString tmp = privateTempDir("dragout");
             QGuiApplication::setOverrideCursor(Qt::BusyCursor);
             for (const QString & f : selFiles) {
               std::string err;
@@ -834,7 +844,7 @@ private:
     const auto & e = FEntries[static_cast<size_t>(row)];
     if (!e.isDir) { if (onFileOpen) onFileOpen(); return; }
     if (e.isParent) { goUp(); }
-    else { QString nm = u8(e.name); navigate(u8(engine::joinPath(s8(FPath), e.name))); if (onEnterDir) onEnterDir(nm); }
+    else { QString nm = u8(e.name); const QString before = FPath; navigate(u8(engine::joinPath(s8(FPath), e.name))); if (FPath != before && onEnterDir) onEnterDir(nm); }
   }
 
   static QString columnTitle(Column c)

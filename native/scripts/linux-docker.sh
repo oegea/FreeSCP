@@ -6,6 +6,8 @@
 #   native/scripts/linux-docker.sh <arm64|amd64> features <data-dir> [section ...]
 #                                                                 e2e-features.sh against the servers started by
 #                                                                 `e2e/servers.sh up <data-dir>` on this machine
+#   native/scripts/linux-docker.sh <arm64|amd64> shots <out-dir>  render the main window and the main dialogs
+#                                                                 under a real X server (Xvfb) into <out-dir>
 #   native/scripts/linux-docker.sh <arm64|amd64> shell            a shell in the container
 #
 # The source tree is COPIED into a Docker volume (freescp-src-<arch>), not bind-mounted: the volume
@@ -17,7 +19,7 @@
 # those ports is forwarded from 127.0.0.1 (socat), and the proxy / keyboard-interactive helper
 # servers run in the container itself, so the suite sees the same addresses as on the host.
 set -euo pipefail
-ARCH="${1:?arm64|amd64}"; CMD="${2:?build|ssh|features|shell}"; shift 2
+ARCH="${1:?arm64|amd64}"; CMD="${2:?build|ssh|features|shots|shell}"; shift 2
 HERE="$(cd "$(dirname "$0")" && pwd)"; ROOT="$(cd "$HERE/../.." && pwd)"
 IMG="freescp-linux-test:$ARCH"; VOL="freescp-src-$ARCH"
 
@@ -66,6 +68,16 @@ case "$CMD" in
       rm -f "$D/env.sh" "$D/run"; ln -s "$R" "$D/run"
       { echo "export E2E_DATA=$D"; echo "export E2E_LAN_IP=$(hostname -I | cut -d" " -f1)"; echo "export E2E_HAVE_KBDINT=1"; } > "$D/env.sh"
       native/scripts/e2e-features.sh native/build-linux "$D" $E2E_SECTIONS' ;;
+  shots)
+    OUTDIR="${1:?output directory}"; mkdir -p "$OUTDIR"; OUTDIR="$(cd "$OUTDIR" && pwd)"; chmod 777 "$OUTDIR"
+    "${RUN[@]}" -v "$OUTDIR:/shots" "$IMG" su dev -c '
+      D=/tmp/shots-demo; mkdir -p $D/left/docs $D/left/src $D/right/sub; cd $D/left
+      echo hello > notes.txt; echo x > readme.md; head -c 300000 /dev/urandom > archive.zip; ln -s notes.txt link-to-notes; touch .hidden; cp notes.txt ../right/
+      cd /src
+      xvfb-run -a -s "-screen 0 1280x800x24" env WINSCP_SETTINGS_ORG=FreeSCP-shots WINSCP_NO_AUTOLOGIN=1 WINSCP_DIALOG_SHOTS=/shots \
+        WINSCP_UITEST="nav|left|$D/left;nav|right|$D/right;select|left|*.txt;wait|400;shot|/shots/main.png;login;select|left|notes.txt;props|left;prefs;select|left|notes.txt;edit|left;editshot|/shots/editor.png;editclose;icons|/shots/icons.png" \
+        native/build-linux/ui-qt/winscp-qt 2>&1 | grep -v "^\[uitest\]" | tail -5
+      ls /shots' ;;
   shell)
     "${RUN[@]}" "$IMG" su dev ;;
   *) echo "unknown command: $CMD"; exit 2 ;;

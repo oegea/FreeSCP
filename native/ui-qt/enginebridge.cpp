@@ -91,7 +91,9 @@ struct Sess {
   std::string label;
   std::vector<std::string> tempKeys;   // converted private keys, removed once the session is open
   int autoAnswers = 0;                 // prompts answered without a user (headless), per connect
+  int id = 0;                          // see engine::activeSessionId()
 };
+int g_nextSessionId = 1;
 std::vector<std::unique_ptr<Sess>> g_sess;
 int g_active = -1;
 Sess & AS() { static Sess empty; return (g_active >= 0 && g_active < (int)g_sess.size()) ? *g_sess[g_active] : empty; }
@@ -114,6 +116,21 @@ std::function<bool()> g_opCancel;   // polled from the progress event of a runni
 // Per thread: the engine calls back on the thread running the operation, and parallel transfers
 // run several at once (one shared string was both a data race and a way to blame the wrong file).
 thread_local std::string g_lastTransferError;
+// An error query that offers "Yes" is a way to recover (e.g. "cannot overwrite: delete the file and
+// create it again?"). It is taken - but when the recovery fails too the engine asks the same
+// question again, and answering Yes for ever was an endless loop: uploading over a read-only file
+// in a read-only directory never returned. The same question three times in a row within a few
+// seconds is a failure.
+bool RecoverWithYes(const std::string & query)
+{
+  thread_local std::string last;
+  thread_local int repeats = 0;
+  thread_local std::chrono::steady_clock::time_point at;
+  const auto now = std::chrono::steady_clock::now();
+  if (query == last && (now - at) < std::chrono::seconds(5)) ++repeats; else repeats = 0;
+  last = query; at = now;
+  return repeats < 2;
+}
 // Confirmation callback (host-key verification). Returns true to accept. If unset, auto-accept.
 // Connect runs on the caller (UI) thread, so the GUI can show a modal dialog from here.
 std::function<bool(const std::string &)> g_confirmCb;
@@ -474,6 +491,7 @@ ConnectResult connect(const ConnectOptions & o)
     g_sess.push_back(std::unique_ptr<Sess>(new Sess()));
     g_active = (int)g_sess.size() - 1;
     Sess * self = g_sess[g_active].get();   // stable: sessions are held by unique_ptr
+    self->id = g_nextSessionId++;
     self->label = o.user + "@" + o.host;
     self->params.o = o;
     // Optional full SSH/SFTP protocol log (heavy — every packet). Off by default; set
@@ -542,7 +560,7 @@ ConnectResult connect(const ConnectOptions & o)
           // qaYes here is a recoverable action (e.g. "Delete & recreate" to overwrite a file the
           // server won't truncate) -> take it. Otherwise it's a real failure (permission denied,
           // disk full): record the message and skip so the transfer reports "failed" not "done".
-          if (Answers & qaYes) Answer = qaYes;
+          if ((Answers & qaYes) && RecoverWithYes(ToU8(Query))) Answer = qaYes;
           else { g_lastTransferError = ToU8(Query); Answer = (Answers & qaSkip) ? qaSkip : ((Answers & qaAbort) ? qaAbort : Answers); }
         }
         else if ((Answers & qaYes) && (Answers & qaNo) && g_confirmCb && g_connecting)   // host key (connect, UI thread only)
@@ -733,6 +751,7 @@ ConnectResult reconnect()
   {
     std::unique_ptr<Sess> fresh = std::move(g_sess.back());
     g_sess.pop_back();
+    fresh->id = g_sess[slot]->id;                // still the same tab
     try { g_sess[slot] = std::move(fresh); }     // the lost session's terminal is destroyed here
     catch (...) { LogLine("reconnect: the old session did not close cleanly"); }
   }
@@ -854,7 +873,7 @@ int openParallelConnection(std::string * error)
       { UnicodeString pw = FromU8(IsTunnelPrompt(cp->data.get(), Instructions) ? po.tunnelPassword : po.password);
         if (Results) for (int i = 0; i < Results->Count; i++) Results->Strings[i] = pw; Result = true; };
     c->term->OnQueryUser = [](TObject *, const UnicodeString & Query, TStrings *, unsigned int Answers, const TQueryParams *, unsigned int & Answer, TQueryType Type, void *)
-      { if (Type == qtError) { if (Answers & qaYes) Answer = qaYes; else { g_lastTransferError = ToU8(Query); Answer = (Answers & qaSkip) ? qaSkip : ((Answers & qaAbort) ? qaAbort : Answers); } }
+      { if (Type == qtError) { if ((Answers & qaYes) && RecoverWithYes(ToU8(Query))) Answer = qaYes; else { g_lastTransferError = ToU8(Query); Answer = (Answers & qaSkip) ? qaSkip : ((Answers & qaAbort) ? qaAbort : Answers); } }
         else Answer = (Answers & qaYes) ? qaYes : ((Answers & qaOK) ? qaOK : Answers); };
     c->term->OnProgress = [cp](TFileOperationProgressType & P)
       { if (cp->sink) { engine::TransferProgress tp; tp.file = ToU8(P.FileName); tp.transferred = P.TransferredSize; tp.total = P.TransferSize; tp.cps = (std::int64_t)P.CPS(); if (cp->sink(tp)) P.SetCancel(csCancel); } };
@@ -1447,8 +1466,11 @@ bool synchronizeApply(std::string * error)
   try
   {
     TCopyParamType cp; FillCopyParam(cp);
+    g_lastTransferError.clear();
     g_terminal->SynchronizeApply(g_checklist, &cp, TTerminal::spNoConfirmation | TTerminal::spSubDirs,
                                  nullptr, nullptr, nullptr, nullptr, nullptr);
+    // a file that could not be transferred is reported through the error query (and skipped), not thrown
+    if (!g_lastTransferError.empty()) { if (error) *error = g_lastTransferError; return false; }
     return true;
   }
   catch (Exception & E) { if (error) *error = ExceptionToU8(E); return false; }
@@ -1634,6 +1656,7 @@ void disconnectSftp()   // closes + removes the ACTIVE session (tab)
 //--- session tabs ---
 int sessionCount() { ENGINE_LOCK; return (int)g_sess.size(); }
 int activeSession() { ENGINE_LOCK; return g_active; }
+int activeSessionId() { ENGINE_LOCK; return (g_active >= 0 && g_active < (int)g_sess.size()) ? g_sess[g_active]->id : 0; }
 std::string sessionLabel(int i) { ENGINE_LOCK; return (i >= 0 && i < (int)g_sess.size()) ? g_sess[i]->label : std::string(); }
 void switchSession(int i) { ENGINE_LOCK; if (i >= 0 && i < (int)g_sess.size()) g_active = i; }
 void closeSession(int i)

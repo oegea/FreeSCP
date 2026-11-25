@@ -550,3 +550,14 @@ a wrong HMAC), and `Digits.Pos(towupper(c))`, where `towupper` returns a 16-bit 
 `HexToBytes()` never decoded anything. When wiring up engine code for the first time, look for
 `long` used as "32 bits" and for `wint_t` results used as characters - and prove crypto against an
 independent implementation, not against itself (a wrong HMAC still round-trips).
+
+**m. The review found what 400 green checks had not.** Sixteen defects by reading, most of them
+"state that outlives the action": the session's current listing (every panel operation resolves a
+name in it - anything else that lists a directory must give it back), the active tab (a window that
+belongs to a session must remember which one: `engine::activeSessionId()`), a form filled without
+the secrets it could not decrypt. Tests exercised each feature alone; the bugs were in pairs.
+After a feature round: an independent review, then a regression check per finding.
+
+**n. "Yes" is not always progress.** The bridge answers recoverable error queries with Yes. If the
+recovery fails the engine asks again - the answer must change (`RecoverWithYes`), or one read-only
+file hangs the application.

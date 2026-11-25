@@ -5,7 +5,9 @@
 #ifndef WINSCP_UIQT_LOCALOPS_H
 #define WINSCP_UIQT_LOCALOPS_H
 
+#include <QDir>
 #include <QFile>
+#include <cstdlib>
 #include <QString>
 #include <cerrno>
 #include <cstring>
@@ -15,6 +17,30 @@
 #include <string>
 #include <sys/stat.h>
 #include <unistd.h>
+
+// A directory only this user can read, for the copies of remote files the app works on (edit, open,
+// compare, drag out): created once per run with mkdtemp (mode 0700, unpredictable name) - a fixed
+// name under /tmp is shared with every other user of a Linux machine. Removed by removePrivateTemp().
+inline QString & privateTempBaseRef() { static QString base; return base; }
+inline QString privateTempDir(const QString & sub = QString())
+{
+  QString & base = privateTempBaseRef();
+  if (base.isEmpty())
+  {
+    QByteArray tmpl = QFile::encodeName(QDir::tempPath() + "/freescp-XXXXXX");
+    const char * made = ::mkdtemp(tmpl.data());
+    base = (made != nullptr) ? QFile::decodeName(made) : QDir::tempPath();
+  }
+  if (sub.isEmpty()) return base;
+  QDir().mkpath(base + "/" + sub);
+  return base + "/" + sub;
+}
+inline void removePrivateTemp()
+{
+  QString & base = privateTempBaseRef();
+  if (!base.isEmpty() && base != QDir::tempPath() && base.contains("/freescp-")) QDir(base).removeRecursively();
+  base.clear();
+}
 
 struct LocalFileInfo
 {
@@ -68,7 +94,10 @@ inline bool localCopyOrMove(const QString & src, const QString & dst, bool move,
   if (!fs::exists(fs::symlink_status(from, ec))) return fail("The source does not exist.");
   const fs::path fromN = from.lexically_normal(), toN = to.lexically_normal();
   if (fromN == toN) return fail("The source and the target are the same file.");
-  if (fs::exists(fs::symlink_status(to, ec))) return fail(QString("\"%1\" already exists.").arg(dst));
+  // (on a case-insensitive volume "File.txt" exists when "file.txt" does: renaming to another case is fine)
+  const bool sameEntry = move && fs::equivalent(from, to, ec) && fromN.parent_path() == toN.parent_path();
+  ec.clear();
+  if (!sameEntry && fs::exists(fs::symlink_status(to, ec))) return fail(QString("\"%1\" already exists.").arg(dst));
   if (!fs::is_directory(to.parent_path(), ec)) return fail(QString("The directory \"%1\" does not exist.").arg(QFile::decodeName(to.parent_path().c_str())));
   const bool isDir = fs::is_directory(fs::symlink_status(from, ec));
   if (isDir)
