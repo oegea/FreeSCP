@@ -223,7 +223,10 @@ if want xfer; then
     # download carries the SERVER's time.
     REF="$X/data.bin"; [ "$name" = dav ] && REF="$H/data.bin"; [ "$name" = s3 ] && REF="$H/data.bin/xl.meta"
     if [ "$name" != dav ] && [ "$name" != s3 ]; then chk "$name: upload keeps the modification time on the server" "[ \"\$(mt $H/data.bin)\" = \"\$(mt $X/data.bin)\" ]"; fi
-    chk "$name: download keeps the modification time" "[ \"\$(mt $W/dl/data.bin)\" = \"\$(mt $REF)\" ]"
+    # (the server's own file may be written a moment after the time it reports: allow one second
+    # when the reference is the server's file - at a second boundary the two differ)
+    TOL=0; { [ "$name" = dav ] || [ "$name" = s3 ]; } && TOL=1
+    chk "$name: download keeps the modification time" "D=\$(( \$(mt $W/dl/data.bin) - \$(mt $REF) )); [ \${D#-} -le $TOL ]"
     freshdl; run $opts -- "set|time=0" "put|$X/lf.txt|$R" "get|$R/lf.txt|$W/dl"
     chk "$name: with 'preserve timestamp' off the download is stamped now" "[ $RC -eq 0 ] && [ \$(( \$(date +%s) - \$(mt $W/dl/lf.txt) )) -lt 120 ]"
     head -c 1500000 /dev/urandom > "$X/speed.bin"; freshdl
