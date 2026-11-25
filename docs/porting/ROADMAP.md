@@ -27,14 +27,17 @@ owner / group / special bits / several files / "add X to directories", also for 
 (symbolic, hard) · **Duplicate** and **Move To** (server-side on a remote panel) · panel **filter** by file
 mask · Select / Unselect dialog, select all, invert · **Open Directory** with bookmarks + **recent
 directories** (persisted) · Tabs > **Sites** · **Server and Protocol Information** (with free space) ·
-**reconnect** a lost session in the same tab · Login dialog arranged like WinSCP's (Manage > Rename / Delete).
+**reconnect** a lost session in the same tab · Login dialog arranged like WinSCP's (Manage > Rename / Delete) ·
+**Keep Remote Directory up to Date** (watch a local directory, upload every change) · **internal editor**
+that keeps the file's encoding / byte-order mark / line endings, with find & replace, go to line, reload.
 
 ## High value, next
 - 🟡 **Drag OUT of folders** — drag-out works for files; remote *directories* aren't exported yet
   (needs recursive temp download or macOS file promises).
 - ⬜ **Synchronize two local directories** (new in WinSCP 6.6; engine side merged, needs a native
   replacement for the Windows shell copy/delete + UI).
-- ⬜ **Keep remote directory up to date** — watch local dir, auto-sync changes (WinSCP's killer sync).
+- 🟡 **Keep remote directory up to date**: done (delete files, subdirectories, synchronize on start).
+  Not there: "existing files only", minimising to the tray, beep on change.
 
 ## Auth / connection (fidelity gaps)
 - ⬜ **Time zone offset / DST mode** per site (SCP shows the server's clock; FTP servers without MLSD
@@ -68,6 +71,8 @@ directories** (persisted) · Tabs > **Sites** · **Server and Protocol Informati
 - 🟡 Duplicate: files everywhere but FTP; a directory only where the server copies trees (SCP, WebDAV).
   WinSCP falls back to a second shell session or a local temporary copy.
 - ⬜ Custom commands (run a command on the selection, local/remote).
+- 🟡 Internal editor: encodings detected (UTF-8 / BOM / UTF-16 / ISO-8859-1), not selectable; no
+  "save in another encoding", no colour / font options, no editor list (external editors per mask).
 - 🟡 Compare Files: read-only side-by-side view done; no merge / external diff tool hook (WinSCP does this through extensions).
 
 ## UI / polish

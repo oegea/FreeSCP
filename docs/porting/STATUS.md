@@ -1149,6 +1149,11 @@ in, found by `e2e-ssh.sh` and fixed with a guarded patch - see UPSTREAM-PATCHES.
   the same directory (also when a transfer fails for that reason).
 - **Login dialog** arranged like WinSCP's: captions above the fields, Save / Advanced inside the
   Session box, Manage (Rename, Delete) at the bottom left.
+- **Keep Remote Directory up to Date** (Commands, Ctrl+U): watches a local directory and reflects
+  every change on a remote one until stopped (`keepuptodate.cpp`, `keeplogic.h`).
+- **Internal editor** rewritten (`editor.cpp`, `editorlogic.h`): keeps the file's encoding,
+  byte-order mark and line endings; refuses binary files; find / replace bar, Find Next, Go to
+  Line, Reload, word wrap; status bar with position, encoding and line endings.
 
 ### Bugs found by testing the new operations on every protocol (all fixed)
 - **S3: no folder could be deleted from the panel** (present in 0.3.2): the key went out as `dir//`.
@@ -1157,6 +1162,12 @@ in, found by `e2e-ssh.sh` and fixed with a guarded patch - see UPSTREAM-PATCHES.
 - SFTP: duplicating a directory failed and left an empty file under the new name; now refused up front
   (S3 likewise; S3 folder move / rename says so instead of "Error renaming file").
 - A local directory that does not exist showed as an empty panel.
+- **The editor damaged files that are not UTF-8 with LF** (present in 0.3.2): ISO-8859-1 letters became
+  U+FFFD, CR/LF became LF, a byte-order mark was dropped, no-break spaces became spaces, and a
+  binary file opened by mistake was rewritten as text on the first save.
+- **Synchronize took a directory it could not read for an empty one**: an unreadable or missing
+  remote directory compared as empty (mirror to local "with delete" would have listed every local
+  file for deletion), a missing local directory likewise. Both are errors now.
 - Upstream merge: an unwritable engine cache ended the connection ("Can't create file").
 - Linux: "Open diagnostics log file" called macOS's `open`.
 
@@ -1173,6 +1184,17 @@ entries carry owner, group, link flag and link target. `freescp-bridge-cli` has 
   reconnect - every refusal text included) and **panels** (the app driven offscreen through the real
   dialogs: columns, status lines, filter, selection, sorting, navigation, bookmarks, Properties,
   links, duplicate / move, reconnect, server information, icons).
+- Section **editor** (16 checks: byte-identical round trips per encoding, binary refusal, find /
+  replace, reload, remote files) and keep-up-to-date / safer-synchronize checks in **panels** / **sync**.
 - **Linux in Docker from a Mac**: `native/scripts/linux-docker.sh <arm64|amd64> build|ssh|features`
   (source copied to a case-sensitive volume, runs as a non-root user). The full feature suite runs
   on Linux aarch64 this way - CI only runs it on x86-64.
+- **Intel Macs under Rosetta**: `E2E_RUN="arch -x86_64"` with `e2e-ssh.sh` / `e2e-features.sh` on the
+  universal build tree (`build-universal`).
+
+### Local release build with Xcode 26
+`build-macos-universal.sh` fails to link with the official Qt 6.8.3: it asks for the `AGL` framework,
+which the macOS 26 SDK no longer has (`ld: framework 'AGL' not found`). CI (macos-15) is not affected.
+`QT_VERSION=6.9.3 native/scripts/build-macos-universal.sh` works locally (delete
+`build-universal/CMakeCache.txt` when switching: the Qt location is cached). The default in
+`deps-macos.sh` is unchanged - changing the Qt a release ships with is a release decision.

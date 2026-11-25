@@ -522,3 +522,22 @@ root can create any directory. The container runs builds and tests as an ordinar
 **g. Standard icons are not standard.** `QStyle::standardIcon` and the icon theme differ per desktop
 and some themes have none: the toolbars use icons drawn in code (`icons.cpp`), with the platform's
 file-type icons only where they exist. A test renders every icon and fails on a blank one.
+
+**h. `QTextDocument::toPlainText()` is not the text.** It turns no-break spaces into spaces (and
+paragraph separators into newlines); `QIODevice::Text` does nothing on Unix; `QString::fromUtf8` maps
+every invalid byte to U+FFFD. An editor built on those three rewrote any file that was not UTF-8 +
+LF. Use `toRawText()`, detect encoding / BOM / line endings from the bytes (`editorlogic.h`) and
+assert "open + save = the same bytes" for every kind of file.
+
+**i. An error that is reported instead of thrown is easy to read as "empty".** The engine does not
+throw when a directory cannot be listed inside `SynchronizeCollect` - it calls the error event and
+carries on with no files. Unhandled, the comparison said "everything here is extra". Every bridge
+call that walks directories checks the captured error before trusting an empty result (§19 had the
+same for the panel listing).
+
+**j. `spSubDirs` off is not "no recursion".** Synchronize recurses unless `spNoRecurse` is set *and*
+`spSubDirs` is clear.
+
+**k. Two test runs at once need two of everything.** `E2E_WORK` (work directory) and
+`WINSCP_SETTINGS_ORG` (settings store) let a second run go beside a long one; the remote test
+directories are still shared, so only sections with their own directories can overlap.
