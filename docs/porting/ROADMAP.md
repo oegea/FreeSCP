@@ -20,7 +20,7 @@ Settings** (text/binary/auto, preserve timestamp, permissions, name case, file m
 **Compare Files** (side-by-side local/remote diff) · correct time zones + preserved timestamps everywhere ·
 FTP time-outs + keep-alive · each session tab remembers its directories. (Released as **v0.3.0**.)
 
-✅ Added 2026-11-25 (UI fidelity round): panels laid out like WinSCP's Commander (per-panel navigation
+✅ Added 2026-11-25 (UI fidelity round, released as **v0.4.0**): panels laid out like WinSCP's Commander (per-panel navigation
 and operation toolbars, path caption, WinSCP's column sets, one date format, WinSCP's status lines, lock /
 protocol / session time in the status bar, menus in WinSCP's order, own icon set) · **Properties** with
 owner / group / special bits / several files / "add X to directories", also for local files · **New > Link**

@@ -2,7 +2,7 @@
 
 Update this whenever a target starts/stops building. Verify by actually building.
 
-_Last updated: 2026-11-25 — engine at WinSCP stable `b56534410` (6.7.1 + issues 2487, 2489, 2492); UI fidelity round: WinSCP-style panels, Properties with owner/group, links, duplicate / move to, filter, reconnect (see the last section). Not released yet (after 0.3.2).
+_Last updated: 2026-11-25 — **v0.4.0** released: engine at WinSCP stable `b56534410` (6.7.1 + issues 2487, 2489, 2492); UI fidelity round - WinSCP-style panels, Properties with owner/group, links, duplicate / move to, filter, reconnect, keep remote directory up to date, editor, master password (see the last sections).
 
 _Previous header:_ Last updated: 2026-11-16 — **v0.3.0**: feature round on top of 6.7.1 + a pre-release bug hunt (see the last two sections): SSH tunnel, proxies, 2FA prompts, FTPS, Transfer Settings + resume, Find Files, directory sizes, Compare Directories, side-by-side file comparison — and the platform-layer bugs that end-to-end testing of those exposed (time zones / file timestamps, FindFirst, port forwarding, socket event loop). See "Feature round" at the end. **Verified on macOS arm64 only; the Linux build has not been rebuilt with these changes.**_
 
@@ -1119,7 +1119,7 @@ and "the one **exception** is a check for a newer version" matched `exception`. 
 - Website: version strings, and the headline now leads with the project's own name ("FreeSCP. The
   WinSCP engine, natively on Mac & Linux.") instead of "WinSCP." alone.
 
-## Upstream sync + UI fidelity round (2026-11-25, after 0.3.2, not released)
+## Upstream sync + UI fidelity round (2026-11-25, released as 0.4.0)
 
 ### Upstream
 Merged `winscp/master` up to `b56534410` (9 commits; in the engine: Issue 2492 SCP upload failure,
@@ -1233,3 +1233,17 @@ The two skips on Linux-in-Docker need `docker exec` from inside the test contain
 failed "an idle tunnelled session does not spin the CPU" once: a CPU-time threshold that the
 emulator's overhead can exceed (it passed in the final run).
 Not run: the signed / notarized bundle, the AppImage, and GitHub CI (nothing was pushed).
+
+### Release v0.4.0 (2026-11-25)
+Same pipeline as 0.2.0-0.3.2. `main` fast-forwarded and pushed; the macOS workflow's unsigned
+universal bundle (official Qt 6.8.3, macos-15) signed + notarized with `release-macos.sh 0.4.0`.
+- Signed app: `e2e-ssh.sh` ALL OK natively and under Rosetta (`E2E_QPA=native`, with
+  `WINSCP_SETTINGS_ORG` so the run does not touch the user's settings), plus a scripted native run
+  on both architectures through the new panels, Properties, the editor, server information and
+  the icon set (57 icons, none blank). The zip downloaded back from GitHub: `spctl` accepted,
+  notarization ticket stapled.
+- Linux (tag build on GitHub, native runners): x86-64 unit 4/4, `e2e-ssh.sh` ALL OK,
+  `e2e-features.sh` **466/466**, AppImage smoke test; aarch64 unit + `e2e-ssh.sh` + AppImage smoke.
+- The first CI run on `main` failed one old check ("s3: download keeps the modification time") at a
+  second boundary: the reference is MinIO's file on disk. The check now allows one second there.
+- Website (`gh-pages`): version strings and a screenshot of the new interface.
