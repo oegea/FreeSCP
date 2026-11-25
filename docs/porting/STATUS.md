@@ -1217,3 +1217,20 @@ which the macOS 26 SDK no longer has (`ld: framework 'AGL' not found`). CI (maco
 `QT_VERSION=6.9.3 native/scripts/build-macos-universal.sh` works locally (delete
 `build-universal/CMakeCache.txt` when switching: the Qt location is cached). The default in
 `deps-macos.sh` is unchanged - changing the Qt a release ships with is a release decision.
+
+### Verified end to end (commit `13ed09543`, 2026-11-25)
+`e2e-features.sh` now has 15 sections (466 checks); `e2e-ssh.sh` 12; unit tests 4 programs.
+
+| Platform | Unit | e2e-ssh | e2e-features |
+|---|---|---|---|
+| macOS arm64 (dev build, Homebrew Qt) | 4/4 | ALL OK | **466 / 466** |
+| macOS x86-64 under Rosetta (universal build, official Qt 6.9.3) | 4/4 | ALL OK | **466 / 466** |
+| Linux arm64 (Docker, Ubuntu 22.04) | 4/4 | ALL OK | **464 passed, 2 skipped** |
+| Linux amd64 (Docker under emulation) | see below | | |
+
+The two skips on Linux-in-Docker need `docker exec` from inside the test container (an oversized
+`.filepart`, a session killed by the server); both run on macOS and in CI.
+Linux amd64 under emulation, previous commit of this round (`b0c26b73e`): unit 4/4, e2e-ssh ALL OK,
+407 passed / 1 failed / 2 skipped - the failure is "an idle tunnelled session does not spin the
+CPU", a CPU-time threshold that the emulator's overhead exceeds (it passes natively on x86-64 CI).
+Not run: the signed / notarized bundle, the AppImage, and GitHub CI (nothing was pushed).
