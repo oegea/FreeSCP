@@ -322,8 +322,9 @@ struct SyncItem
 // Compare localDir vs remoteDir. mode: 0 = mirror local->remote, 1 = mirror remote->local, 2 = both.
 // `del` includes deletions of extra files on the target. Returns the change list and keeps an internal
 // checklist for synchronizeApply(). On failure returns empty + sets error.
+// `subdirs` = false compares the two directories' own files only.
 std::vector<SyncItem> synchronizeCollect(const std::string & localDir, const std::string & remoteDir,
-                                         int mode, bool del, std::string * error = nullptr);
+                                         int mode, bool del, std::string * error = nullptr, bool subdirs = true);
 bool synchronizeApply(std::string * error = nullptr);    // execute the collected checklist
 void synchronizeRelease();                                // free the checklist
 

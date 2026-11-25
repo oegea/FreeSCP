@@ -1,0 +1,65 @@
+2026-11-25 13:07:21,987 - aqt.main - INFO - installer 8463364352 aqtinstall(aqt) v3.3.0 on Python 3.13.7 [CPython Clang 17.0.0 (clang-1700.3.19.1)]
+2026-11-25 13:07:21,988 - aqt.helper - DEBUG - helper 8463364352 Attempt to download checksum at https://download.qt.io/online/qtsdkrepository/mac_x64/desktop/qt6_683/qt6_683/Updates.xml.sha256
+2026-11-25 13:07:22,773 - aqt.helper - DEBUG - helper 8463364352 Attempt to download checksum at https://download.qt.io/online/qtsdkrepository/mac_x64/extensions/qtwebengine/683/clang_64/Updates.xml.sha256
+2026-11-25 13:07:23,473 - aqt.archives - INFO - archives 8463364352 Found extension qtwebengine
+2026-11-25 13:07:23,473 - aqt.helper - DEBUG - helper 8463364352 Attempt to download checksum at https://download.qt.io/online/qtsdkrepository/mac_x64/extensions/qtpdf/683/clang_64/Updates.xml.sha256
+2026-11-25 13:07:24,161 - aqt.archives - INFO - archives 8463364352 Found extension qtpdf
+2026-11-25 13:07:24,612 - aqt.helper - DEBUG - helper 8463364352 Attempt to download checksum at https://download.qt.io/online/qtsdkrepository/mac_x64/desktop/qt6_683/qt6_683/qt.qt6.683.clang_64/6.8.3-0-202503201723qtbase-MacOS-MacOS_14-Clang-MacOS-MacOS_14-X86_64-ARM64.7z.sha256
+2026-11-25 13:07:24,613 - aqt.helper - DEBUG - helper 8463364352 Attempt to download checksum at https://download.qt.io/online/qtsdkrepository/mac_x64/desktop/qt6_683/qt6_683/qt.qt6.683.clang_64/6.8.3-0-202503201723qtsvg-MacOS-MacOS_14-Clang-MacOS-MacOS_14-X86_64-ARM64.7z.sha256
+2026-11-25 13:07:24,957 - aqt.helper - INFO - helper 8463364352 Downloading qtbase...
+2026-11-25 13:07:24,958 - aqt.helper - INFO - helper 8463364352 Downloading qtsvg...
+2026-11-25 13:07:24,958 - aqt.installer - DEBUG - installer 8463364352 Download URL: https://download.qt.io/online/qtsdkrepository/mac_x64/desktop/qt6_683/qt6_683/qt.qt6.683.clang_64/6.8.3-0-202503201723qtsvg-MacOS-MacOS_14-Clang-MacOS-MacOS_14-X86_64-ARM64.7z
+2026-11-25 13:07:24,958 - aqt.installer - DEBUG - installer 8463364352 Download URL: https://download.qt.io/online/qtsdkrepository/mac_x64/desktop/qt6_683/qt6_683/qt.qt6.683.clang_64/6.8.3-0-202503201723qtbase-MacOS-MacOS_14-Clang-MacOS-MacOS_14-X86_64-ARM64.7z
+2026-11-25 13:07:25,346 - aqt.helper - DEBUG - helper 8463364352 Asked to redirect(302) to: https://mirrors.20i.com/pub/qt.io/online/qtsdkrepository/mac_x64/desktop/qt6_683/qt6_683/qt.qt6.683.clang_64/6.8.3-0-202503201723qtbase-MacOS-MacOS_14-Clang-MacOS-MacOS_14-X86_64-ARM64.7z
+2026-11-25 13:07:25,347 - aqt.helper - INFO - helper 8463364352 Redirected: mirrors.20i.com
+2026-11-25 13:07:25,347 - aqt.helper - DEBUG - helper 8463364352 Asked to redirect(302) to: https://mirrors.20i.com/pub/qt.io/online/qtsdkrepository/mac_x64/desktop/qt6_683/qt6_683/qt.qt6.683.clang_64/6.8.3-0-202503201723qtsvg-MacOS-MacOS_14-Clang-MacOS-MacOS_14-X86_64-ARM64.7z
+2026-11-25 13:07:25,348 - aqt.helper - INFO - helper 8463364352 Redirected: mirrors.20i.com
+2026-11-25 13:07:27,071 - aqt.installer - INFO - installer 8463364352 Finished installation of qtsvg-MacOS-MacOS_14-Clang-MacOS-MacOS_14-X86_64-ARM64.7z in 2.46014304
+2026-11-25 13:07:55,576 - aqt.installer - INFO - installer 8463364352 Finished installation of qtbase-MacOS-MacOS_14-Clang-MacOS-MacOS_14-X86_64-ARM64.7z in 30.96547971
+2026-11-25 13:07:56,685 - aqt.updater - INFO - updater 8463364352 Patching /Users/oriolegea/Development/FreeSCP/native/build-deps/qt/6.8.3/macos/bin/qmake
+2026-11-25 13:07:56,694 - aqt.updater - INFO - updater 8463364352 Patching /Users/oriolegea/Development/FreeSCP/native/build-deps/qt/6.8.3/macos/lib/libQt6FbSupport.prl
+2026-11-25 13:07:56,695 - aqt.updater - INFO - updater 8463364352 Patching /Users/oriolegea/Development/FreeSCP/native/build-deps/qt/6.8.3/macos/lib/libQt6ExampleIcons.prl
+2026-11-25 13:07:56,695 - aqt.updater - INFO - updater 8463364352 Patching /Users/oriolegea/Development/FreeSCP/native/build-deps/qt/6.8.3/macos/lib/libQt6DeviceDiscoverySupport.prl
+2026-11-25 13:07:56,696 - aqt.updater - INFO - updater 8463364352 Patching /Users/oriolegea/Development/FreeSCP/native/build-deps/qt/6.8.3/macos/lib/libQt6ExamplesAssetDownloader.prl
+2026-11-25 13:07:56,696 - aqt.main - INFO - installer 8463364352 Finished installation
+2026-11-25 13:07:56,696 - aqt.main - INFO - installer 8463364352 Time elapsed: 34.70882071 second
+2026-11-25 13:11:01,752 - aqt.main - INFO - installer 8463364352 aqtinstall(aqt) v3.3.0 on Python 3.13.7 [CPython Clang 17.0.0 (clang-1700.3.19.1)]
+2026-11-25 13:11:01,752 - aqt.helper - DEBUG - helper 8463364352 Attempt to download checksum at https://download.qt.io/online/qtsdkrepository/mac_x64/desktop/qt6_693/qt6_693/Updates.xml.sha256
+2026-11-25 13:11:02,828 - aqt.helper - DEBUG - helper 8463364352 Attempt to download checksum at https://download.qt.io/online/qtsdkrepository/mac_x64/extensions/qtwebengine/693/clang_64/Updates.xml.sha256
+2026-11-25 13:11:03,870 - aqt.archives - INFO - archives 8463364352 Found extension qtwebengine
+2026-11-25 13:11:03,871 - aqt.helper - DEBUG - helper 8463364352 Attempt to download checksum at https://download.qt.io/online/qtsdkrepository/mac_x64/extensions/qtpdf/693/clang_64/Updates.xml.sha256
+2026-11-25 13:11:04,942 - aqt.archives - INFO - archives 8463364352 Found extension qtpdf
+2026-11-25 13:11:05,393 - aqt.helper - DEBUG - helper 8463364352 Attempt to download checksum at https://download.qt.io/online/qtsdkrepository/mac_x64/desktop/qt6_693/qt6_693/qt.qt6.693.clang_64/6.9.3-0-202509261207qtsvg-MacOS-MacOS_15-Clang-MacOS-MacOS_15-X86_64-ARM64.7z.sha256
+2026-11-25 13:11:05,393 - aqt.helper - DEBUG - helper 8463364352 Attempt to download checksum at https://download.qt.io/online/qtsdkrepository/mac_x64/desktop/qt6_693/qt6_693/qt.qt6.693.clang_64/6.9.3-0-202509261207qtbase-MacOS-MacOS_15-Clang-MacOS-MacOS_15-X86_64-ARM64.7z.sha256
+2026-11-25 13:11:05,925 - aqt.helper - INFO - helper 8463364352 Downloading qtsvg...
+2026-11-25 13:11:05,925 - aqt.installer - DEBUG - installer 8463364352 Download URL: https://download.qt.io/online/qtsdkrepository/mac_x64/desktop/qt6_693/qt6_693/qt.qt6.693.clang_64/6.9.3-0-202509261207qtsvg-MacOS-MacOS_15-Clang-MacOS-MacOS_15-X86_64-ARM64.7z
+2026-11-25 13:11:05,927 - aqt.helper - INFO - helper 8463364352 Downloading qtbase...
+2026-11-25 13:11:05,927 - aqt.installer - DEBUG - installer 8463364352 Download URL: https://download.qt.io/online/qtsdkrepository/mac_x64/desktop/qt6_693/qt6_693/qt.qt6.693.clang_64/6.9.3-0-202509261207qtbase-MacOS-MacOS_15-Clang-MacOS-MacOS_15-X86_64-ARM64.7z
+2026-11-25 13:11:06,472 - aqt.helper - DEBUG - helper 8463364352 Asked to redirect(302) to: https://mirrors.20i.com/pub/qt.io/online/qtsdkrepository/mac_x64/desktop/qt6_693/qt6_693/qt.qt6.693.clang_64/6.9.3-0-202509261207qtsvg-MacOS-MacOS_15-Clang-MacOS-MacOS_15-X86_64-ARM64.7z
+2026-11-25 13:11:06,472 - aqt.helper - DEBUG - helper 8463364352 Asked to redirect(302) to: https://mirrors.20i.com/pub/qt.io/online/qtsdkrepository/mac_x64/desktop/qt6_693/qt6_693/qt.qt6.693.clang_64/6.9.3-0-202509261207qtbase-MacOS-MacOS_15-Clang-MacOS-MacOS_15-X86_64-ARM64.7z
+2026-11-25 13:11:06,472 - aqt.helper - INFO - helper 8463364352 Redirected: mirrors.20i.com
+2026-11-25 13:11:06,472 - aqt.helper - INFO - helper 8463364352 Redirected: mirrors.20i.com
+2026-11-25 13:11:07,325 - aqt.installer - INFO - installer 8463364352 Finished installation of qtsvg-MacOS-MacOS_15-Clang-MacOS-MacOS_15-X86_64-ARM64.7z in 1.93445175
+2026-11-25 13:11:17,995 - aqt.installer - INFO - installer 8463364352 Finished installation of qtbase-MacOS-MacOS_15-Clang-MacOS-MacOS_15-X86_64-ARM64.7z in 12.60432646
+2026-11-25 13:11:18,604 - aqt.updater - INFO - updater 8463364352 Patching /Users/oriolegea/Development/FreeSCP/native/build-deps/qt/6.9.3/macos/bin/qmake
+2026-11-25 13:11:18,610 - aqt.updater - INFO - updater 8463364352 Patching /Users/oriolegea/Development/FreeSCP/native/build-deps/qt/6.9.3/macos/lib/pkgconfig/Qt6Platform.pc
+2026-11-25 13:11:18,610 - aqt.updater - INFO - updater 8463364352 Patching /Users/oriolegea/Development/FreeSCP/native/build-deps/qt/6.9.3/macos/lib/pkgconfig/Qt6Concurrent.pc
+2026-11-25 13:11:18,611 - aqt.updater - INFO - updater 8463364352 Patching /Users/oriolegea/Development/FreeSCP/native/build-deps/qt/6.9.3/macos/lib/pkgconfig/Qt6Xml.pc
+2026-11-25 13:11:18,611 - aqt.updater - INFO - updater 8463364352 Patching /Users/oriolegea/Development/FreeSCP/native/build-deps/qt/6.9.3/macos/lib/pkgconfig/Qt6SvgWidgets.pc
+2026-11-25 13:11:18,612 - aqt.updater - INFO - updater 8463364352 Patching /Users/oriolegea/Development/FreeSCP/native/build-deps/qt/6.9.3/macos/lib/pkgconfig/Qt6OpenGLWidgets.pc
+2026-11-25 13:11:18,612 - aqt.updater - INFO - updater 8463364352 Patching /Users/oriolegea/Development/FreeSCP/native/build-deps/qt/6.9.3/macos/lib/pkgconfig/Qt6PrintSupport.pc
+2026-11-25 13:11:18,612 - aqt.updater - INFO - updater 8463364352 Patching /Users/oriolegea/Development/FreeSCP/native/build-deps/qt/6.9.3/macos/lib/pkgconfig/Qt6Svg.pc
+2026-11-25 13:11:18,613 - aqt.updater - INFO - updater 8463364352 Patching /Users/oriolegea/Development/FreeSCP/native/build-deps/qt/6.9.3/macos/lib/pkgconfig/Qt6Core.pc
+2026-11-25 13:11:18,613 - aqt.updater - INFO - updater 8463364352 Patching /Users/oriolegea/Development/FreeSCP/native/build-deps/qt/6.9.3/macos/lib/pkgconfig/Qt6Gui.pc
+2026-11-25 13:11:18,613 - aqt.updater - INFO - updater 8463364352 Patching /Users/oriolegea/Development/FreeSCP/native/build-deps/qt/6.9.3/macos/lib/pkgconfig/Qt6OpenGL.pc
+2026-11-25 13:11:18,614 - aqt.updater - INFO - updater 8463364352 Patching /Users/oriolegea/Development/FreeSCP/native/build-deps/qt/6.9.3/macos/lib/pkgconfig/Qt6Test.pc
+2026-11-25 13:11:18,614 - aqt.updater - INFO - updater 8463364352 Patching /Users/oriolegea/Development/FreeSCP/native/build-deps/qt/6.9.3/macos/lib/pkgconfig/Qt6Network.pc
+2026-11-25 13:11:18,614 - aqt.updater - INFO - updater 8463364352 Patching /Users/oriolegea/Development/FreeSCP/native/build-deps/qt/6.9.3/macos/lib/pkgconfig/Qt6Sql.pc
+2026-11-25 13:11:18,615 - aqt.updater - INFO - updater 8463364352 Patching /Users/oriolegea/Development/FreeSCP/native/build-deps/qt/6.9.3/macos/lib/pkgconfig/Qt6DBus.pc
+2026-11-25 13:11:18,615 - aqt.updater - INFO - updater 8463364352 Patching /Users/oriolegea/Development/FreeSCP/native/build-deps/qt/6.9.3/macos/lib/pkgconfig/Qt6Widgets.pc
+2026-11-25 13:11:18,616 - aqt.updater - INFO - updater 8463364352 Patching /Users/oriolegea/Development/FreeSCP/native/build-deps/qt/6.9.3/macos/lib/libQt6FbSupport.prl
+2026-11-25 13:11:18,616 - aqt.updater - INFO - updater 8463364352 Patching /Users/oriolegea/Development/FreeSCP/native/build-deps/qt/6.9.3/macos/lib/libQt6ExampleIcons.prl
+2026-11-25 13:11:18,616 - aqt.updater - INFO - updater 8463364352 Patching /Users/oriolegea/Development/FreeSCP/native/build-deps/qt/6.9.3/macos/lib/libQt6DeviceDiscoverySupport.prl
+2026-11-25 13:11:18,616 - aqt.updater - INFO - updater 8463364352 Patching /Users/oriolegea/Development/FreeSCP/native/build-deps/qt/6.9.3/macos/lib/libQt6ExamplesAssetDownloader.prl
+2026-11-25 13:11:18,617 - aqt.main - INFO - installer 8463364352 Finished installation
+2026-11-25 13:11:18,617 - aqt.main - INFO - installer 8463364352 Time elapsed: 16.86527904 second

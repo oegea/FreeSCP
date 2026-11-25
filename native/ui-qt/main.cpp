@@ -93,6 +93,7 @@
 #include "icons.h"
 #include "propsdialog.h"
 #include "localops.h"
+#include "keepuptodate.h"
 
 #ifndef FREESCP_VERSION
 #define FREESCP_VERSION "dev"
@@ -1234,6 +1235,22 @@ int main(int argc, char ** argv)
     lp->refresh(); rp->refresh();
   };
 
+  //--- Keep Remote Directory up to Date -------------------------------------------
+  // Watch the local panel's directory and reflect every change on the remote panel's directory.
+  auto doKeepUpToDate = [&] {
+    FilePanel * lp = left->isRemote() ? right : left;
+    FilePanel * rp = left->isRemote() ? left : right;
+    if (!rp->isRemote()) { appMessage(&window, "Keep remote directory up to date", "Connect a remote session first."); return; }
+    if (busy()) return;
+    KeepUpToDateContext ctx;
+    ctx.localDir = lp->path(); ctx.remoteDir = rp->path();
+    ctx.acquire = [&]() -> bool { if (gTransferRunning.load()) return false; gTransferRunning = true; return true; };
+    ctx.release = [&] { gTransferRunning = false; };
+    ctx.log = [&](const QString & l) { log(l); };
+    showKeepUpToDateDialog(&window, ctx);
+    lp->refresh(); rp->refresh();
+  };
+
   //--- Find Files --------------------------------------------------------------
   auto doFind = [&](const QString & autoMask) {
     FilePanel * panel = active;
@@ -1636,6 +1653,7 @@ int main(int argc, char ** argv)
     auto * mCommands = mb->addMenu("&Commands");
     mCommands->addAction(appIcon("compare"), "&Compare Directories\tShift+F2", doCompareDirs);
     mCommands->addAction(appIcon("sync"), "&Synchronize\xE2\x80\xA6\tCtrl+S", doSync);
+    mCommands->addAction(appIcon("upload"), "&Keep Remote Directory up to Date\xE2\x80\xA6\tCtrl+U", doKeepUpToDate);
     actSync->setText("Synchronize &Browsing"); actSync->setIconText("Sync browsing");
     mCommands->addAction(actSync);
     mCommands->addAction(appIcon("find"), "&Find Files\xE2\x80\xA6\tCtrl+Alt+F", [&]{ doFind(QString()); });
@@ -1784,6 +1802,7 @@ int main(int argc, char ** argv)
   shortcut(Qt::SHIFT | Qt::ALT | Qt::Key_Enter, doCalcSizes);
   shortcut(Qt::CTRL | Qt::Key_S, doSync);                                    // synchronize
   shortcut(Qt::CTRL | Qt::Key_B, addBookmark);                               // bookmark the current directory
+  shortcut(Qt::CTRL | Qt::Key_U, doKeepUpToDate);                            // keep remote directory up to date
   shortcut(Qt::CTRL | Qt::Key_O, doOpenDir);                                 // open directory / bookmark
   shortcut(Qt::SHIFT | Qt::Key_F5, [&]{ doCopyOrMoveWithin(false); });       // duplicate
   shortcut(Qt::SHIFT | Qt::Key_F6, [&]{ doCopyOrMoveWithin(true); });        // move to
@@ -2033,6 +2052,7 @@ int main(int argc, char ** argv)
     }
     fprintf(stdout, "[icons] %d blank=%d\n", (int)names.size(), blank); fflush(stdout);
   };
+  uiCmd["keepuptodate"] = [&](const QStringList &) { doKeepUpToDate(); };   // with WINSCP_KEEP_MS: watch for that long
   uiCmd["dropsession"] = [&](const QStringList &) { engine::debugDropConnection(); };   // the connection is gone, the tab stays
   uiCmd["nav"] = [&](const QStringList & a) { (a.value(0) == "right" ? right : left)->navigate(a.value(1)); };
   uiCmd["activate"] = [&](const QStringList & a) { (a.value(0) == "right" ? right : left)->onActivated(); };

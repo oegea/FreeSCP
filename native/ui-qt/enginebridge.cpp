@@ -1321,17 +1321,22 @@ SessionInformation sessionInformation()
 namespace { TSynchronizeChecklist * g_checklist = nullptr; }
 
 std::vector<SyncItem> synchronizeCollect(const std::string & localDir, const std::string & remoteDir,
-                                         int mode, bool del, std::string * error)
+                                         int mode, bool del, std::string * error, bool subdirs)
 {
   ENGINE_LOCK;
   std::vector<SyncItem> out;
   if (!remoteConnected()) { if (error) *error = "not connected"; return out; }
   synchronizeRelease();
+  {
+    std::error_code ec;      // the engine compares a missing local directory as an empty one
+    if (!std::filesystem::is_directory(localDir, ec)) { if (error) *error = "The local directory \"" + localDir + "\" does not exist."; return out; }
+  }
   try
   {
     TTerminal::TSynchronizeMode m = (mode == 1) ? TTerminal::smLocal : (mode == 2) ? TTerminal::smBoth : TTerminal::smRemote;
-    int params = TTerminal::spNoConfirmation | TTerminal::spSubDirs;
+    int params = TTerminal::spNoConfirmation | (subdirs ? TTerminal::spSubDirs : TTerminal::spNoRecurse);
     if (del && mode != 2) params |= TTerminal::spDelete;
+    g_lastTransferError.clear();
     TCopyParamType cp; FillCopyParam(cp);
     g_checklist = g_terminal->SynchronizeCollect(FromU8(localDir), FromU8(remoteDir), m, &cp, params, nullptr, nullptr);
     if (g_checklist != nullptr)
@@ -1351,11 +1356,24 @@ std::vector<SyncItem> synchronizeCollect(const std::string & localDir, const std
           case TSynchronizeChecklist::saDeleteLocal: si.action = "Delete local"; break;
           default: si.action = "?"; break;
         }
-        si.name = ToU8(it->GetFileName());
+        // The name with its directory below the synchronized one ("sub/deep/x.txt"): a checklist of a
+        // tree otherwise lists same-named files of different directories alike.
+        {
+          const bool viaRemote = it->IsRemoteOnly();
+          std::string dir = ToU8(viaRemote ? it->Info2.Directory : it->Info1.Directory);   // 1 = local, 2 = remote
+          const std::string base = viaRemote ? remoteDir : localDir;
+          std::string rel;
+          if (dir.size() > base.size() && dir.compare(0, base.size(), base) == 0) rel = dir.substr(base.size());
+          while (!rel.empty() && rel.front() == '/') rel.erase(0, 1);
+          while (!rel.empty() && rel.back() == '/') rel.pop_back();
+          si.name = rel.empty() ? ToU8(it->GetFileName()) : rel + "/" + ToU8(it->GetFileName());
+        }
         si.isDir = it->IsDirectory;
         si.size = it->IsDirectory ? 0 : it->GetSize();
         out.push_back(si);
       }
+    // a directory that cannot be read is reported, not thrown: without this it compared as empty
+    if (error && !g_lastTransferError.empty()) { *error = g_lastTransferError; synchronizeRelease(); out.clear(); }
   }
   catch (Exception & E) { if (error) *error = ExceptionToU8(E); synchronizeRelease(); }
   catch (...) { if (error) *error = "unknown error"; synchronizeRelease(); }

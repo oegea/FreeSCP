@@ -16,7 +16,8 @@
 #            links, server-side duplicate and move, free space                (all protocols)
 #   panels   the Qt app's panels driven offscreen: columns, status lines, hidden files, filter,
 #            selection, sorting, recent directories, bookmarks, and the Properties / Add Link /
-#            Duplicate / Move To / Server Information dialogs
+#            Duplicate / Move To / Server Information dialogs, reconnect, Keep Remote Directory
+#            up to Date
 #
 # Usage:  native/scripts/e2e/servers.sh up <data-dir>
 #         native/scripts/e2e-features.sh <build-dir> <data-dir> [section ...]     (default: all)
@@ -360,7 +361,22 @@ if want sync; then
     rm -f "$H/same.txt"; mkdir -p "$L/gone-dir"; echo x > "$L/gone-dir/f.txt"; mkdir -p "$L/gone-empty"; echo y > "$L/extra-local.txt"; sleep 2
     run $opts -- "sync|$L|$R|down|delete"
     chk "$name: mirror download with delete removes local extras (file, directory with content, empty directory)" "[ $RC -eq 0 ] && [ ! -e $L/same.txt ] && [ ! -e $L/gone-dir ] && [ ! -e $L/gone-empty ] && [ ! -e $L/extra-local.txt ] && [ -f $L/newer-local.txt ] && [ -f $L/sub/in-sub.txt ]"
+    echo n > "$L/sub/new-in-sub.txt"; mkdir -p "$L/sub/deeper"; echo d > "$L/sub/deeper/d.txt"
+    run $opts -- "sync|$L|$R|up|dry"
+    chk "$name: a change below the top directory is listed with its path" "[ \"\$(changes)\" = 'Upload sub/deeper/;Upload sub/new-in-sub.txt;' ]"
+    rm -rf "$L/sub/new-in-sub.txt" "$L/sub/deeper"
+    # A remote directory that cannot be read must never be taken for an empty one: mirroring it
+    # "with delete" would remove every local file.
+    N0="$(find "$L" | wc -l | tr -d ' ')"
+    run $opts -- "sync|$L|$R-e2e-nope|down|delete" "sync|$L|$R-e2e-nope|up|delete" "sync|$L|$R|up|dry"
+    chk "$name: a missing remote directory is an error in both directions; nothing is deleted or uploaded" \
+        "[ $RC -eq 2 ] && [ \$(grep -c '^FAIL sync' $OUT) = 2 ] && [ \"\$(find $L | wc -l | tr -d ' ')\" = \"$N0\" ] && [ ! -e $H-e2e-nope ] && has 'SYNC 0 change'"
+    run $opts -- "sync|$W/e2e-no-such-local|$R|up|delete" "sync|$W/e2e-no-such-local|$R|down" "sync|$L|$R|up|dry"
+    chk "$name: a missing local directory is an error; the remote directory is left alone" \
+        "[ $RC -eq 2 ] && [ \$(grep -c 'does not exist' $OUT) = 2 ] && [ ! -e $W/e2e-no-such-local ] && [ -f $H/newer-local.txt ] && has 'SYNC 0 change'"
   done
+  run $SSH -- "sync|$W/sy-sftp|/root|down|delete" "ls|/config"
+  chk "sftp: an unreadable remote directory is an error, the local files stay, the session keeps working" "[ $RC -eq 2 ] && has '^FAIL sync' && [ -f $W/sy-sftp/newer-local.txt ] && has '^OK   ls|'"
 fi
 
 #==============================================================================================
@@ -825,6 +841,47 @@ if want panels; then
     chk "the server drops the connection for real: noticed at the next action, reconnected" \
         "ghas 'Connection lost' && ghas '^\\[panel right\\] /config/logs\$' && ghas \"protocol='SFTP-\""
   else skip "connection dropped by the server (docker exec not available)"; fi
+
+  echo "== panels: keep remote directory up to date"
+  KL="$W/keep"; KR=/config/e2e-keep; HK="$DATA/sshhome/e2e-keep"
+  keepsetup() { rm -rf "$KL" "$HK"; mkdir -p "$KL/sub" "$HK"; echo a > "$KL/a.txt"; echo g > "$KL/gone.txt"; echo s > "$KL/sub/s.txt"; cp -R "$KL/." "$HK/"; chmod -R a+rwX "$HK"; }
+  KN="nav|left|$KL;nav|right|$KR;keepuptodate"
+  keepsetup
+  ( sleep 4; echo new > "$KL/new ñ.txt"; sleep 3; echo changed >> "$KL/a.txt"; mkdir -p "$KL/nd/deep"; echo x > "$KL/nd/deep/x.txt"; rm "$KL/gone.txt"; echo s2 >> "$KL/sub/s.txt" ) &
+  gui $AC WINSCP_KEEP_MS=17000 WINSCP_DIALOG_SHOTS=$SH WINSCP_DIALOG_SET="keepuptodate.delete=1" WINSCP_UITEST="$KN;print|right"
+  wait
+  chk "local changes are reflected on the server while watching: new, modified, new tree, deleted (with 'Delete files')" \
+      "[ $RC -eq 0 ] && diff -r $KL $HK >/dev/null && ghas 'Upload  new ñ.txt' && ghas 'Delete remote  gone.txt' && ghas 'Upload  sub/s.txt' && ghas 'Stopped' && [ -s $SH/keepuptodate.png ]"
+  chk "afterwards the remote panel shows the new state" "ghas '  nd/ |' && ! ghas '  gone.txt |'"
+  keepsetup
+  ( sleep 4; rm "$KL/gone.txt"; echo new > "$KL/new.txt" ) &
+  gui $AC WINSCP_KEEP_MS=11000 WINSCP_DIALOG_SET="keepuptodate.delete=0" WINSCP_UITEST="$KN"
+  wait
+  chk "without 'Delete files' a file removed locally stays on the server" "[ -f $HK/gone.txt ] && [ -f $HK/new.txt ] && ! ghas 'Delete remote'"
+  keepsetup
+  ( sleep 4; echo deep >> "$KL/sub/s.txt"; echo top > "$KL/top.txt" ) &
+  gui $AC WINSCP_KEEP_MS=11000 WINSCP_DIALOG_SET="keepuptodate.subdirs=0" WINSCP_UITEST="$KN"
+  wait
+  chk "without 'Update subdirectories' only the directory's own files are watched" "[ -f $HK/top.txt ] && [ \"\$(cat $HK/sub/s.txt)\" = s ]"
+  keepsetup; echo pre > "$KL/pre-existing.txt"
+  gui $AC WINSCP_KEEP_MS=6000 WINSCP_DIALOG_SET="keepuptodate.initial=1;keepuptodate.subdirs=1" WINSCP_UITEST="$KN"
+  chk "'Synchronize when starting' uploads what already differs" "[ \"\$(cat $HK/pre-existing.txt 2>/dev/null)\" = pre ] && ghas 'Upload  pre-existing.txt'"
+  keepsetup; echo pre > "$KL/pre-existing.txt"
+  gui $AC WINSCP_KEEP_MS=6000 WINSCP_DIALOG_SET="keepuptodate.initial=0" WINSCP_UITEST="$KN"
+  chk "without it, what already differs is left alone until it changes" "[ ! -e $HK/pre-existing.txt ]"
+  keepsetup
+  gui $AC WINSCP_KEEP_MS=4000 WINSCP_DIALOG_SET="keepuptodate.remote=/config/e2e-keep-nope;keepuptodate.delete=1;keepuptodate.initial=1" WINSCP_UITEST="$KN"
+  chk "a remote directory that cannot be opened: refused, nothing is watched or uploaded" "ghas 'cannot be opened' && ! ghas 'Watching' && [ ! -e $DATA/sshhome/e2e-keep-nope ]"
+  gui $AC WINSCP_KEEP_MS=4000 WINSCP_DIALOG_SET="keepuptodate.local=$W/e2e-keep-nope" WINSCP_UITEST="$KN"
+  chk "a local directory that does not exist: refused" "ghas 'does not exist' && ! ghas 'Watching'"
+  gui WINSCP_KEEP_MS=3000 WINSCP_UITEST="keepuptodate"
+  chk "without a session it says so" "ghas 'Connect a remote session first'"
+  KF="$DATA/ftphome/e2e-keep"; rm -rf "$KL" "$KF"; mkdir -p "$KL" "$KF"; chmod 777 "$KF"; echo a > "$KL/a.txt"
+  ( sleep 4; echo f1 > "$KL/f1.txt"; mkdir "$KL/fd"; echo f2 > "$KL/fd/f2.txt" ) &
+  gui WINSCP_AUTOCONNECT=127.0.0.1:21:winscp:winscp123:ftp WINSCP_KEEP_MS=13000 WINSCP_DIALOG_SET="keepuptodate.initial=1;keepuptodate.delete=0" WINSCP_UITEST="nav|left|$KL;nav|right|/home/winscp/e2e-keep;keepuptodate"
+  wait
+  chk "the same over FTP" "[ \"\$(cat $KF/a.txt 2>/dev/null)\" = a ] && [ \"\$(cat $KF/f1.txt 2>/dev/null)\" = f1 ] && [ \"\$(cat $KF/fd/f2.txt 2>/dev/null)\" = f2 ]"
+  rm -rf "$HK" "$KF" 2>/dev/null
 
   echo "== panels: server information, icons"
   gui $AC WINSCP_UITEST="sessioninfo"

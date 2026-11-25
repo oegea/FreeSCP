@@ -11,6 +11,7 @@
 #include "../textdiff.h"
 #include "../panelcompare.h"
 #include "../panellogic.h"
+#include "../keeplogic.h"
 
 using textdiff::Row;
 
@@ -140,9 +141,82 @@ static void testPanelLogic()
   std::printf("panel logic: ok\n");
 }
 
+
+// "Keep remote directory up to date": which directories a change between two snapshots touches.
+static void testKeepLogic()
+{
+  using namespace keeplogic;
+  auto file = [](std::int64_t size, std::int64_t t) { Stamp s; s.size = size; s.mtimeMs = t; return s; };
+  auto dir = [](std::int64_t t = 0) { Stamp s; s.isDir = true; s.mtimeMs = t; return s; };
+  typedef std::vector<std::string> V;
+  assert(parentOf("a.txt") == "" && parentOf("sub/b.txt") == "sub" && parentOf("a/b/c") == "a/b");
+  assert(covers("", "x") && covers("a", "a") && covers("a", "a/b") && !covers("a", "ab") && !covers("a/b", "a") && covers("a/b", "a/b/c/d"));
+
+  Snapshot base;
+  base["a.txt"] = file(3, 100); base["sub"] = dir(1); base["sub/b.txt"] = file(5, 100); base["sub/deep"] = dir(1); base["sub/deep/c.txt"] = file(7, 100);
+  assert(changedRoots(base, base).empty());
+  assert(changedRoots(Snapshot(), Snapshot()).empty());
+
+  { Snapshot n = base; n["a.txt"] = file(4, 100); assert(changedRoots(base, n) == V{ "" }); }              // size
+  { Snapshot n = base; n["a.txt"] = file(3, 200); assert(changedRoots(base, n) == V{ "" }); }              // time
+  { Snapshot n = base; n["sub/b.txt"] = file(5, 200); assert(changedRoots(base, n) == V{ "sub" }); }
+  { Snapshot n = base; n["sub/deep/c.txt"] = file(9, 300); assert(changedRoots(base, n) == V{ "sub/deep" }); }
+  { Snapshot n = base; n["sub"] = dir(999); n["sub/deep"] = dir(999); assert(changedRoots(base, n).empty()); }   // a directory's own time is not a change
+  { Snapshot n = base; n["new.txt"] = file(1, 1); assert(changedRoots(base, n) == V{ "" }); }              // new file
+  { Snapshot n = base; n["sub/new.txt"] = file(1, 1); assert(changedRoots(base, n) == V{ "sub" }); }
+  { Snapshot n = base; n.erase("sub/b.txt"); assert(changedRoots(base, n) == V{ "sub" }); }                // deleted file
+  // two unrelated directories change: both, sorted
+  { Snapshot n = base; n["x"] = dir(); n["x/y.txt"] = file(1, 1); n["sub/deep/c.txt"] = file(8, 1);
+    assert(changedRoots(base, n) == V{ "" }); }                                                               // the new directory's parent is the root, which covers everything
+  { Snapshot b2 = base; b2["other"] = dir(); b2["other/o.txt"] = file(1, 1);
+    Snapshot n = b2; n["other/o.txt"] = file(2, 2); n["sub/deep/c.txt"] = file(8, 1);
+    assert(changedRoots(b2, n) == (V{ "other", "sub/deep" })); }
+  // a change in a directory and in one of its subdirectories: the outer one only
+  { Snapshot n = base; n["sub/b.txt"] = file(6, 1); n["sub/deep/c.txt"] = file(8, 1); assert(changedRoots(base, n) == V{ "sub" }); }
+  // a new directory tree: its parent
+  { Snapshot n = base; n["sub/nd"] = dir(); n["sub/nd/e"] = dir(); n["sub/nd/e/f.txt"] = file(1, 1); assert(changedRoots(base, n) == V{ "sub" }); }
+  // a deleted directory tree: the parent of the tree, never a directory that no longer exists
+  { Snapshot n = base; n.erase("sub/deep"); n.erase("sub/deep/c.txt"); assert(changedRoots(base, n) == V{ "sub" }); }
+  { Snapshot n = base; n.erase("sub"); n.erase("sub/b.txt"); n.erase("sub/deep"); n.erase("sub/deep/c.txt"); assert(changedRoots(base, n) == V{ "" }); }
+  // a file replaced by a directory of the same name and back
+  { Snapshot n = base; n["a.txt"] = dir(); assert(changedRoots(base, n) == V{ "" }); assert(changedRoots(n, base) == V{ "" }); }
+  // everything new / everything gone
+  assert(changedRoots(Snapshot(), base) == V{ "" });
+  assert(changedRoots(base, Snapshot()) == V{ "" });
+  // names that are prefixes of each other are not ancestors
+  { Snapshot b2; b2["a"] = dir(); b2["a/f"] = file(1, 1); b2["ab"] = dir(); b2["ab/f"] = file(1, 1);
+    Snapshot n = b2; n["a/f"] = file(2, 2); n["ab/f"] = file(2, 2); assert(changedRoots(b2, n) == (V{ "a", "ab" })); }
+  // every root exists in the new snapshot (or is the root itself), and covers every changed entry
+  { std::mt19937 rng(7);
+    for (int round = 0; round < 300; ++round)
+    {
+      Snapshot a, b;
+      const char * dirs[] = { "d1", "d1/e1", "d1/e2", "d2", "d2/e1/f1" };
+      for (const char * d : { "d1", "d1/e1", "d1/e2", "d2", "d2/e1", "d2/e1/f1" }) { if (rng() % 4) a[d] = dir(); if (rng() % 4) b[d] = dir(); }
+      auto valid = [](Snapshot & s) { for (auto it = s.begin(); it != s.end(); ) { const std::string p = parentOf(it->first); if (!p.empty() && s.find(p) == s.end()) it = s.erase(it); else ++it; } };
+      valid(a); valid(a); valid(b); valid(b);
+      for (const char * d : dirs) for (int k = 0; k < 2; ++k)
+      {
+        const std::string f = std::string(d) + "/file" + std::to_string(k);
+        if (a.count(d) && rng() % 2) a[f] = file(rng() % 3, rng() % 3);
+        if (b.count(d) && rng() % 2) b[f] = file(rng() % 3, rng() % 3);
+      }
+      const V roots = changedRoots(a, b);
+      for (const std::string & r : roots) assert(r.empty() || (b.count(r) && b[r].isDir));
+      for (size_t i = 0; i < roots.size(); ++i) for (size_t j = 0; j < roots.size(); ++j) if (i != j) assert(!covers(roots[i], roots[j]));
+      auto coveredByRoots = [&](const std::string & path) { for (const std::string & r : roots) if (covers(r, parentOf(path))) return true; return false; };
+      for (const auto & kv : b) { auto it = a.find(kv.first); const bool changed = (it == a.end()) || (it->second.isDir != kv.second.isDir) || (!kv.second.isDir && !(it->second == kv.second)); if (changed) assert(coveredByRoots(kv.first)); }
+      for (const auto & kv : a) if (!b.count(kv.first)) assert(coveredByRoots(kv.first));
+      if (a == b) assert(roots.empty());
+    }
+  }
+  std::printf("keep up to date logic: ok\n");
+}
+
 int main()
 {
   testPanelLogic();
+  testKeepLogic();
   if (versionTests() != 0) return 1;
   //--- splitLines ---
   {
